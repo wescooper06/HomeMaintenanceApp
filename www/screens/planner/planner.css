@@ -1,0 +1,176 @@
+.planner-screen h1 {
+  margin: 0;
+}
+
+.planner-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.planner-status {
+  border: 1px solid #dbe3ec;
+  background: #f7fbff;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  min-width: 220px;
+  font-size: 0.9rem;
+}
+
+.planner-pool {
+  margin-top: 1rem;
+}
+
+.planner-pool h2,
+.planner-week h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1.05rem;
+}
+
+.planner-task-pool {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.pool-task-card {
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.pool-task-title {
+  font-weight: 600;
+}
+
+.pool-task-meta {
+  color: #6b7280;
+  font-size: 0.88rem;
+}
+
+.pool-task-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.pool-task-controls select,
+.pool-task-controls button {
+  border: 1px solid #c7d4e2;
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  background: #ffffff;
+}
+
+.pool-task-controls button {
+  cursor: pointer;
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #ffffff;
+}
+
+.planner-week {
+  margin-top: 1rem;
+}
+
+.planner-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(220px, 1fr));
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.3rem;
+}
+
+.planner-day {
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  background: #fbfdff;
+  padding: 0.7rem;
+  min-width: 220px;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.planner-day h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.day-slot {
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.5rem;
+}
+
+.day-slot h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.92rem;
+  color: #334155;
+}
+
+.slot-task-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.slot-task {
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  padding: 0.4rem;
+  font-size: 0.88rem;
+  background: #f8fbff;
+}
+
+.slot-task-title {
+  font-weight: 600;
+}
+
+.slot-task-meta {
+  color: #64748b;
+  margin: 0.2rem 0 0.35rem;
+}
+
+.slot-task button {
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.slot-empty {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.day-notes label {
+  display: block;
+  font-size: 0.86rem;
+  color: #475569;
+  margin-bottom: 0.25rem;
+}
+
+.day-notes textarea {
+  width: 100%;
+  min-height: 72px;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  padding: 0.45rem;
+  font: inherit;
+  resize: vertical;
+  background: #ffffff;
+}
+
+.pool-empty {
+  border: 1px dashed #c9d7e8;
+  border-radius: 10px;
+  padding: 0.8rem;
+  color: #6b7280;
+}

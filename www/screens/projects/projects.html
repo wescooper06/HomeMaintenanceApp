@@ -1,0 +1,46 @@
+<section class="projects-screen hm-card">
+  <div data-main-nav></div>
+
+  <header class="projects-header">
+    <div>
+      <h1>Projects</h1>
+      <p class="hm-muted">Unified projects from home, vehicle, and repeating lists.</p>
+    </div>
+    <div class="projects-summary" id="projectsSummary">Loading projects...</div>
+  </header>
+
+  <section class="projects-controls" aria-label="Project filters and sorting">
+    <label>
+      Source
+      <select id="projectsFilterSource">
+        <option value="all">All sources</option>
+      </select>
+    </label>
+
+    <label>
+      Category
+      <select id="projectsFilterCategory">
+        <option value="all">All categories</option>
+      </select>
+    </label>
+
+    <label>
+      State
+      <select id="projectsFilterState">
+        <option value="all">All states</option>
+      </select>
+    </label>
+
+    <label>
+      Sort By
+      <select id="projectsSortBy">
+        <option value="priority">Priority</option>
+        <option value="order">Order</option>
+        <option value="category">Category</option>
+      </select>
+    </label>
+  </section>
+
+  <div id="projectsList" class="projects-list" aria-live="polite"></div>
+
+</section>

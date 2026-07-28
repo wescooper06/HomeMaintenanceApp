@@ -1,0 +1,25 @@
+<section class="settings-screen hm-card">
+  <h1>Settings</h1>
+  <p class="hm-muted">Control app-level preferences.</p>
+
+  <form id="settingsForm" class="settings-form">
+    <label>
+      Reminder Frequency
+      <select name="frequency">
+        <option value="weekly">Weekly</option>
+        <option value="biweekly">Biweekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+    </label>
+
+    <label>
+      Home Name
+      <input type="text" name="homeName" value="My Home" />
+    </label>
+
+    <button type="submit">Save Settings</button>
+    <p id="settingsMessage" class="hm-muted" aria-live="polite"></p>
+  </form>
+
+  <div data-main-nav></div>
+</section>

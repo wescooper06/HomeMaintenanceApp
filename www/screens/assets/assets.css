@@ -1,0 +1,20 @@
+.assets-screen h1 {
+  margin-top: 0;
+}
+
+.asset-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+}
+
+.asset-table th,
+.asset-table td {
+  border: 1px solid #dbe3ec;
+  padding: 0.6rem;
+  text-align: left;
+}
+
+.asset-table thead {
+  background: #f2f7fd;
+}

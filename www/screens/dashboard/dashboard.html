@@ -1,0 +1,34 @@
+<section class="dashboard-screen hm-card">
+  <div data-main-nav></div>
+
+  <header class="dashboard-header">
+    <h1>Dashboard</h1>
+    <p class="hm-muted">Overview of projects, curated tasks, and weekly plan progress.</p>
+  </header>
+
+  <section class="dashboard-grid" aria-label="Summary cards">
+    <article class="dashboard-stat">
+      <p class="dashboard-stat-title">Open Projects</p>
+      <h2 id="dashboardOpenProjects">0</h2>
+      <button type="button" class="dashboard-link-btn" data-target="#projects">View Projects</button>
+    </article>
+
+    <article class="dashboard-stat">
+      <p class="dashboard-stat-title">Tasks in Task Manager</p>
+      <h2 id="dashboardTaskManagerCount">0</h2>
+      <button type="button" class="dashboard-link-btn" data-target="#tasks">View Task Manager</button>
+    </article>
+
+    <article class="dashboard-stat">
+      <p class="dashboard-stat-title">Tasks Scheduled This Week</p>
+      <h2 id="dashboardScheduledCount">0</h2>
+      <button type="button" class="dashboard-link-btn" data-target="#planner">View Weekly Planner</button>
+    </article>
+  </section>
+
+  <section class="dashboard-upcoming" aria-label="Upcoming tasks list">
+    <h2>Upcoming Tasks</h2>
+    <ul id="dashboardUpcomingList" class="dashboard-upcoming-list"></ul>
+  </section>
+
+</section>

@@ -1,0 +1,103 @@
+.projects-screen h1 {
+  margin: 0;
+}
+
+.projects-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.projects-summary {
+  border: 1px solid #dbe3ec;
+  background: #f7fbff;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  min-width: 180px;
+  font-size: 0.9rem;
+}
+
+.projects-controls {
+  margin: 1rem 0;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.projects-controls label {
+  display: grid;
+  gap: 0.3rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.projects-controls select {
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  padding: 0.5rem;
+  font: inherit;
+  background: #fff;
+}
+
+.projects-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.project-card {
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.8rem;
+}
+
+.project-card h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+
+.project-grid {
+  display: grid;
+  gap: 0.35rem 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin-bottom: 0.7rem;
+}
+
+.project-field {
+  font-size: 0.9rem;
+}
+
+.project-field strong {
+  color: #4b5563;
+}
+
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.project-actions button {
+  border: 1px solid #c7d4e2;
+  background: #f8fbff;
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-actions button.primary {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.projects-empty {
+  border: 1px dashed #c9d7e8;
+  border-radius: 10px;
+  padding: 1rem;
+  color: #6b7280;
+}

@@ -1,0 +1,90 @@
+.dashboard-header h1 {
+  margin: 0;
+}
+
+.dashboard-header p {
+  margin: 0.35rem 0 0;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.dashboard-stat {
+  border: 1px solid #d8e4f2;
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  border-radius: 12px;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.dashboard-stat-title {
+  margin: 0;
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.dashboard-stat h2 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.dashboard-link-btn {
+  border: 1px solid #0f766e;
+  color: #0f766e;
+  background: #ffffff;
+  border-radius: 999px;
+  padding: 0.42rem 0.72rem;
+  width: fit-content;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dashboard-link-btn:hover {
+  background: #eefaf8;
+}
+
+.dashboard-upcoming {
+  margin-top: 1rem;
+}
+
+.dashboard-upcoming h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1.1rem;
+}
+
+.dashboard-upcoming-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dashboard-upcoming-item {
+  border: 1px solid #dbe3ec;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.dashboard-upcoming-meta {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.dashboard-upcoming-empty {
+  border: 1px dashed #c9d7e8;
+  border-radius: 10px;
+  padding: 0.7rem;
+  color: #6b7280;
+}

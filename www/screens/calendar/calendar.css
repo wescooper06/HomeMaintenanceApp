@@ -1,0 +1,21 @@
+.calendar-screen h1 {
+  margin-top: 0;
+}
+
+.calendar-events {
+  margin: 1rem 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.calendar-event {
+  border-left: 4px solid #0f766e;
+  background: #f8fffd;
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+}
+
+.calendar-event .date {
+  font-size: 0.85rem;
+  color: #6b7280;
+}
