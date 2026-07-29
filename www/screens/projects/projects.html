@@ -9,6 +9,9 @@
     <div class="projects-summary" id="projectsSummary">Loading projects...</div>
   </header>
 
+  <div id="projectsSyncStatus" class="projects-sync-status hidden" aria-live="polite"></div>
+  <div id="projectsDuplicateBanner" class="projects-duplicate-banner hidden" aria-live="polite"></div>
+
   <section class="projects-controls" aria-label="Project filters and sorting">
     <label>
       Source
@@ -42,5 +45,24 @@
   </section>
 
   <div id="projectsList" class="projects-list" aria-live="polite"></div>
+
+  <div id="projectEditModal" class="project-modal hidden" role="dialog" aria-modal="true" aria-labelledby="projectEditTitle">
+    <div class="project-modal-panel">
+      <header class="project-modal-header">
+        <h2 id="projectEditTitle">Edit Project Details</h2>
+        <button id="projectEditClose" type="button" class="project-modal-close" aria-label="Close">x</button>
+      </header>
+
+      <form id="projectEditForm" class="project-edit-form">
+        <div id="projectEditFields" class="project-edit-grid"></div>
+        <p id="projectEditMessage" class="project-edit-message hm-muted" aria-live="polite"></p>
+
+        <div class="project-edit-actions">
+          <button id="projectEditCancel" type="button">Cancel</button>
+          <button id="projectEditSave" type="submit" class="primary">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
 </section>

@@ -1,13 +1,41 @@
 (function () {
   const SPREADSHEET_ID = "18la6E47KuiFWXFSIASd8QYbvxEo-ZJ7RaxnnuxIml9k";
-  const APP_CONFIG = window.APP_CONFIG || {};
-  const GOOGLE_SHEETS_API_KEY = (APP_CONFIG.GOOGLE_SHEETS_API_KEY || "").trim();
+
+  function getAppConfig() {
+    return window.APP_CONFIG || {};
+  }
+
+  function getGoogleSheetsApiKey() {
+    const config = getAppConfig();
+    return (config.GOOGLE_SHEETS_API_KEY || "").trim();
+  }
+
+  function getGoogleSheetsWriteUrl() {
+    const config = getAppConfig();
+    return (config.GOOGLE_SHEETS_WRITE_URL || config.GOOGLE_APPS_SCRIPT_WEB_APP_URL || "").trim();
+  }
 
   const TABS = {
     home: "Project List_A (Home Maintenance)",
     vehicle: "Project List_B (Vehicle/Small Engine)",
     repeating: "Project List_C (Repeating Household)",
   };
+  const TAB_GIDS = {
+    repeating: "280063195",
+  };
+
+  function buildCsvUrlForTab(tabName) {
+    const url = new URL(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq`);
+
+    if (tabName === TABS.repeating && TAB_GIDS.repeating) {
+      url.searchParams.set("gid", TAB_GIDS.repeating);
+    } else {
+      url.searchParams.set("sheet", tabName);
+    }
+
+    url.searchParams.set("tqx", "out:csv");
+    return url;
+  }
 
   function sanitizeHeader(value, index) {
     const text = String(value == null ? "" : value).trim();
@@ -96,6 +124,8 @@
         rowObject[headers[j]] = cleanCell(rawRow[j]);
       }
 
+      rowObject._rowNumber = i + 1;
+
       records.push(rowObject);
     }
 
@@ -105,7 +135,32 @@
     };
   }
 
-  function rowsToObjectsWithHeaders(rows, headers) {
+  function stripHeaderPrefix(value, header) {
+    const cell = cleanCell(value);
+    const label = cleanCell(header);
+
+    if (!cell || !label) {
+      return cell;
+    }
+
+    const lowerCell = cell.toLowerCase();
+    const lowerLabel = label.toLowerCase();
+
+    if (lowerCell === lowerLabel) {
+      return "";
+    }
+
+    if (lowerCell.startsWith(`${lowerLabel} `)) {
+      return cell.slice(label.length).trim();
+    }
+
+    return cell;
+  }
+
+  function rowsToObjectsWithHeaders(rows, headers, options) {
+    const opts = options || {};
+    const startRowNumber = Number.isFinite(opts.startRowNumber) ? opts.startRowNumber : 2;
+    const stripPrefixedHeaders = Boolean(opts.stripPrefixedHeaders);
     const cleanedHeaders = headers.map((header, index) => sanitizeHeader(header, index));
     const records = [];
 
@@ -119,8 +174,14 @@
       const rowObject = {};
 
       for (let j = 0; j < cleanedHeaders.length; j += 1) {
-        rowObject[cleanedHeaders[j]] = cleanCell(rawRow[j]);
+        const value = stripPrefixedHeaders
+          ? stripHeaderPrefix(rawRow[j], cleanedHeaders[j])
+          : cleanCell(rawRow[j]);
+
+        rowObject[cleanedHeaders[j]] = value;
       }
+
+      rowObject._rowNumber = i + startRowNumber;
 
       records.push(rowObject);
     }
@@ -172,6 +233,8 @@
         record[headers[j]] = cleanCell(row[j]);
       }
 
+      record._rowNumber = i + 1;
+
       records.push(record);
     }
 
@@ -182,9 +245,7 @@
   }
 
   async function fetchTabViaCsv(tabName) {
-    const url = new URL(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq`);
-    url.searchParams.set("sheet", tabName);
-    url.searchParams.set("tqx", "out:csv");
+    const url = buildCsvUrlForTab(tabName);
 
     const response = await fetchWithDiagnostics(url.toString());
     const csvText = await response.text();
@@ -192,21 +253,53 @@
   }
 
   async function fetchTabViaCsvWithFixedSchema(tabName, headers) {
-    const url = new URL(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq`);
-    url.searchParams.set("sheet", tabName);
-    url.searchParams.set("tqx", "out:csv");
+    const url = buildCsvUrlForTab(tabName);
 
     const response = await fetchWithDiagnostics(url.toString());
     const csvText = await response.text();
     const rows = parseCsv(csvText);
 
-    return rowsToObjectsWithHeaders(rows.slice(1), headers);
+    if (!rows.length) {
+      return rowsToObjectsWithHeaders([], headers);
+    }
+
+    const firstRow = rows[0] || [];
+    const normalizedHeaders = headers.map((header) => cleanCell(header).toLowerCase());
+
+    let exactHeaderMatches = 0;
+    let prefixedHeaderMatches = 0;
+
+    for (let i = 0; i < normalizedHeaders.length; i += 1) {
+      const header = normalizedHeaders[i];
+      const cell = cleanCell(firstRow[i]).toLowerCase();
+
+      if (!cell) {
+        continue;
+      }
+
+      if (cell === header) {
+        exactHeaderMatches += 1;
+      } else if (cell.startsWith(`${header} `)) {
+        prefixedHeaderMatches += 1;
+      }
+    }
+
+    const hasExplicitHeaderRow = exactHeaderMatches >= Math.max(3, normalizedHeaders.length - 2);
+    const useRows = hasExplicitHeaderRow ? rows.slice(1) : rows;
+    const startRowNumber = hasExplicitHeaderRow ? 2 : 1;
+    const stripPrefixedHeaders = prefixedHeaderMatches >= Math.ceil(normalizedHeaders.length / 2);
+
+    return rowsToObjectsWithHeaders(useRows, headers, {
+      startRowNumber,
+      stripPrefixedHeaders,
+    });
   }
 
   async function fetchTabViaApi(tabName) {
+    const googleSheetsApiKey = getGoogleSheetsApiKey();
     const range = `'${tabName.replace(/'/g, "''")}'!A:ZZ`;
     const url = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`);
-    url.searchParams.set("key", GOOGLE_SHEETS_API_KEY);
+    url.searchParams.set("key", googleSheetsApiKey);
 
     const response = await fetchWithDiagnostics(url.toString());
     const payload = await response.json();
@@ -214,10 +307,11 @@
   }
 
   async function fetchTab(tabName) {
+    const googleSheetsApiKey = getGoogleSheetsApiKey();
     let parsed;
 
     try {
-      if (tabName === TABS.home || tabName === TABS.repeating) {
+      if (tabName === TABS.home) {
         const fixedHeaders = [
           "ID",
           "Property",
@@ -234,7 +328,12 @@
 
         parsed = await fetchTabViaCsvWithFixedSchema(tabName, fixedHeaders);
       } else {
-        parsed = GOOGLE_SHEETS_API_KEY ? await fetchTabViaApi(tabName) : await fetchTabViaCsv(tabName);
+        // Repeating is intentionally read through CSV by gid to avoid sheet-name ambiguity.
+        if (tabName === TABS.repeating) {
+          parsed = await fetchTabViaCsv(tabName);
+        } else {
+          parsed = googleSheetsApiKey ? await fetchTabViaApi(tabName) : await fetchTabViaCsv(tabName);
+        }
       }
     } catch (error) {
       throw new Error(`Failed to load \"${tabName}\": ${error.message}`);
@@ -274,6 +373,63 @@
     };
   }
 
+  function sourceToTabName(source) {
+    const normalized = cleanCell(source).toLowerCase();
+
+    if (normalized.includes("list_a") || normalized.includes("home")) {
+      return TABS.home;
+    }
+
+    if (normalized.includes("list_b") || normalized.includes("vehicle")) {
+      return TABS.vehicle;
+    }
+
+    if (normalized.includes("list_c") || normalized.includes("repeating")) {
+      return TABS.repeating;
+    }
+
+    return TABS.home;
+  }
+
+  async function updateProjectInSheet(project) {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+
+    if (!googleSheetsWriteUrl) {
+      throw new Error(
+        "Sheet write endpoint is not configured. Set window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL (or GOOGLE_APPS_SCRIPT_WEB_APP_URL)."
+      );
+    }
+
+    const payload = {
+      spreadsheetId: SPREADSHEET_ID,
+      tabName: sourceToTabName(project && project.source),
+      project,
+    };
+
+    // Apps Script web apps do not expose CORS response headers for browser fetch reads.
+    // Use no-cors so the POST is still delivered; the response will be opaque in the browser.
+    const response = await fetch(googleSheetsWriteUrl, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify(payload),
+    });
+
+    if (response.type === "opaque") {
+      return { ok: true, transport: "no-cors" };
+    }
+
+    if (!response.ok) {
+      const reason = await response.text().catch(() => "");
+      throw new Error(`Failed to write to Google Sheets (${response.status}). ${cleanCell(reason)}`);
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      return { ok: true };
+    }
+  }
+
   window.SheetsService = {
     SPREADSHEET_ID,
     TABS,
@@ -282,5 +438,6 @@
     fetchVehicleSheet,
     fetchRepeatingSheet,
     fetchAllSheets,
+    updateProjectInSheet,
   };
 })();

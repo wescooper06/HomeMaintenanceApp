@@ -51,7 +51,7 @@
       metadata: {
         property: ["property"],
         area: ["area", "householdarea"],
-        recurrence: ["recurrence", "frequency", "repeat", "interval"],
+        recurrence: ["recurrence", "recurrance", "frequency", "repeat", "interval"],
         estimatedCost: ["estimatedcost", "estimated_cost", "budgetcost", "budget"],
         actualCost: ["actualcost", "actual_cost", "spent", "cost"],
         isMaintenance: ["ismaintenance", "maintenanceflag", "maintenance", "is_maintenance"],
@@ -64,6 +64,31 @@
   };
 
   let UnifiedProjectList = [];
+  let LastLoadStats = {
+    raw: { home: 0, vehicle: 0, repeating: 0 },
+    effective: { home: 0, vehicle: 0, repeating: 0 },
+    repeatingMirrorFiltered: false,
+    repeatingMirroredRowsFiltered: 0,
+    total: 0,
+  };
+
+  function sourceKey(source) {
+    const text = cleanString(source).toLowerCase();
+
+    if (text.includes("list_a") || text.includes("home")) {
+      return "home";
+    }
+
+    if (text.includes("list_b") || text.includes("vehicle")) {
+      return "vehicle";
+    }
+
+    if (text.includes("list_c") || text.includes("repeating")) {
+      return "repeating";
+    }
+
+    return "home";
+  }
 
   function getSheetsService() {
     if (!window.SheetsService) {
@@ -267,6 +292,7 @@
   function normalizeRow(row, schema, index) {
     const rowMap = buildNormalizedRowMap(row);
     const usedKeys = new Set();
+    const sheetRowNumber = Number(row && row._rowNumber);
 
     const idSelected = pickFromRow(rowMap, schema.id);
     const titleSelected = pickFromRow(rowMap, schema.title);
@@ -279,10 +305,14 @@
 
     const title = cleanString(titleSelected.value) || "Untitled Project";
     const metadata = applyMetadataSchema(rowMap, schema.metadata, usedKeys);
+    if (Number.isFinite(sheetRowNumber) && sheetRowNumber > 0) {
+      metadata.sheetRowNumber = sheetRowNumber;
+    }
     appendRemainingMetadata(rowMap, usedKeys, metadata);
 
     const rawId = cleanString(idSelected.value);
     const id = rawId || `${schema.source.toLowerCase()}-${slugify(title)}-${index + 1}`;
+    metadata._sourceGeneratedId = rawId ? false : true;
 
     return {
       id,
@@ -298,14 +328,41 @@
     return (rows || []).map((row, index) => normalizeRow(row, schema, index));
   }
 
-  function buildProjectSignature(project) {
+  function getProjectIdentityKey(project) {
     const metadata = project.metadata || {};
+    const rowNumber = Number(metadata.sheetRowNumber);
+    const source = cleanString(project.source).toLowerCase() || "unknown";
+
+    // Prefer immutable sheet row identity so real rows are never collapsed.
+    if (Number.isFinite(rowNumber) && rowNumber > 0) {
+      return `${source}::row::${rowNumber}`;
+    }
+
+    // Fallback identity for rows without sheet row metadata.
+    const id = cleanString(project.id).toLowerCase();
+    const title = cleanString(project.title).toLowerCase();
+    return `${source}::fallback::${id}::${title}`;
+  }
+
+  function buildCrossSourceSignature(project) {
+    const metadata = project.metadata || {};
+    const usesGeneratedId = Boolean(metadata._sourceGeneratedId);
     const metadataEntries = Object.keys(metadata)
-      .filter((key) => key !== "sources")
+      .filter((key) => ![
+        "sources",
+        "sheetRowNumber",
+        "rownumber",
+        "_rowNumber",
+        "_rownumber",
+        "_originalTitle",
+        "_originalId",
+        "_sourceGeneratedId",
+      ].includes(key))
       .sort()
       .map((key) => [key, metadata[key]]);
 
     return JSON.stringify({
+      id: usesGeneratedId ? "" : cleanString(project.id).toLowerCase(),
       title: cleanString(project.title).toLowerCase(),
       category: cleanString(project.category).toLowerCase(),
       state: cleanString(project.state).toLowerCase(),
@@ -334,34 +391,117 @@
   }
 
   function dedupeProjects(projects) {
+    // Dedupe strategy:
+    // 1) Within-source identity dedupe by stable row identity (source + row number).
+    // 2) Cross-source dedupe only for exact mirrors (same normalized content).
+    // This preserves distinct rows while preventing feed-mirror inflation.
     const unique = [];
-    const signatureMap = new Map();
+    const identityMap = new Map();
 
     (projects || []).forEach((project) => {
-      const signature = buildProjectSignature(project);
-      const existing = signatureMap.get(signature);
+      const identityKey = getProjectIdentityKey(project);
+      const existing = identityMap.get(identityKey);
 
       if (existing) {
-        const merged = mergeProjects(existing, project);
-        const index = unique.findIndex((item) => buildProjectSignature(item) === signature);
-        if (index >= 0) {
-          unique[index] = merged;
-          signatureMap.set(signature, merged);
-        }
+        const merged = mergeProjects(existing.project, project);
+        unique[existing.index] = merged;
+        identityMap.set(identityKey, {
+          project: merged,
+          index: existing.index,
+        });
         return;
       }
 
-      signatureMap.set(signature, project);
-      unique.push({
+      const index = unique.length;
+      const normalized = {
         ...project,
         metadata: {
           ...project.metadata,
           sources: [project.source].filter(Boolean),
         },
+      };
+
+      unique.push(normalized);
+      identityMap.set(identityKey, {
+        project: normalized,
+        index,
       });
     });
 
-    return unique;
+    // Second pass: collapse exact mirrors across different sources only.
+    const crossSourceMap = new Map();
+    const merged = [];
+
+    unique.forEach((project) => {
+      const signature = buildCrossSourceSignature(project);
+      const existing = crossSourceMap.get(signature);
+
+      if (existing && existing.project.source !== project.source) {
+        const combined = mergeProjects(existing.project, project);
+        merged[existing.index] = combined;
+        crossSourceMap.set(signature, {
+          project: combined,
+          index: existing.index,
+        });
+        return;
+      }
+
+      const index = merged.length;
+      merged.push(project);
+      crossSourceMap.set(signature, {
+        project,
+        index,
+      });
+    });
+
+    return merged;
+  }
+
+  function mirrorSignature(project) {
+    const metadata = project.metadata || {};
+
+    return JSON.stringify({
+      id: cleanString(project.id).toLowerCase(),
+      title: cleanString(project.title).toLowerCase(),
+      category: cleanString(project.category).toLowerCase(),
+      state: cleanString(project.state).toLowerCase(),
+      property: cleanString(metadata.property).toLowerCase(),
+      area: cleanString(metadata.area).toLowerCase(),
+      recurrence: cleanString(metadata.recurrence).toLowerCase(),
+    });
+  }
+
+  function splitRepeatingMirrorRows(homeProjects, repeatingProjects) {
+    if (!Array.isArray(homeProjects) || !Array.isArray(repeatingProjects)) {
+      return {
+        mirrored: [],
+        unique: Array.isArray(repeatingProjects) ? repeatingProjects : [],
+      };
+    }
+
+    if (!homeProjects.length || !repeatingProjects.length) {
+      return {
+        mirrored: [],
+        unique: repeatingProjects,
+      };
+    }
+
+    const homeSet = new Set(homeProjects.map(mirrorSignature));
+    const mirrored = [];
+    const unique = [];
+
+    repeatingProjects.forEach((project) => {
+      if (homeSet.has(mirrorSignature(project))) {
+        mirrored.push(project);
+      } else {
+        unique.push(project);
+      }
+    });
+
+    return {
+      mirrored,
+      unique,
+    };
   }
 
   async function loadHomeProjects() {
@@ -389,7 +529,32 @@
       loadRepeatingProjects(),
     ]);
 
-    UnifiedProjectList = dedupeProjects([...home, ...vehicle, ...repeating]);
+    const repeatingSplit = splitRepeatingMirrorRows(home, repeating);
+    const repeatingMirrorFiltered = repeatingSplit.mirrored.length > 0;
+    const repeatingEffective = repeatingSplit.unique;
+
+    UnifiedProjectList = dedupeProjects([...home, ...vehicle, ...repeatingEffective]);
+
+    const effectiveCounts = { home: 0, vehicle: 0, repeating: 0 };
+    UnifiedProjectList.forEach((project) => {
+      const key = sourceKey(project.source);
+      if (Object.prototype.hasOwnProperty.call(effectiveCounts, key)) {
+        effectiveCounts[key] += 1;
+      }
+    });
+
+    LastLoadStats = {
+      raw: {
+        home: home.length,
+        vehicle: vehicle.length,
+        repeating: repeating.length,
+      },
+      effective: effectiveCounts,
+      repeatingMirrorFiltered,
+      repeatingMirroredRowsFiltered: repeatingSplit.mirrored.length,
+      total: UnifiedProjectList.length,
+    };
+
     window.UnifiedProjectList = UnifiedProjectList;
     return UnifiedProjectList;
   }
@@ -398,6 +563,9 @@
     SCHEMAS,
     get UnifiedProjectList() {
       return UnifiedProjectList;
+    },
+    get lastLoadStats() {
+      return LastLoadStats;
     },
     loadHomeProjects,
     loadVehicleProjects,
