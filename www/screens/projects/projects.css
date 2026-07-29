@@ -19,6 +19,74 @@
   font-size: 0.9rem;
 }
 
+.projects-summary-meta {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.projects-sync-status {
+  margin-top: 0.65rem;
+  border: 1px solid #f3d9a7;
+  background: #fff8e9;
+  color: #7c5800;
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+.projects-sync-status.hidden {
+  display: none;
+}
+
+.projects-sync-status button {
+  border: 1px solid #d2a64a;
+  background: #fff1cc;
+  color: #6a4a00;
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.projects-sync-status button[disabled] {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.projects-duplicate-banner {
+  margin-top: 0.65rem;
+  border: 1px solid #f1b7a9;
+  background: #fff1ee;
+  color: #7f1d1d;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.9rem;
+}
+
+.projects-duplicate-banner.hidden {
+  display: none;
+}
+
+.projects-duplicate-banner strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.projects-duplicate-list {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.projects-duplicate-list li + li {
+  margin-top: 0.25rem;
+}
+
 .projects-controls {
   margin: 1rem 0;
   display: grid;
@@ -100,4 +168,110 @@
   border-radius: 10px;
   padding: 1rem;
   color: #6b7280;
+}
+
+.project-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.project-modal.hidden {
+  display: none;
+}
+
+.project-modal-panel {
+  width: min(920px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: #ffffff;
+  border: 1px solid #dbe3ec;
+  border-radius: 14px;
+  padding: 0.9rem;
+}
+
+.project-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.project-modal-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.project-modal-close {
+  border: 1px solid #c7d4e2;
+  border-radius: 8px;
+  padding: 0.25rem 0.45rem;
+  background: #f8fbff;
+  cursor: pointer;
+}
+
+.project-edit-form {
+  margin-top: 0.8rem;
+}
+
+.project-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem 0.8rem;
+}
+
+.project-edit-field {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+}
+
+.project-edit-field label {
+  font-weight: 600;
+  color: #334155;
+}
+
+.project-edit-field input,
+.project-edit-field textarea,
+.project-edit-field select {
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  padding: 0.5rem;
+  font: inherit;
+  background: #ffffff;
+}
+
+.project-edit-field textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+
+.project-edit-message {
+  margin: 0.7rem 0 0;
+}
+
+.project-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.project-edit-actions button {
+  border: 1px solid #c7d4e2;
+  background: #f8fbff;
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-edit-actions button.primary {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
 }
