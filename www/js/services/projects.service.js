@@ -312,6 +312,7 @@
 
     const rawId = cleanString(idSelected.value);
     const id = rawId || `${schema.source.toLowerCase()}-${slugify(title)}-${index + 1}`;
+    metadata._sourceTabId = rawId;
     metadata._sourceGeneratedId = rawId ? false : true;
 
     return {
