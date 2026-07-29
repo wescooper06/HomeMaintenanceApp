@@ -21,18 +21,29 @@
     repeating: "Project List_C (Repeating Household)",
   };
   const TAB_GIDS = {
+    home: "128609528",
+    vehicle: "1524661812",
     repeating: "280063195",
   };
 
   function buildCsvUrlForTab(tabName) {
-    const url = new URL(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq`);
+    const gid = tabName === TABS.home
+      ? TAB_GIDS.home
+      : tabName === TABS.vehicle
+        ? TAB_GIDS.vehicle
+        : tabName === TABS.repeating
+          ? TAB_GIDS.repeating
+          : "";
 
-    if (tabName === TABS.repeating && TAB_GIDS.repeating) {
-      url.searchParams.set("gid", TAB_GIDS.repeating);
-    } else {
-      url.searchParams.set("sheet", tabName);
+    if (gid) {
+      const url = new URL(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/export`);
+      url.searchParams.set("format", "csv");
+      url.searchParams.set("gid", gid);
+      return url;
     }
 
+    const url = new URL(`https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq`);
+    url.searchParams.set("sheet", tabName);
     url.searchParams.set("tqx", "out:csv");
     return url;
   }

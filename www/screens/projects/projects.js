@@ -1,5 +1,5 @@
 function initProjectsScreen() {
-  const SERVICE_VERSION = "20260728-13";
+  const SERVICE_VERSION = "20260728-15";
   const RETRY_QUEUE_KEY = "hm_sheet_write_retry_queue";
   const state = {
     allProjects: [],
@@ -375,6 +375,7 @@ function initProjectsScreen() {
     const asset = firstDefined(metadata, ["asset", "vehicle", "equipment", "assetname"]);
     const mileage = firstDefined(metadata, ["mileage", "odometer"]);
     const cost = firstDefined(metadata, ["actualCost", "estimatedCost", "cost", "budget"]);
+    const sourceTabId = cleanText(metadata._sourceTabId, "");
     const sheetRowNumber = firstDefined(metadata, ["sheetRowNumber", "rownumber", "_rownumber"]);
     const keyPart = sheetRowNumber == null ? cleanText(project.id, "unknown") : cleanText(sheetRowNumber, "unknown");
     const uiKey = `${source}::${keyPart}`;
@@ -393,6 +394,7 @@ function initProjectsScreen() {
     return {
       uiKey,
       id: cleanText(project.id, "unknown"),
+      sourceTabId,
       title: cleanText(project.title, "Untitled Project"),
       source,
       category: cleanText(project.category, "uncategorized"),
@@ -737,6 +739,7 @@ function initProjectsScreen() {
         const recurrence = project.recurrence ? cleanText(project.recurrence, "") : "-";
         const priority = project.priority != null && String(project.priority).trim() !== "" ? project.priority : "-";
         const order = project.order != null && String(project.order).trim() !== "" ? project.order : "-";
+        const displayId = project.sourceTabId || "-";
 
         const vehicleFields = sourceDisplay === "vehicle"
           ? `<div class="project-field"><strong>Asset:</strong> ${project.asset || "-"}</div>
@@ -751,6 +754,7 @@ function initProjectsScreen() {
           <article class="project-card" data-project-key="${project.uiKey}">
             <h2>${project.title}</h2>
             <div class="project-grid">
+              <div class="project-field"><strong>ID:</strong> ${displayId}</div>
               <div class="project-field"><strong>Source:</strong> ${sourceDisplay}</div>
               <div class="project-field"><strong>Category:</strong> ${project.category}</div>
               <div class="project-field"><strong>State:</strong> ${project.state}</div>
