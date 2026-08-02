@@ -1,3 +1,6 @@
+/* ADD PROJECT FEATURE — Copilot context anchor
+   This file contains styling for the Projects screen, including card layout,
+   modal styling, button alignment, dynamic field visibility, and validation dialog. */
 .projects-screen h1 {
   margin: 0;
 }
@@ -120,6 +123,8 @@
   border-radius: 12px;
   background: #ffffff;
   padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .project-card h2 {
@@ -146,6 +151,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  margin-top: auto;
 }
 
 .project-actions button {
@@ -160,6 +166,12 @@
 .project-actions button.primary {
   border-color: #0f766e;
   background: #0f766e;
+  color: #ffffff;
+}
+
+.project-actions .project-delete-btn {
+  border-color: #b42318;
+  background: #d92d20;
   color: #ffffff;
 }
 
@@ -192,6 +204,18 @@
   border: 1px solid #dbe3ec;
   border-radius: 14px;
   padding: 0.9rem;
+}
+
+.project-delete-modal-panel {
+  width: min(560px, 100%);
+}
+
+.project-delete-content {
+  margin-top: 0.6rem;
+}
+
+.project-delete-content p {
+  margin: 0;
 }
 
 .project-modal-header {
@@ -274,4 +298,22 @@
   border-color: #0f766e;
   background: #0f766e;
   color: #ffffff;
+}
+
+.project-edit-actions .project-delete-cancel {
+  border-color: #c7d4e2;
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.project-edit-actions .project-delete-confirm {
+  border-color: #b42318;
+  background: #d92d20;
+  color: #ffffff;
+}
+
+.project-edit-actions .project-delete-confirm[disabled],
+.project-edit-actions .project-delete-cancel[disabled] {
+  opacity: 0.65;
+  cursor: not-allowed;
 }

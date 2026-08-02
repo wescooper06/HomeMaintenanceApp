@@ -1,7 +1,11 @@
+// ADD PROJECT FEATURE — Copilot context anchor
+// This file contains backend Apps Script logic, including doPost routing,
+// createProject action handling, ID generation, sheet row insertion,
+// and error reporting for validation dialog.
 const TAB_HOME = 'Project List_A (Home Maintenance)';
 const TAB_VEHICLE = 'Project List_B (Vehicle/Small Engine)';
 const TAB_REPEATING = 'Project List_C (Repeating Household)';
-const SCRIPT_VERSION = '20260728-4';
+const SCRIPT_VERSION = '20260801-1';
 
 const FIXED_HOME_HEADERS = [
   'ID',
@@ -34,6 +38,12 @@ function jsonResponse(payload) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function jsonpResponse(callback, payload) {
+  return ContentService
+    .createTextOutput(String(callback) + '(' + JSON.stringify(payload) + ');')
+    .setMimeType(ContentService.MimeType.JAVASCRIPT);
+}
+
 function makeRequestId() {
   return Utilities.getUuid();
 }
@@ -53,12 +63,206 @@ function logEvent(level, eventName, details) {
   }
 }
 
-function doGet() {
-  return jsonResponse({
+function doGet(e) {
+  const action = text(e && e.parameter && e.parameter.action);
+  const callback = text(e && e.parameter && e.parameter.callback);
+  const canJsonp = /^[A-Za-z_$][A-Za-z0-9_.$]*$/.test(callback);
+
+  try {
+    if (action === 'projectDropdownOptions') {
+      const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
+      const payload = buildProjectDropdownOptionsPayload(spreadsheetId || '');
+      return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+    }
+
+    const payload = {
+      ok: true,
+      service: 'home-maintenance-sheet-writer',
+      version: SCRIPT_VERSION,
+      methods: ['GET', 'POST'],
+      actions: ['projectDropdownOptions'],
+    };
+
+    return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+  } catch (error) {
+    const failure = {
+      ok: false,
+      version: SCRIPT_VERSION,
+      action: action || 'status',
+      error: String(error && error.message ? error.message : error),
+    };
+
+    return canJsonp ? jsonpResponse(callback, failure) : jsonResponse(failure);
+  }
+}
+
+function buildProjectDropdownOptionsPayload(spreadsheetId) {
+  const targetSpreadsheetId = text(spreadsheetId);
+  if (!targetSpreadsheetId) {
+    throw new Error('Missing spreadsheetId for project dropdown options.');
+  }
+
+  const spreadsheet = SpreadsheetApp.openById(targetSpreadsheetId);
+  const perTabConfig = {
+    home: {
+      tabName: TAB_HOME,
+      fields: {
+        category: ['Category'],
+        state: ['State'],
+        priority: ['Priority'],
+        recurrence: ['Recurrence', 'Frequency', 'Repeat'],
+        area: ['Area'],
+      },
+    },
+    vehicle: {
+      tabName: TAB_VEHICLE,
+      fields: {
+        category: ['Category'],
+        state: ['State'],
+        priority: ['Priority'],
+        recurrence: ['Recurrence', 'Frequency', 'Interval'],
+        vehicle: ['Vehicle/Small Engine', 'Vehicle'],
+        area: ['Area'],
+      },
+    },
+    repeating: {
+      tabName: TAB_REPEATING,
+      fields: {
+        category: ['Category'],
+        state: ['State'],
+        priority: ['Priority'],
+        recurrence: ['Recurrence', 'Frequency', 'Repeat', 'Interval'],
+        area: ['Area'],
+      },
+    },
+  };
+
+  const options = {
+    home: {},
+    vehicle: {},
+    repeating: {},
+  };
+
+  Object.keys(perTabConfig).forEach(function (sourceKey) {
+    const sourceConfig = perTabConfig[sourceKey];
+    options[sourceKey] = extractDropdownsForTab(spreadsheet, sourceConfig.tabName, sourceConfig.fields);
+  });
+
+  return {
     ok: true,
-    service: 'home-maintenance-sheet-writer',
     version: SCRIPT_VERSION,
-    methods: ['POST'],
+    action: 'projectDropdownOptions',
+    options: options,
+  };
+}
+
+function extractDropdownsForTab(spreadsheet, tabName, fieldHeaderAliases) {
+  const sheet = spreadsheet.getSheetByName(tabName);
+  const result = {};
+
+  Object.keys(fieldHeaderAliases).forEach(function (fieldKey) {
+    result[fieldKey] = [];
+  });
+
+  if (!sheet) {
+    return result;
+  }
+
+  const lastColumn = sheet.getLastColumn();
+  const lastRow = sheet.getLastRow();
+  if (!lastColumn || !lastRow) {
+    return result;
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function (header) {
+    return text(header);
+  });
+
+  Object.keys(fieldHeaderAliases).forEach(function (fieldKey) {
+    const aliases = fieldHeaderAliases[fieldKey] || [];
+    const col = findHeaderColumnIndex(headers, aliases);
+    if (!col) {
+      result[fieldKey] = [];
+      return;
+    }
+
+    result[fieldKey] = collectDropdownValuesFromColumn(sheet, col, lastRow);
+  });
+
+  return result;
+}
+
+function findHeaderColumnIndex(headers, aliases) {
+  if (!headers || !headers.length || !aliases || !aliases.length) {
+    return 0;
+  }
+
+  const normalizedAliasMap = {};
+  aliases.forEach(function (alias) {
+    normalizedAliasMap[normalizeKey(alias)] = true;
+  });
+
+  for (var i = 0; i < headers.length; i += 1) {
+    if (normalizedAliasMap[normalizeKey(headers[i])]) {
+      return i + 1;
+    }
+  }
+
+  return 0;
+}
+
+function collectDropdownValuesFromColumn(sheet, col, lastRow) {
+  const valuesMap = {};
+
+  if (lastRow >= 2) {
+    const dataRows = lastRow - 1;
+    const dataRange = sheet.getRange(2, col, dataRows, 1);
+    const validationRows = dataRange.getDataValidations();
+    const valueRows = dataRange.getDisplayValues();
+
+    for (var r = 0; r < dataRows; r += 1) {
+      const currentValue = text(valueRows[r] && valueRows[r][0]);
+      if (currentValue) {
+        valuesMap[currentValue] = true;
+      }
+
+      const validation = validationRows[r] && validationRows[r][0];
+      if (!validation) {
+        continue;
+      }
+
+      const criteriaType = validation.getCriteriaType();
+      const criteriaValues = validation.getCriteriaValues() || [];
+
+      if (criteriaType === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
+        const explicitList = criteriaValues[0] || [];
+        explicitList.forEach(function (entry) {
+          const normalized = text(entry);
+          if (normalized) {
+            valuesMap[normalized] = true;
+          }
+        });
+      }
+
+      if (criteriaType === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) {
+        const sourceRange = criteriaValues[0];
+        if (sourceRange) {
+          const rangeValues = sourceRange.getDisplayValues();
+          for (var i = 0; i < rangeValues.length; i += 1) {
+            for (var j = 0; j < rangeValues[i].length; j += 1) {
+              const normalizedValue = text(rangeValues[i][j]);
+              if (normalizedValue) {
+                valuesMap[normalizedValue] = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return Object.keys(valuesMap).sort(function (a, b) {
+    return String(a).localeCompare(String(b));
   });
 }
 
@@ -68,21 +272,56 @@ function doPost(e) {
   try {
     const bodyText = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     const body = JSON.parse(bodyText);
+    const action = text(body.action || 'updateProject');
 
     const spreadsheetId = text(body.spreadsheetId);
     const tabName = text(body.tabName);
     const project = body.project || {};
+    const id = text(body.id || project.id);
 
-    logEvent('info', 'save_request_received', {
+    logEvent('info', 'write_request_received', {
       requestId: requestId,
+      action: action,
       spreadsheetId: spreadsheetId,
       tabName: tabName,
-      projectId: text(project.id),
+      projectId: id,
       source: text(project.source),
     });
 
     if (!spreadsheetId) {
       throw new Error('Missing spreadsheetId');
+    }
+
+    if (action === 'deleteProject') {
+      if (!id) {
+        throw new Error('Missing id for deleteProject action.');
+      }
+
+      const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      const deleteResult = deleteProjectByIdentity(spreadsheet, {
+        id: id,
+        source: text(body.source || project.source),
+        tabName: tabName,
+        sheetRowNumber: Number(body.sheetRowNumber || (project.metadata && project.metadata.sheetRowNumber) || 0),
+        title: text(body.title || project.title),
+      });
+
+      logEvent('info', 'delete_request_success', {
+        requestId: requestId,
+        id: deleteResult.id,
+        tabName: deleteResult.tabName,
+        rowNumber: deleteResult.rowNumber,
+      });
+
+      return jsonResponse({
+        ok: true,
+        requestId: requestId,
+        version: SCRIPT_VERSION,
+        action: 'deleteProject',
+        id: deleteResult.id,
+        tabName: deleteResult.tabName,
+        rowNumber: deleteResult.rowNumber,
+      });
     }
 
     if (!tabName) {
@@ -120,13 +359,288 @@ function doPost(e) {
 
     throw new Error('Unsupported tab: ' + tabName);
   } catch (error) {
-    logEvent('error', 'save_request_failed', {
+    logEvent('error', 'write_request_failed', {
       requestId: requestId,
       error: String(error && error.message ? error.message : error),
       stack: String(error && error.stack ? error.stack : ''),
     });
     return jsonResponse({ ok: false, requestId: requestId, version: SCRIPT_VERSION, error: String(error && error.message ? error.message : error) });
   }
+}
+
+function sourceToTabName(source) {
+  const normalized = text(source).toLowerCase();
+
+  if (normalized.indexOf('list_a') >= 0 || normalized.indexOf('home') >= 0) {
+    return TAB_HOME;
+  }
+
+  if (normalized.indexOf('list_b') >= 0 || normalized.indexOf('vehicle') >= 0) {
+    return TAB_VEHICLE;
+  }
+
+  if (normalized.indexOf('list_c') >= 0 || normalized.indexOf('repeating') >= 0) {
+    return TAB_REPEATING;
+  }
+
+  return '';
+}
+
+function deleteProjectByIdentity(spreadsheet, payload) {
+  const id = text(payload && payload.id);
+  const source = text(payload && payload.source);
+  const explicitTab = text(payload && payload.tabName);
+  const rowHint = Number(payload && payload.sheetRowNumber);
+  const titleHint = text(payload && payload.title);
+
+  if (!id) {
+    throw new Error('Missing id for project deletion.');
+  }
+
+  const fastDelete = tryDeleteProjectByRowHint(spreadsheet, {
+    id: id,
+    source: source,
+    tabName: explicitTab,
+    sheetRowNumber: rowHint,
+    title: titleHint,
+  });
+
+  if (fastDelete) {
+    return fastDelete;
+  }
+
+  const candidates = [];
+  if (explicitTab) {
+    candidates.push(explicitTab);
+  }
+
+  const sourceTab = sourceToTabName(source);
+  if (sourceTab && candidates.indexOf(sourceTab) === -1) {
+    candidates.push(sourceTab);
+  }
+
+  [TAB_HOME, TAB_VEHICLE, TAB_REPEATING].forEach(function (tab) {
+    if (candidates.indexOf(tab) === -1) {
+      candidates.push(tab);
+    }
+  });
+
+  for (var i = 0; i < candidates.length; i += 1) {
+    const tabName = candidates[i];
+    const sheet = spreadsheet.getSheetByName(tabName);
+    if (!sheet) {
+      continue;
+    }
+
+    const rowNumber = findDeleteRowInTab(sheet, tabName, id, rowHint, titleHint);
+    if (Number.isFinite(rowNumber) && rowNumber >= 2) {
+      sheet.deleteRow(rowNumber);
+      return {
+        ok: true,
+        id: id,
+        tabName: tabName,
+        rowNumber: rowNumber,
+      };
+    }
+  }
+
+  throw new Error('Project not found for deletion: ' + id);
+}
+
+function tryDeleteProjectByRowHint(spreadsheet, payload) {
+  const id = text(payload && payload.id);
+  const explicitTab = text(payload && payload.tabName);
+  const source = text(payload && payload.source);
+  const rowHint = Number(payload && payload.sheetRowNumber);
+  const titleHint = text(payload && payload.title);
+
+  if (!id || !Number.isFinite(rowHint) || rowHint < 2) {
+    return null;
+  }
+
+  const candidateTabs = [];
+  if (explicitTab) {
+    candidateTabs.push(explicitTab);
+  }
+
+  const sourceTab = sourceToTabName(source);
+  if (sourceTab && candidateTabs.indexOf(sourceTab) === -1) {
+    candidateTabs.push(sourceTab);
+  }
+
+  for (var i = 0; i < candidateTabs.length; i += 1) {
+    const tabName = candidateTabs[i];
+    const sheet = spreadsheet.getSheetByName(tabName);
+    if (!sheet) {
+      continue;
+    }
+
+    const matched = isDeleteRowHintMatch(sheet, tabName, id, rowHint, titleHint);
+    if (matched) {
+      sheet.deleteRow(rowHint);
+      return {
+        ok: true,
+        id: id,
+        tabName: tabName,
+        rowNumber: rowHint,
+      };
+    }
+  }
+
+  return null;
+}
+
+function isDeleteRowHintMatch(sheet, tabName, id, rowHint, titleHint) {
+  const lastRow = sheet.getLastRow();
+  if (!Number.isFinite(rowHint) || rowHint < 2 || rowHint > lastRow) {
+    return false;
+  }
+
+  if (tabName === TAB_HOME || tabName === TAB_REPEATING) {
+    const rowId = text(sheet.getRange(rowHint, 1).getDisplayValue());
+    if (rowId !== id) {
+      return false;
+    }
+
+    if (!titleHint) {
+      return true;
+    }
+
+    const rowTitle = text(sheet.getRange(rowHint, 5).getDisplayValue());
+    return !rowTitle || rowTitle === titleHint;
+  }
+
+  if (tabName === TAB_VEHICLE) {
+    const lastCol = sheet.getLastColumn();
+    if (!lastCol || lastCol < 1) {
+      return false;
+    }
+
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const headerMap = {};
+    for (var h = 0; h < headers.length; h += 1) {
+      headerMap[normalizeKey(headers[h])] = h + 1;
+    }
+
+    const idCol = headerMap[normalizeKey('ID')] || 1;
+    const rowId = text(sheet.getRange(rowHint, idCol).getDisplayValue());
+    if (rowId !== id) {
+      return false;
+    }
+
+    if (!titleHint) {
+      return true;
+    }
+
+    const titleCol = headerMap[normalizeKey('Service Description')] || 0;
+    if (!titleCol) {
+      return true;
+    }
+
+    const rowTitle = text(sheet.getRange(rowHint, titleCol).getDisplayValue());
+    return !rowTitle || rowTitle === titleHint;
+  }
+
+  return false;
+}
+
+function findDeleteRowInTab(sheet, tabName, id, rowHint, titleHint) {
+  const lastRow = sheet.getLastRow();
+  if (!lastRow || lastRow < 2) {
+    return NaN;
+  }
+
+  if (tabName === TAB_HOME || tabName === TAB_REPEATING) {
+    return findDeleteRowInFixedSheet(sheet, id, rowHint, titleHint);
+  }
+
+  if (tabName === TAB_VEHICLE) {
+    return findDeleteRowInVehicleSheet(sheet, id, rowHint, titleHint);
+  }
+
+  return NaN;
+}
+
+function findDeleteRowInFixedSheet(sheet, id, rowHint, titleHint) {
+  const lastRow = sheet.getLastRow();
+  if (Number.isFinite(rowHint) && rowHint >= 2 && rowHint <= lastRow) {
+    const hintedId = text(sheet.getRange(rowHint, 1).getDisplayValue());
+    if (hintedId && hintedId === id) {
+      return rowHint;
+    }
+  }
+
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+  const normalizedTitleHint = text(titleHint);
+  const titleValues = normalizedTitleHint
+    ? sheet.getRange(2, 5, lastRow - 1, 1).getDisplayValues()
+    : [];
+
+  for (var i = 0; i < ids.length; i += 1) {
+    const rowId = text(ids[i][0]);
+    if (rowId !== id) {
+      continue;
+    }
+
+    if (!normalizedTitleHint) {
+      return i + 2;
+    }
+
+    const rowTitle = text(titleValues[i] && titleValues[i][0]);
+    if (!rowTitle || rowTitle === normalizedTitleHint) {
+      return i + 2;
+    }
+  }
+
+  return NaN;
+}
+
+function findDeleteRowInVehicleSheet(sheet, id, rowHint, titleHint) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) {
+    return NaN;
+  }
+
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const headerMap = {};
+  for (var h = 0; h < headers.length; h += 1) {
+    headerMap[normalizeKey(headers[h])] = h + 1;
+  }
+
+  const idCol = headerMap[normalizeKey('ID')] || 1;
+  const titleCol = headerMap[normalizeKey('Service Description')] || 0;
+
+  if (Number.isFinite(rowHint) && rowHint >= 2 && rowHint <= lastRow) {
+    const hintedId = text(sheet.getRange(rowHint, idCol).getDisplayValue());
+    if (hintedId && hintedId === id) {
+      return rowHint;
+    }
+  }
+
+  const ids = sheet.getRange(2, idCol, lastRow - 1, 1).getDisplayValues();
+  const normalizedTitleHint = text(titleHint);
+  const titleValues = (normalizedTitleHint && titleCol)
+    ? sheet.getRange(2, titleCol, lastRow - 1, 1).getDisplayValues()
+    : [];
+
+  for (var i = 0; i < ids.length; i += 1) {
+    const rowId = text(ids[i][0]);
+    if (rowId !== id) {
+      continue;
+    }
+
+    if (!normalizedTitleHint || !titleCol) {
+      return i + 2;
+    }
+
+    const rowTitle = text(titleValues[i] && titleValues[i][0]);
+    if (!rowTitle || rowTitle === normalizedTitleHint) {
+      return i + 2;
+    }
+  }
+
+  return NaN;
 }
 
 function updateFixedSchemaRow(sheet, project) {

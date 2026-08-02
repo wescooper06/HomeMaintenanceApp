@@ -1,3 +1,6 @@
+// ADD PROJECT FEATURE — Copilot context anchor
+// This file handles Google Sheets API calls, ID generation (scan + increment),
+// createProject POST payloads, and metadata dropdown retrieval.
 (function () {
   const SPREADSHEET_ID = "18la6E47KuiFWXFSIASd8QYbvxEo-ZJ7RaxnnuxIml9k";
 
@@ -59,6 +62,47 @@
     }
 
     return String(value).replace(/^\uFEFF/, "").trim();
+  }
+
+  function fetchJsonp(url, timeoutMs) {
+    const timeout = Number.isFinite(timeoutMs) ? timeoutMs : 10000;
+
+    return new Promise((resolve, reject) => {
+      const callbackName = `__hm_jsonp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+      const script = document.createElement("script");
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Timed out while loading sheet dropdown metadata."));
+      }, timeout);
+
+      function cleanup() {
+        clearTimeout(timer);
+        if (script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+
+        try {
+          delete window[callbackName];
+        } catch (error) {
+          window[callbackName] = undefined;
+        }
+      }
+
+      window[callbackName] = (payload) => {
+        cleanup();
+        resolve(payload);
+      };
+
+      script.onerror = () => {
+        cleanup();
+        reject(new Error("Unable to load sheet dropdown metadata script."));
+      };
+
+      const requestUrl = new URL(url);
+      requestUrl.searchParams.set("callback", callbackName);
+      script.src = requestUrl.toString();
+      document.body.appendChild(script);
+    });
   }
 
   function parseCsv(text) {
@@ -402,6 +446,35 @@
     return TABS.home;
   }
 
+  async function fetchProjectDropdownOptions() {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+
+    if (!googleSheetsWriteUrl) {
+      throw new Error(
+        "Sheet write endpoint is not configured. Set window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL (or GOOGLE_APPS_SCRIPT_WEB_APP_URL)."
+      );
+    }
+
+    const url = new URL(googleSheetsWriteUrl);
+    url.searchParams.set("action", "projectDropdownOptions");
+    url.searchParams.set("spreadsheetId", SPREADSHEET_ID);
+
+    const payload = await fetchJsonp(url.toString());
+    if (!payload || payload.ok === false) {
+      throw new Error(cleanCell(payload && payload.error) || "Dropdown metadata request failed.");
+    }
+
+    if (!payload.options || typeof payload.options !== "object") {
+      const endpointVersion = cleanCell(payload && payload.version);
+      const endpointMethods = Array.isArray(payload && payload.methods) ? payload.methods.join(",") : "";
+      throw new Error(
+        `Dropdown metadata action is unavailable in deployed Apps Script${endpointVersion ? ` (version ${endpointVersion})` : ""}${endpointMethods ? `; methods: ${endpointMethods}` : ""}.`
+      );
+    }
+
+    return payload.options || {};
+  }
+
   async function updateProjectInSheet(project) {
     const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
 
@@ -441,6 +514,54 @@
     }
   }
 
+  async function deleteProject(projectOrId) {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+
+    if (!googleSheetsWriteUrl) {
+      throw new Error(
+        "Sheet write endpoint is not configured. Set window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL (or GOOGLE_APPS_SCRIPT_WEB_APP_URL)."
+      );
+    }
+
+    const project = typeof projectOrId === "object" && projectOrId != null ? projectOrId : null;
+    const id = cleanCell(project ? project.id : projectOrId);
+
+    if (!id) {
+      throw new Error("deleteProject requires a project id.");
+    }
+
+    const payload = {
+      action: "deleteProject",
+      spreadsheetId: SPREADSHEET_ID,
+      id,
+      source: project ? cleanCell(project.source) : "",
+      tabName: project ? sourceToTabName(project.source) : "",
+      sheetRowNumber: project && project.metadata ? Number(project.metadata.sheetRowNumber || project.metadata.rownumber || project.metadata._rownumber || 0) : 0,
+      title: project ? cleanCell(project.title) : "",
+    };
+
+    const response = await fetch(googleSheetsWriteUrl, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify(payload),
+    });
+
+    if (response.type === "opaque") {
+      return { ok: true, id, transport: "no-cors" };
+    }
+
+    if (!response.ok) {
+      const reason = await response.text().catch(() => "");
+      throw new Error(`Failed to delete from Google Sheets (${response.status}). ${cleanCell(reason)}`);
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      return { ok: true, id };
+    }
+  }
+
   window.SheetsService = {
     SPREADSHEET_ID,
     TABS,
@@ -449,6 +570,8 @@
     fetchVehicleSheet,
     fetchRepeatingSheet,
     fetchAllSheets,
+    fetchProjectDropdownOptions,
     updateProjectInSheet,
+    deleteProject,
   };
 })();
