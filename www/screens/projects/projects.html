@@ -1,3 +1,6 @@
+<!-- ADD PROJECT FEATURE — Copilot context anchor
+     This file contains the Projects screen layout, including the Add Project button,
+     modal markup, dynamic field containers, and validation dialog structure. -->
 <section class="projects-screen hm-card">
   <div data-main-nav></div>
 
@@ -62,6 +65,25 @@
           <button id="projectEditSave" type="submit" class="primary">Save Changes</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="projectDeleteModal" class="project-modal hidden" role="dialog" aria-modal="true" aria-labelledby="projectDeleteTitle">
+    <div class="project-modal-panel project-delete-modal-panel">
+      <header class="project-modal-header">
+        <h2 id="projectDeleteTitle">Delete Project</h2>
+        <button id="projectDeleteClose" type="button" class="project-modal-close" aria-label="Close">x</button>
+      </header>
+
+      <div class="project-delete-content">
+        <p id="projectDeleteMessage">Are you sure you want to delete this project? This cannot be undone.</p>
+        <p id="projectDeleteStatus" class="project-edit-message hm-muted" aria-live="polite"></p>
+
+        <div class="project-edit-actions">
+          <button id="projectDeleteCancel" type="button" class="project-delete-cancel">Cancel</button>
+          <button id="projectDeleteConfirm" type="button" class="project-delete-confirm">Confirm</button>
+        </div>
+      </div>
     </div>
   </div>
 

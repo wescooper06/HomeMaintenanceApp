@@ -1,5 +1,8 @@
+// ADD PROJECT FEATURE — Copilot context anchor
+// This file contains dynamic modal logic, dropdown population, field switching,
+// submit handlers, validation dialog behavior, and integration with ProjectsService.
 function initProjectsScreen() {
-  const SERVICE_VERSION = "20260728-15";
+  const SERVICE_VERSION = "20260802-1";
   const RETRY_QUEUE_KEY = "hm_sheet_write_retry_queue";
   const state = {
     allProjects: [],
@@ -14,6 +17,13 @@ function initProjectsScreen() {
     retryQueue: [],
     retryInProgress: false,
     sheetCounts: { home: 0, vehicle: 0, repeating: 0 },
+    sheetDropdowns: {
+      home: {},
+      vehicle: {},
+      repeating: {},
+    },
+    pendingDeleteProjectKey: "",
+    isDeleting: false,
   };
 
   const elements = {
@@ -32,11 +42,19 @@ function initProjectsScreen() {
     modalClose: document.getElementById("projectEditClose"),
     modalCancel: document.getElementById("projectEditCancel"),
     modalSave: document.getElementById("projectEditSave"),
+    deleteModal: document.getElementById("projectDeleteModal"),
+    deleteMessage: document.getElementById("projectDeleteMessage"),
+    deleteStatus: document.getElementById("projectDeleteStatus"),
+    deleteClose: document.getElementById("projectDeleteClose"),
+    deleteCancel: document.getElementById("projectDeleteCancel"),
+    deleteConfirm: document.getElementById("projectDeleteConfirm"),
   };
 
   if (!elements.source || !elements.category || !elements.projectState || !elements.sortBy || !elements.list || !elements.summary || !elements.syncStatus || !elements.duplicateBanner
     || !elements.modal || !elements.modalForm || !elements.modalFields || !elements.modalMessage
-    || !elements.modalClose || !elements.modalCancel || !elements.modalSave) {
+    || !elements.modalClose || !elements.modalCancel || !elements.modalSave
+    || !elements.deleteModal || !elements.deleteMessage || !elements.deleteStatus
+    || !elements.deleteClose || !elements.deleteCancel || !elements.deleteConfirm) {
     return;
   }
 
@@ -125,6 +143,13 @@ function initProjectsScreen() {
 
     const numeric = Number(text.replace(/[$,]/g, ""));
     return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function normalizeFieldKey(value) {
+    return String(value == null ? "" : value)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "");
   }
 
   function loadRetryQueue() {
@@ -413,11 +438,12 @@ function initProjectsScreen() {
   function getEditableFields(project) {
     const base = [
       { key: "title", label: "Title", target: "core", type: "text" },
-      { key: "category", label: "Category", target: "core", type: "text" },
-      { key: "state", label: "State", target: "core", type: "text" },
-      { key: "priority", label: "Priority", target: "metadata", type: "text" },
+      { key: "category", label: "Category", target: "core", type: "select" },
+      { key: "state", label: "State", target: "core", type: "select" },
+      { key: "priority", label: "Priority", target: "metadata", type: "select" },
       { key: "order", label: "Order", target: "metadata", type: "number" },
-      { key: "recurrence", label: "Recurrence", target: "metadata", type: "text" },
+      { key: "recurrence", label: "Recurrence", target: "metadata", type: "select" },
+      { key: "area", label: "Area", target: "metadata", type: "select" },
       { key: "actualCost", label: "Cost", target: "metadata", type: "number" },
       { key: "resourceLinks", label: "Resource Links", target: "metadata", type: "textarea" },
       { key: "notes", label: "Notes", target: "metadata", type: "textarea" },
@@ -426,21 +452,20 @@ function initProjectsScreen() {
     if (project.source === "home" || project.source === "repeating") {
       base.push(
         { key: "property", label: "Property", target: "metadata", type: "text" },
-        { key: "area", label: "Area", target: "metadata", type: "text" },
         { key: "dateCompleted", label: "Date Completed", target: "metadata", type: "text" }
       );
     }
 
     if (project.source === "vehicle") {
       base.push(
-        { key: "vehicle", label: "Vehicle / Small Engine", target: "metadata", type: "text" },
+        { key: "vehicle", label: "Vehicle / Small Engine", target: "metadata", type: "select" },
         { key: "mileage", label: "Mileage", target: "metadata", type: "number" },
         { key: "engineHours", label: "Engine Hours", target: "metadata", type: "number" }
       );
     }
 
     const seen = new Set(base.map((item) => item.key));
-    const nonEditableMetadataKeys = new Set(["sources", "sheetRowNumber", "rownumber", "_rowNumber", "_rownumber", "_originalTitle", "_originalId"]);
+    const nonEditableMetadataKeys = new Set(["sources", "sheetRowNumber", "rownumber", "_rowNumber", "_rownumber", "_originalTitle", "_originalId", "_sourceTabId", "_sourceGeneratedId"]);
     Object.keys(project.metadata || {}).forEach((key) => {
       if (nonEditableMetadataKeys.has(key) || seen.has(key)) {
         return;
@@ -471,13 +496,178 @@ function initProjectsScreen() {
     return value == null ? "" : String(value);
   }
 
+  function sortDropdownValues(values) {
+    return [...values].sort((a, b) => {
+      const left = String(a == null ? "" : a).trim();
+      const right = String(b == null ? "" : b).trim();
+      const leftNumber = parseNumber(left);
+      const rightNumber = parseNumber(right);
+
+      if (leftNumber != null && rightNumber != null) {
+        return leftNumber - rightNumber;
+      }
+
+      if (leftNumber != null) {
+        return -1;
+      }
+
+      if (rightNumber != null) {
+        return 1;
+      }
+
+      return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true });
+    });
+  }
+
+  function extractDistinctColumnValues(rows, aliases) {
+    const normalizedAliases = new Set((aliases || []).map((alias) => normalizeFieldKey(alias)));
+    const values = new Set();
+
+    (rows || []).forEach((row) => {
+      if (!row || typeof row !== "object") {
+        return;
+      }
+
+      const keys = Object.keys(row);
+      for (let i = 0; i < keys.length; i += 1) {
+        const key = keys[i];
+        if (!normalizedAliases.has(normalizeFieldKey(key))) {
+          continue;
+        }
+
+        const normalized = cleanText(row[key], "");
+        if (normalized) {
+          values.add(normalized);
+        }
+      }
+    });
+
+    return sortDropdownValues(values);
+  }
+
+  function getDropdownValues(project, field) {
+    const fieldKey = cleanText(field && field.key, "");
+    if (!fieldKey) {
+      return [];
+    }
+
+    const values = new Set();
+
+    const sourceDropdowns = state.sheetDropdowns[project.source] || {};
+    const sourceValues = Array.isArray(sourceDropdowns[fieldKey]) ? sourceDropdowns[fieldKey] : [];
+    sourceValues.forEach((value) => {
+      const normalized = cleanText(value, "");
+      if (normalized) {
+        values.add(normalized);
+      }
+    });
+
+    if (!sourceValues.length) {
+      ["home", "vehicle", "repeating"].forEach((source) => {
+        const fromSource = (((state.sheetDropdowns || {})[source] || {})[fieldKey]) || [];
+        (Array.isArray(fromSource) ? fromSource : []).forEach((value) => {
+          const normalized = cleanText(value, "");
+          if (normalized) {
+            values.add(normalized);
+          }
+        });
+      });
+    }
+
+    state.allProjects.forEach((item) => {
+      let raw = null;
+
+      if (fieldKey === "category") {
+        if (item.source === project.source) {
+          raw = item.category;
+        }
+      } else if (fieldKey === "state") {
+        if (item.source === project.source) {
+          raw = item.state;
+        }
+      } else if (fieldKey === "priority") {
+        raw = item.priority;
+      } else if (fieldKey === "recurrence") {
+        raw = item.recurrence;
+      } else if (fieldKey === "vehicle") {
+        if (item.source === "vehicle") {
+          raw = item.asset || firstDefined(item.metadata || {}, ["vehicle", "asset"]);
+        }
+      } else if (fieldKey === "area") {
+        raw = firstDefined(item.metadata || {}, ["area"]);
+      }
+
+      const normalized = cleanText(raw, "");
+      if (normalized) {
+        values.add(normalized);
+      }
+    });
+
+    const currentValue = cleanText(getFieldValue(project, field), "");
+    if (currentValue) {
+      values.add(currentValue);
+    }
+
+    return sortDropdownValues(values);
+  }
+
+  async function refreshSheetDropdowns() {
+    if (!window.SheetsService || typeof window.SheetsService.fetchProjectDropdownOptions !== "function") {
+      state.sheetDropdowns = { home: {}, vehicle: {}, repeating: {} };
+      return;
+    }
+
+    try {
+      const options = await window.SheetsService.fetchProjectDropdownOptions();
+      const next = { home: {}, vehicle: {}, repeating: {} };
+
+      ["home", "vehicle", "repeating"].forEach((source) => {
+        const sourceOptions = options && typeof options === "object" ? options[source] : null;
+        if (!sourceOptions || typeof sourceOptions !== "object") {
+          return;
+        }
+
+        Object.keys(sourceOptions).forEach((fieldKey) => {
+          const rawValues = Array.isArray(sourceOptions[fieldKey]) ? sourceOptions[fieldKey] : [];
+          const cleaned = sortDropdownValues(
+            rawValues
+              .map((value) => cleanText(value, ""))
+              .filter(Boolean)
+          );
+
+          next[source][fieldKey] = cleaned;
+        });
+      });
+
+      state.sheetDropdowns = next;
+    } catch (error) {
+      console.warn("Unable to load sheet dropdown metadata.", error);
+
+      const fallback = { home: {}, vehicle: {}, repeating: {} };
+      try {
+        if (typeof window.SheetsService.fetchVehicleSheet === "function") {
+          const vehicleSheet = await window.SheetsService.fetchVehicleSheet();
+          const rows = vehicleSheet && Array.isArray(vehicleSheet.rows) ? vehicleSheet.rows : [];
+
+          fallback.vehicle.category = extractDistinctColumnValues(rows, ["Category", "Type"]);
+          fallback.vehicle.state = extractDistinctColumnValues(rows, ["State", "Status"]);
+        }
+      } catch (fallbackError) {
+        console.warn("Unable to load vehicle fallback dropdown values.", fallbackError);
+      }
+
+      state.sheetDropdowns = fallback;
+    }
+  }
+
   function openEditModal(project) {
     state.activeProjectKey = project.uiKey;
     const fields = getEditableFields(project);
-    const rowNumber = firstDefined(project.metadata || {}, ["sheetRowNumber", "rownumber", "_rownumber"]);
+    const sourceTabId = cleanText(project.sourceTabId || firstDefined(project.metadata || {}, ["_sourceTabId"]), "");
+    const displayId = sourceTabId || cleanText(project.id, "");
     const modalTitle = document.getElementById("projectEditTitle");
     if (modalTitle) {
-      const suffix = rowNumber == null ? "" : ` (Sheet Row ${rowNumber})`;
+      const suffix = displayId ? ` (ID: ${displayId})` : "";
       modalTitle.textContent = `Edit Project Details${suffix}`;
     }
 
@@ -493,6 +683,28 @@ function initProjectsScreen() {
             <div class="project-edit-field">
               <label>${label}</label>
               <textarea data-field-key="${key}" data-field-target="${target}">${value}</textarea>
+            </div>
+          `;
+        }
+
+        if (field.type === "select") {
+          const options = getDropdownValues(project, field);
+          const selectedValue = cleanText(getFieldValue(project, field), "");
+          const optionHtml = options
+            .map((option) => {
+              const escapedOption = escapeHtml(option);
+              const selectedAttr = cleanText(option, "") === selectedValue ? " selected" : "";
+              return `<option value="${escapedOption}"${selectedAttr}>${escapedOption}</option>`;
+            })
+            .join("");
+
+          return `
+            <div class="project-edit-field">
+              <label>${label}</label>
+              <select data-field-key="${key}" data-field-target="${target}">
+                <option value=""></option>
+                ${optionHtml}
+              </select>
             </div>
           `;
         }
@@ -520,6 +732,115 @@ function initProjectsScreen() {
     elements.modal.classList.add("hidden");
     elements.modalFields.innerHTML = "";
     elements.modalMessage.textContent = "";
+  }
+
+  function openDeleteModal(project) {
+    state.pendingDeleteProjectKey = project.uiKey;
+    elements.deleteStatus.textContent = "";
+    elements.deleteMessage.textContent = "Are you sure you want to delete this project? This cannot be undone.";
+    elements.deleteConfirm.disabled = false;
+    elements.deleteCancel.disabled = false;
+    elements.deleteClose.disabled = false;
+    elements.deleteModal.classList.remove("hidden");
+  }
+
+  function closeDeleteModal() {
+    state.pendingDeleteProjectKey = "";
+    elements.deleteStatus.textContent = "";
+    elements.deleteConfirm.disabled = false;
+    elements.deleteCancel.disabled = false;
+    elements.deleteClose.disabled = false;
+    elements.deleteModal.classList.add("hidden");
+  }
+
+  function removeProjectFromState(project) {
+    state.allProjects = state.allProjects.filter((item) => item.uiKey !== project.uiKey);
+    state.filteredProjects = state.filteredProjects.filter((item) => item.uiKey !== project.uiKey);
+    removeQueuedWrite(project);
+
+    if (state.activeProjectKey === project.uiKey) {
+      closeEditModal();
+    }
+
+    state.sheetCounts = deriveCountsFromProjects(state.allProjects);
+    renderDuplicateBanner();
+    updateFilters();
+    applyFiltersAndSort();
+  }
+
+  function restoreProjectInState(project, previousAllProjects) {
+    const restored = [...previousAllProjects];
+    const exists = restored.some((item) => item.uiKey === project.uiKey);
+    if (!exists) {
+      restored.push(project);
+    }
+
+    state.allProjects = restored;
+    state.sheetCounts = deriveCountsFromProjects(state.allProjects);
+    renderDuplicateBanner();
+    updateFilters();
+    applyFiltersAndSort();
+  }
+
+  async function confirmDeleteProject() {
+    if (state.isDeleting) {
+      return;
+    }
+
+    const project = state.allProjects.find((item) => item.uiKey === state.pendingDeleteProjectKey);
+    if (!project) {
+      closeDeleteModal();
+      return;
+    }
+
+    const previousAllProjects = [...state.allProjects];
+    state.isDeleting = true;
+
+    // Close quickly and remove locally so the UI does not wait on network latency.
+    closeDeleteModal();
+    removeProjectFromState(project);
+    renderSummary(`Deleting \"${project.title}\"...`);
+
+    try {
+      if (!window.SheetsService || typeof window.SheetsService.deleteProject !== "function") {
+        throw new Error("Sheet delete service is unavailable.");
+      }
+
+      const result = await window.SheetsService.deleteProject(project);
+      if (result && result.ok === false) {
+        throw new Error(cleanText(result.error, "Remote delete rejected."));
+      }
+
+      if (window.ProjectsService && typeof window.ProjectsService.deleteProject === "function") {
+        window.ProjectsService.deleteProject(project);
+      }
+
+      console.log("Project deleted successfully.", {
+        id: project.id,
+        source: project.source,
+        uiKey: project.uiKey,
+      });
+
+      renderSummary(`Deleted \"${project.title}\".`);
+      state.isDeleting = false;
+    } catch (error) {
+      const reason = error && error.message ? error.message : "Unable to delete project.";
+      console.error("Project deletion failed.", {
+        id: project.id,
+        source: project.source,
+        uiKey: project.uiKey,
+        error: reason,
+      });
+
+      restoreProjectInState(project, previousAllProjects);
+      openDeleteModal(project);
+      elements.deleteStatus.textContent = reason;
+      elements.deleteConfirm.disabled = false;
+      elements.deleteCancel.disabled = false;
+      elements.deleteClose.disabled = false;
+      renderSummary("Delete failed. Project restored.");
+      state.isDeleting = false;
+    }
   }
 
   function applyFormValues(project) {
@@ -767,6 +1088,7 @@ function initProjectsScreen() {
             <div class="project-actions">
               <button type="button" class="edit-details-btn" data-project-key="${project.uiKey}">Edit Details</button>
               <button type="button" class="primary add-task-btn" data-project-key="${project.uiKey}">Add to Task Manager</button>
+              <button type="button" class="project-delete-btn" data-project-key="${project.uiKey}">Delete</button>
             </div>
           </article>
         `;
@@ -844,15 +1166,27 @@ function initProjectsScreen() {
       saveProjectDetails();
     }, { signal: controller.signal });
 
+    elements.deleteClose.addEventListener("click", closeDeleteModal, { signal: controller.signal });
+    elements.deleteCancel.addEventListener("click", closeDeleteModal, { signal: controller.signal });
+    elements.deleteConfirm.addEventListener("click", () => {
+      confirmDeleteProject();
+    }, { signal: controller.signal });
+    elements.deleteModal.addEventListener("click", (event) => {
+      if (event.target === elements.deleteModal) {
+        closeDeleteModal();
+      }
+    }, { signal: controller.signal });
+
     elements.list.addEventListener("click", (event) => {
       const detailsBtn = event.target.closest(".edit-details-btn");
       const addBtn = event.target.closest(".add-task-btn");
+      const deleteBtn = event.target.closest(".project-delete-btn");
 
-      if (!detailsBtn && !addBtn) {
+      if (!detailsBtn && !addBtn && !deleteBtn) {
         return;
       }
 
-      const projectKey = (detailsBtn || addBtn).getAttribute("data-project-key");
+      const projectKey = (detailsBtn || addBtn || deleteBtn).getAttribute("data-project-key");
       const project = state.filteredProjects.find((item) => item.uiKey === projectKey);
       if (!project) {
         return;
@@ -864,6 +1198,10 @@ function initProjectsScreen() {
 
       if (addBtn) {
         addToTaskManager(project);
+      }
+
+      if (deleteBtn) {
+        openDeleteModal(project);
       }
     }, { signal: controller.signal });
 
@@ -896,7 +1234,10 @@ function initProjectsScreen() {
   }
 
   async function refreshProjectsFromSheet() {
-    const projects = await window.loadAllProjects();
+    const [projects] = await Promise.all([
+      window.loadAllProjects(),
+      refreshSheetDropdowns(),
+    ]);
 
     if (!isStillActive()) {
       return;

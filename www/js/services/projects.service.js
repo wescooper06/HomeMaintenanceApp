@@ -1,3 +1,6 @@
+// ADD PROJECT FEATURE — Copilot context anchor
+// This file manages UnifiedProjectList updates, project creation logic,
+// sheet routing decisions (List_A, List_B, List_C), and post-submit refresh behavior.
 (function () {
   const SOURCE = {
     home: "Project List_A",
@@ -560,6 +563,43 @@
     return UnifiedProjectList;
   }
 
+  function deleteProject(projectOrId) {
+    const project = typeof projectOrId === "object" && projectOrId != null ? projectOrId : null;
+    const targetId = cleanString(project ? project.id : projectOrId);
+    const targetSource = cleanString(project && project.source).toLowerCase();
+    const targetRow = Number(project && project.metadata && project.metadata.sheetRowNumber);
+
+    if (!targetId) {
+      return UnifiedProjectList;
+    }
+
+    UnifiedProjectList = UnifiedProjectList.filter((item) => {
+      const sameId = cleanString(item.id) === targetId;
+      if (!sameId) {
+        return true;
+      }
+
+      if (targetSource && cleanString(item.source).toLowerCase() !== targetSource) {
+        return true;
+      }
+
+      if (Number.isFinite(targetRow) && targetRow > 0) {
+        const itemRow = Number(item && item.metadata && item.metadata.sheetRowNumber);
+        return itemRow !== targetRow;
+      }
+
+      return false;
+    });
+
+    LastLoadStats = {
+      ...LastLoadStats,
+      total: UnifiedProjectList.length,
+    };
+
+    window.UnifiedProjectList = UnifiedProjectList;
+    return UnifiedProjectList;
+  }
+
   const service = {
     SCHEMAS,
     get UnifiedProjectList() {
@@ -572,6 +612,7 @@
     loadVehicleProjects,
     loadRepeatingProjects,
     loadAllProjects,
+    deleteProject,
   };
 
   window.ProjectsService = service;
@@ -579,4 +620,5 @@
   window.loadVehicleProjects = loadVehicleProjects;
   window.loadRepeatingProjects = loadRepeatingProjects;
   window.loadAllProjects = loadAllProjects;
+  window.deleteProjectFromUnifiedList = deleteProject;
 })();
