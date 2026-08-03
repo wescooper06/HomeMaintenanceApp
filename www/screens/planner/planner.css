@@ -58,8 +58,14 @@
   gap: 0.45rem;
 }
 
-.pool-task-controls select,
-.pool-task-controls button {
+.pool-control-label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.pool-task-controls select {
   border: 1px solid #c7d4e2;
   border-radius: 8px;
   padding: 0.4rem 0.6rem;
@@ -68,10 +74,19 @@
 }
 
 .pool-task-controls button {
+  border: 1px solid #c7d4e2;
+  background: #f8fbff;
+  color: #0f172a;
+  border-radius: 8px;
+  padding: 0.4rem 0.65rem;
+  font: inherit;
   cursor: pointer;
-  background: #0f766e;
-  border-color: #0f766e;
-  color: #ffffff;
+}
+
+.pool-task-controls button.danger {
+  border-color: #b91c1c;
+  color: #b91c1c;
+  background: #fff7f7;
 }
 
 .planner-week {
@@ -125,6 +140,16 @@
   padding: 0.4rem;
   font-size: 0.88rem;
   background: #f8fbff;
+  cursor: grab;
+}
+
+.slot-task.is-dragging {
+  opacity: 0.6;
+}
+
+.day-slot.is-drop-target {
+  border-color: #0f766e;
+  background: #ecfeff;
 }
 
 .slot-task-title {

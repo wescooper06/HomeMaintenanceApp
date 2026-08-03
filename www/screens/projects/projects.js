@@ -9,11 +9,11 @@ function initProjectsScreen() {
     filteredProjects: [],
     activeProjectKey: "",
     filters: {
-      source: "all",
-      category: "all",
-      projectState: "all",
+      source: [],
+      category: [],
+      projectState: [],
     },
-    sortBy: "priority",
+    sortBy: "order",
     retryQueue: [],
     retryInProgress: false,
     sheetCounts: { home: 0, vehicle: 0, repeating: 0 },
@@ -40,8 +40,11 @@ function initProjectsScreen() {
 
   const elements = {
     source: document.getElementById("projectsFilterSource"),
+    sourceSummary: document.getElementById("projectsFilterSourceSummary"),
     category: document.getElementById("projectsFilterCategory"),
+    categorySummary: document.getElementById("projectsFilterCategorySummary"),
     projectState: document.getElementById("projectsFilterState"),
+    projectStateSummary: document.getElementById("projectsFilterStateSummary"),
     sortBy: document.getElementById("projectsSortBy"),
     list: document.getElementById("projectsList"),
     summary: document.getElementById("projectsSummary"),
@@ -77,7 +80,7 @@ function initProjectsScreen() {
     addResultMessage: document.getElementById("projectAddResultMessage"),
   };
 
-  if (!elements.source || !elements.category || !elements.projectState || !elements.sortBy || !elements.list || !elements.summary || !elements.syncStatus || !elements.duplicateBanner
+  if (!elements.source || !elements.sourceSummary || !elements.category || !elements.categorySummary || !elements.projectState || !elements.projectStateSummary || !elements.sortBy || !elements.list || !elements.summary || !elements.syncStatus || !elements.duplicateBanner
     || !elements.modal || !elements.modalForm || !elements.modalFields || !elements.modalMessage
     || !elements.modalClose || !elements.modalCancel || !elements.modalSave
     || !elements.deleteModal || !elements.deleteMessage || !elements.deleteStatus
@@ -1466,32 +1469,239 @@ function initProjectsScreen() {
     }
   }
 
-  function fillSelect(selectEl, values, allLabel) {
-    const current = selectEl.value;
-    selectEl.innerHTML = "";
+  function normalizeArrayValues(values) {
+    const unique = [];
+    const seen = new Set();
 
-    const allOption = document.createElement("option");
-    allOption.value = "all";
-    allOption.textContent = allLabel;
-    selectEl.appendChild(allOption);
+    (values || []).forEach((value) => {
+      const cleaned = cleanText(value, "");
+      if (!cleaned) {
+        return;
+      }
 
-    values.forEach((value) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = value;
-      selectEl.appendChild(option);
+      const key = cleaned.toLowerCase();
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      unique.push(cleaned);
     });
 
-    selectEl.value = values.includes(current) || current === "all" ? current : "all";
+    return unique;
+  }
+
+  function defaultSelectedValues(filterKey, availableValues) {
+    const available = normalizeArrayValues(availableValues);
+    if (filterKey === "projectState") {
+      const nonCompleted = available.filter((value) => normalizeFieldKey(value) !== "completed");
+      return nonCompleted.length ? nonCompleted : available;
+    }
+
+    return available;
+  }
+
+  function normalizeSelectedValues(filterKey, selectedValues, availableValues) {
+    const available = normalizeArrayValues(availableValues);
+    const availableSet = new Set(available.map((value) => value.toLowerCase()));
+    const selected = normalizeArrayValues(selectedValues).filter((value) => availableSet.has(value.toLowerCase()));
+
+    if (selected.length) {
+      return selected;
+    }
+
+    return defaultSelectedValues(filterKey, available);
+  }
+
+  function sourceLabel(value) {
+    const key = cleanText(value, "").toLowerCase();
+    if (key === "home") {
+      return "Home";
+    }
+
+    if (key === "vehicle") {
+      return "Vehicle";
+    }
+
+    if (key === "repeating") {
+      return "Repeating";
+    }
+
+    return cleanText(value, "");
+  }
+
+  function filterOptionLabel(filterKey, value) {
+    if (filterKey === "source") {
+      return sourceLabel(value);
+    }
+
+    return cleanText(value, "");
+  }
+
+  function renderFilterOptions(filterKey, containerEl, availableValues, selectedValues) {
+    const available = normalizeArrayValues(availableValues);
+    const selected = normalizeSelectedValues(filterKey, selectedValues, available);
+    const selectedSet = new Set(selected.map((value) => value.toLowerCase()));
+
+    const optionRows = available.map((value) => {
+      const checked = selectedSet.has(value.toLowerCase()) ? " checked" : "";
+      const optionId = `projectsFilter${filterKey}_${normalizeFieldKey(value)}`;
+      const escapedValue = escapeHtml(value);
+      const label = escapeHtml(filterOptionLabel(filterKey, value));
+
+      return `
+        <label class="projects-filter-option" for="${optionId}">
+          <input id="${optionId}" type="checkbox" data-filter-key="${filterKey}" data-filter-value="${escapedValue}" value="${escapedValue}"${checked} />
+          <span>${label}</span>
+        </label>
+      `;
+    }).join("");
+
+    containerEl.innerHTML = `
+      <div class="projects-filter-actions">
+        <button type="button" class="projects-filter-action-btn" data-filter-key="${escapeHtml(filterKey)}" data-filter-action="all">Select all</button>
+        <button type="button" class="projects-filter-action-btn" data-filter-key="${escapeHtml(filterKey)}" data-filter-action="clear">Clear</button>
+      </div>
+      ${optionRows}
+    `;
+
+    return selected;
+  }
+
+  function getFilterContainer(filterKey) {
+    if (filterKey === "source") {
+      return elements.source;
+    }
+
+    if (filterKey === "category") {
+      return elements.category;
+    }
+
+    return elements.projectState;
+  }
+
+  function getFilterSummaryElement(filterKey) {
+    if (filterKey === "source") {
+      return elements.sourceSummary;
+    }
+
+    if (filterKey === "category") {
+      return elements.categorySummary;
+    }
+
+    return elements.projectStateSummary;
+  }
+
+  function getFilterAvailableValues(filterKey) {
+    if (filterKey === "source") {
+      return ["home", "vehicle", "repeating"];
+    }
+
+    const container = getFilterContainer(filterKey);
+    return Array.from(container.querySelectorAll("input[data-filter-value]"))
+      .map((input) => cleanText(input.value, ""));
+  }
+
+  function applyFilterCheckboxSelection(filterKey, selectedValues, availableValues) {
+    const container = getFilterContainer(filterKey);
+    const summary = getFilterSummaryElement(filterKey);
+    const normalized = normalizeSelectedValues(filterKey, selectedValues, availableValues);
+
+    state.filters[filterKey] = renderFilterOptions(filterKey, container, availableValues, normalized);
+    updateFilterSummary(filterKey, summary, state.filters[filterKey], availableValues);
+    applyFiltersAndSort();
+  }
+
+  function handleFilterContainerChange(filterKey) {
+    const container = getFilterContainer(filterKey);
+    const availableValues = getFilterAvailableValues(filterKey);
+    const selectedValues = Array.from(container.querySelectorAll("input[data-filter-value]:checked"))
+      .map((input) => cleanText(input.value, ""));
+
+    applyFilterCheckboxSelection(filterKey, selectedValues, availableValues);
+  }
+
+  function handleFilterActionClick(filterKey, action) {
+    const availableValues = getFilterAvailableValues(filterKey);
+    if (action === "all") {
+      applyFilterCheckboxSelection(filterKey, availableValues, availableValues);
+      return;
+    }
+
+    if (action === "clear") {
+      if (filterKey === "projectState") {
+        const noCompleted = availableValues.filter((value) => normalizeFieldKey(value) !== "completed");
+        applyFilterCheckboxSelection(filterKey, noCompleted, availableValues);
+        return;
+      }
+
+      applyFilterCheckboxSelection(filterKey, availableValues, availableValues);
+    }
+  }
+
+  function sameSet(left, right) {
+    const a = new Set((left || []).map((value) => cleanText(value, "").toLowerCase()));
+    const b = new Set((right || []).map((value) => cleanText(value, "").toLowerCase()));
+
+    if (a.size !== b.size) {
+      return false;
+    }
+
+    for (const value of a) {
+      if (!b.has(value)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  function updateFilterSummary(filterKey, summaryEl, selectedValues, availableValues) {
+    const available = normalizeArrayValues(availableValues);
+    const selected = normalizeArrayValues(selectedValues);
+
+    if (!available.length) {
+      summaryEl.textContent = "No options";
+      return;
+    }
+
+    if (filterKey === "projectState") {
+      const defaultStateSet = defaultSelectedValues("projectState", available);
+      if (sameSet(selected, defaultStateSet)) {
+        summaryEl.textContent = "All states except Completed";
+        return;
+      }
+    }
+
+    if (sameSet(selected, available)) {
+      summaryEl.textContent = filterKey === "source"
+        ? "All sources"
+        : filterKey === "category"
+          ? "All categories"
+          : "All states";
+      return;
+    }
+
+    if (selected.length <= 2) {
+      summaryEl.textContent = selected.map((value) => filterOptionLabel(filterKey, value)).join(", ");
+      return;
+    }
+
+    summaryEl.textContent = `${selected.length} selected`;
   }
 
   function updateFilters() {
+    const sources = ["home", "vehicle", "repeating"];
     const categories = [...new Set(state.allProjects.map((p) => p.category).filter(Boolean))].sort();
     const states = [...new Set(state.allProjects.map((p) => p.state).filter(Boolean))].sort();
 
-    fillSelect(elements.source, ["home", "vehicle", "repeating"], "All sources");
-    fillSelect(elements.category, categories, "All categories");
-    fillSelect(elements.projectState, states, "All states");
+    state.filters.source = renderFilterOptions("source", elements.source, sources, state.filters.source);
+    state.filters.category = renderFilterOptions("category", elements.category, categories, state.filters.category);
+    state.filters.projectState = renderFilterOptions("projectState", elements.projectState, states, state.filters.projectState);
+
+    updateFilterSummary("source", elements.sourceSummary, state.filters.source, sources);
+    updateFilterSummary("category", elements.categorySummary, state.filters.category, categories);
+    updateFilterSummary("projectState", elements.projectStateSummary, state.filters.projectState, states);
   }
 
   function applySort(items) {
@@ -1524,17 +1734,20 @@ function initProjectsScreen() {
 
   function applyFiltersAndSort() {
     const { source, category, projectState } = state.filters;
+    const sourceSet = new Set(source || []);
+    const categorySet = new Set(category || []);
+    const stateSet = new Set(projectState || []);
 
     const filtered = state.allProjects.filter((project) => {
-      if (source !== "all" && project.source !== source) {
+      if (sourceSet.size && !sourceSet.has(project.source)) {
         return false;
       }
 
-      if (category !== "all" && project.category !== category) {
+      if (categorySet.size && !categorySet.has(project.category)) {
         return false;
       }
 
-      if (projectState !== "all" && project.state !== projectState) {
+      if (stateSet.size && !stateSet.has(project.state)) {
         return false;
       }
 
@@ -1571,8 +1784,16 @@ function initProjectsScreen() {
         const sourceDisplay = cleanText(project.source, "unknown");
         const recurrence = project.recurrence ? cleanText(project.recurrence, "") : "-";
         const priority = project.priority != null && String(project.priority).trim() !== "" ? project.priority : "-";
-        const order = project.order != null && String(project.order).trim() !== "" ? project.order : "-";
         const displayId = project.sourceTabId || "-";
+        const explicitOrder = firstDefined(project.metadata || {}, ["order"]);
+        const orderText = explicitOrder != null && String(explicitOrder).trim() !== ""
+          ? cleanText(explicitOrder, "")
+          : "";
+        const title = escapeHtml(project.title);
+        const titleId = escapeHtml(displayId);
+        const orderBadgeClass = orderText ? "project-title-order-badge" : "project-title-order-badge is-empty";
+        const orderBadgeText = orderText ? `Order: ${escapeHtml(orderText)}` : "&nbsp;";
+        const orderBadge = `<span class="${orderBadgeClass}">${orderBadgeText}</span>`;
 
         const vehicleFields = sourceDisplay === "vehicle"
           ? `<div class="project-field"><strong>Asset:</strong> ${project.asset || "-"}</div>
@@ -1585,14 +1806,12 @@ function initProjectsScreen() {
 
         return `
           <article class="project-card" data-project-key="${project.uiKey}">
-            <h2>${project.title}</h2>
+            <h2 class="project-card-title"><span class="project-title-main">${title} <span class="project-title-id">(ID: ${titleId})</span></span>${orderBadge}</h2>
             <div class="project-grid">
-              <div class="project-field"><strong>ID:</strong> ${displayId}</div>
               <div class="project-field"><strong>Source:</strong> ${sourceDisplay}</div>
               <div class="project-field"><strong>Category:</strong> ${project.category}</div>
               <div class="project-field"><strong>State:</strong> ${project.state}</div>
               <div class="project-field"><strong>Priority:</strong> ${priority}</div>
-              <div class="project-field"><strong>Order:</strong> ${order}</div>
               <div class="project-field"><strong>Recurrence:</strong> ${recurrence}</div>
               ${vehicleFields}
               ${homeCostField}
@@ -1645,6 +1864,8 @@ function initProjectsScreen() {
   }
 
   function attachEvents() {
+    elements.sortBy.value = state.sortBy;
+
     elements.addBtn.addEventListener("click", openAddProjectModal, { signal: controller.signal });
     elements.addClose.addEventListener("click", closeAddProjectModal, { signal: controller.signal });
     elements.addCancel.addEventListener("click", closeAddProjectModal, { signal: controller.signal });
@@ -1667,19 +1888,58 @@ function initProjectsScreen() {
       submitNewProject();
     }, { signal: controller.signal });
 
-    elements.source.addEventListener("change", () => {
-      state.filters.source = elements.source.value;
-      applyFiltersAndSort();
+    elements.source.addEventListener("change", (event) => {
+      const checkbox = event.target.closest("input[type=checkbox][data-filter-value]");
+      if (!checkbox) {
+        return;
+      }
+
+      handleFilterContainerChange("source");
     }, { signal: controller.signal });
 
-    elements.category.addEventListener("change", () => {
-      state.filters.category = elements.category.value;
-      applyFiltersAndSort();
+    elements.category.addEventListener("change", (event) => {
+      const checkbox = event.target.closest("input[type=checkbox][data-filter-value]");
+      if (!checkbox) {
+        return;
+      }
+
+      handleFilterContainerChange("category");
     }, { signal: controller.signal });
 
-    elements.projectState.addEventListener("change", () => {
-      state.filters.projectState = elements.projectState.value;
-      applyFiltersAndSort();
+    elements.projectState.addEventListener("change", (event) => {
+      const checkbox = event.target.closest("input[type=checkbox][data-filter-value]");
+      if (!checkbox) {
+        return;
+      }
+
+      handleFilterContainerChange("projectState");
+    }, { signal: controller.signal });
+
+    elements.source.addEventListener("click", (event) => {
+      const actionBtn = event.target.closest("button[data-filter-action]");
+      if (!actionBtn) {
+        return;
+      }
+
+      handleFilterActionClick("source", actionBtn.getAttribute("data-filter-action"));
+    }, { signal: controller.signal });
+
+    elements.category.addEventListener("click", (event) => {
+      const actionBtn = event.target.closest("button[data-filter-action]");
+      if (!actionBtn) {
+        return;
+      }
+
+      handleFilterActionClick("category", actionBtn.getAttribute("data-filter-action"));
+    }, { signal: controller.signal });
+
+    elements.projectState.addEventListener("click", (event) => {
+      const actionBtn = event.target.closest("button[data-filter-action]");
+      if (!actionBtn) {
+        return;
+      }
+
+      handleFilterActionClick("projectState", actionBtn.getAttribute("data-filter-action"));
     }, { signal: controller.signal });
 
     elements.sortBy.addEventListener("change", () => {

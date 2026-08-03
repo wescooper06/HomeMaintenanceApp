@@ -19,32 +19,35 @@
   <div id="projectsDuplicateBanner" class="projects-duplicate-banner hidden" aria-live="polite"></div>
 
   <section class="projects-controls" aria-label="Project filters and sorting">
-    <label>
+    <label class="projects-filter-group">
       Source
-      <select id="projectsFilterSource">
-        <option value="all">All sources</option>
-      </select>
+      <details class="projects-filter-dropdown" id="projectsFilterSourceDropdown">
+        <summary><span id="projectsFilterSourceSummary">All sources</span></summary>
+        <div id="projectsFilterSource" class="projects-filter-options" role="group" aria-label="Source filter options"></div>
+      </details>
     </label>
 
-    <label>
+    <label class="projects-filter-group">
       Category
-      <select id="projectsFilterCategory">
-        <option value="all">All categories</option>
-      </select>
+      <details class="projects-filter-dropdown" id="projectsFilterCategoryDropdown">
+        <summary><span id="projectsFilterCategorySummary">All categories</span></summary>
+        <div id="projectsFilterCategory" class="projects-filter-options" role="group" aria-label="Category filter options"></div>
+      </details>
     </label>
 
-    <label>
+    <label class="projects-filter-group">
       State
-      <select id="projectsFilterState">
-        <option value="all">All states</option>
-      </select>
+      <details class="projects-filter-dropdown" id="projectsFilterStateDropdown">
+        <summary><span id="projectsFilterStateSummary">All states except Completed</span></summary>
+        <div id="projectsFilterState" class="projects-filter-options" role="group" aria-label="State filter options"></div>
+      </details>
     </label>
 
     <label>
       Sort By
       <select id="projectsSortBy">
-        <option value="priority">Priority</option>
         <option value="order">Order</option>
+        <option value="priority">Priority</option>
         <option value="category">Category</option>
       </select>
     </label>

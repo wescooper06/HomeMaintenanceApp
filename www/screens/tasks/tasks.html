@@ -10,12 +10,18 @@
   </header>
 
   <section class="task-section" aria-label="Project-based tasks section">
-    <h2>Project-Based Tasks</h2>
+    <div class="task-section-header">
+      <h2>Project-Based Tasks</h2>
+      <button id="projectTaskSortToggle" type="button" class="task-sort-toggle">Sort: Ascending</button>
+    </div>
     <div id="projectTaskList" class="task-card-list" aria-live="polite"></div>
   </section>
 
   <section class="task-section" aria-label="Repeatable tasks section">
-    <h2>Repeatable Tasks</h2>
+    <div class="task-section-header">
+      <h2>Repeatable Tasks</h2>
+      <button id="repeatableTaskSortToggle" type="button" class="task-sort-toggle">Sort: Ascending</button>
+    </div>
     <div id="repeatableTaskList" class="task-card-list" aria-live="polite"></div>
   </section>
 
