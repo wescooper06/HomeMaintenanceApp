@@ -2,7 +2,7 @@
 // This file contains dynamic modal logic, dropdown population, field switching,
 // submit handlers, validation dialog behavior, and integration with ProjectsService.
 function initProjectsScreen() {
-  const SERVICE_VERSION = "20260802-1";
+  const SERVICE_VERSION = "20260802-8";
   const RETRY_QUEUE_KEY = "hm_sheet_write_retry_queue";
   const state = {
     allProjects: [],
@@ -22,6 +22,18 @@ function initProjectsScreen() {
       vehicle: {},
       repeating: {},
     },
+    addProjectOptions: {
+      properties: [],
+      vehicles: [],
+      recurrences: [],
+    },
+    addProjectDraft: {
+      property: "",
+      vehicle: "",
+      addToRepeating: false,
+      recurrence: "",
+    },
+    addProjectResultNeedsRefresh: false,
     pendingDeleteProjectKey: "",
     isDeleting: false,
   };
@@ -48,13 +60,32 @@ function initProjectsScreen() {
     deleteClose: document.getElementById("projectDeleteClose"),
     deleteCancel: document.getElementById("projectDeleteCancel"),
     deleteConfirm: document.getElementById("projectDeleteConfirm"),
+    addBtn: document.getElementById("projectsAddBtn"),
+    addModal: document.getElementById("projectAddModal"),
+    addForm: document.getElementById("projectAddForm"),
+    addClose: document.getElementById("projectAddClose"),
+    addCancel: document.getElementById("projectAddCancel"),
+    addSubmit: document.getElementById("projectAddSubmit"),
+    addProperty: document.getElementById("projectAddProperty"),
+    addVehicle: document.getElementById("projectAddVehicle"),
+    addDynamicFields: document.getElementById("projectAddDynamicFields"),
+    addMessage: document.getElementById("projectAddMessage"),
+    addResultModal: document.getElementById("projectAddResultModal"),
+    addResultCloseTop: document.getElementById("projectAddResultCloseTop"),
+    addResultClose: document.getElementById("projectAddResultClose"),
+    addResultTitle: document.getElementById("projectAddResultTitle"),
+    addResultMessage: document.getElementById("projectAddResultMessage"),
   };
 
   if (!elements.source || !elements.category || !elements.projectState || !elements.sortBy || !elements.list || !elements.summary || !elements.syncStatus || !elements.duplicateBanner
     || !elements.modal || !elements.modalForm || !elements.modalFields || !elements.modalMessage
     || !elements.modalClose || !elements.modalCancel || !elements.modalSave
     || !elements.deleteModal || !elements.deleteMessage || !elements.deleteStatus
-    || !elements.deleteClose || !elements.deleteCancel || !elements.deleteConfirm) {
+    || !elements.deleteClose || !elements.deleteCancel || !elements.deleteConfirm
+    || !elements.addBtn || !elements.addModal || !elements.addForm || !elements.addClose
+    || !elements.addCancel || !elements.addSubmit || !elements.addProperty || !elements.addVehicle
+    || !elements.addDynamicFields || !elements.addMessage || !elements.addResultModal
+    || !elements.addResultCloseTop || !elements.addResultClose || !elements.addResultTitle || !elements.addResultMessage) {
     return;
   }
 
@@ -497,7 +528,25 @@ function initProjectsScreen() {
   }
 
   function sortDropdownValues(values) {
-    return [...values].sort((a, b) => {
+    const deduped = [];
+    const seen = new Set();
+
+    [...values].forEach((value) => {
+      const normalized = String(value == null ? "" : value).trim();
+      if (!normalized) {
+        return;
+      }
+
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      deduped.push(normalized);
+    });
+
+    return deduped.sort((a, b) => {
       const left = String(a == null ? "" : a).trim();
       const right = String(b == null ? "" : b).trim();
       const leftNumber = parseNumber(left);
@@ -517,6 +566,94 @@ function initProjectsScreen() {
 
       return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true });
     });
+  }
+
+  function getRepeatingRecurrenceOptions(repeatingSource) {
+    const recurrance = Array.isArray(repeatingSource.recurrance) ? repeatingSource.recurrance : [];
+    const recurrence = Array.isArray(repeatingSource.recurrence) ? repeatingSource.recurrence : [];
+
+    if (recurrance.length) {
+      return sortDropdownValues(recurrance);
+    }
+
+    if (recurrence.length) {
+      return sortDropdownValues(recurrence);
+    }
+
+    return [];
+  }
+
+  function getDefaultRecurrenceOptions() {
+    const configured = window.APP_CONFIG && Array.isArray(window.APP_CONFIG.DEFAULT_RECURRENCE_OPTIONS)
+      ? window.APP_CONFIG.DEFAULT_RECURRENCE_OPTIONS
+      : [];
+
+    const builtIn = [
+      "Daily",
+      "Weekly",
+      "Bi-Weekly",
+      "Monthly",
+      "Quarterly",
+      "Semi-Annual",
+      "Annual",
+    ];
+
+    return sortDropdownValues([...configured, ...builtIn]);
+  }
+
+  function getAllSheetDropdownValues(fieldKey) {
+    const values = [];
+    ["home", "vehicle", "repeating"].forEach((source) => {
+      const sourceDropdowns = (state.sheetDropdowns && state.sheetDropdowns[source]) || {};
+      const fieldValues = Array.isArray(sourceDropdowns[fieldKey]) ? sourceDropdowns[fieldKey] : [];
+      values.push(...fieldValues);
+    });
+
+    return sortDropdownValues(values);
+  }
+
+  function getAllProjectFieldValues(fieldKey) {
+    const values = [];
+
+    (state.allProjects || []).forEach((item) => {
+      if (!item) {
+        return;
+      }
+
+      if (fieldKey === "category") {
+        values.push(item.category);
+        return;
+      }
+
+      if (fieldKey === "state") {
+        values.push(item.state);
+        return;
+      }
+
+      if (fieldKey === "recurrence") {
+        values.push(item.recurrence);
+      }
+    });
+
+    return sortDropdownValues(values);
+  }
+
+  function buildMergedRecurrenceOptions() {
+    const repeatingSource = (state.sheetDropdowns && state.sheetDropdowns.repeating) || {};
+    const fromRepeating = getRepeatingRecurrenceOptions(repeatingSource);
+    const fromAnySource = sortDropdownValues([
+      ...getAllSheetDropdownValues("recurrence"),
+      ...getAllSheetDropdownValues("recurrance"),
+    ]);
+    const fromProjects = getAllProjectFieldValues("recurrence");
+    const defaults = getDefaultRecurrenceOptions();
+
+    return sortDropdownValues([
+      ...fromRepeating,
+      ...fromAnySource,
+      ...fromProjects,
+      ...defaults,
+    ]);
   }
 
   function extractDistinctColumnValues(rows, aliases) {
@@ -642,21 +779,396 @@ function initProjectsScreen() {
       state.sheetDropdowns = next;
     } catch (error) {
       console.warn("Unable to load sheet dropdown metadata.", error);
+      state.sheetDropdowns = { home: {}, vehicle: {}, repeating: {} };
+    }
+  }
 
-      const fallback = { home: {}, vehicle: {}, repeating: {} };
-      try {
-        if (typeof window.SheetsService.fetchVehicleSheet === "function") {
-          const vehicleSheet = await window.SheetsService.fetchVehicleSheet();
-          const rows = vehicleSheet && Array.isArray(vehicleSheet.rows) ? vehicleSheet.rows : [];
-
-          fallback.vehicle.category = extractDistinctColumnValues(rows, ["Category", "Type"]);
-          fallback.vehicle.state = extractDistinctColumnValues(rows, ["State", "Status"]);
+  function setSelectValues(selectEl, values, placeholder, selectedValue) {
+    const safeValues = Array.isArray(values) ? values : [];
+    const optionsHtml = safeValues
+      .map((value) => {
+        const normalized = cleanText(value, "");
+        if (!normalized) {
+          return "";
         }
-      } catch (fallbackError) {
-        console.warn("Unable to load vehicle fallback dropdown values.", fallbackError);
+
+        const selected = normalized === cleanText(selectedValue, "") ? " selected" : "";
+        const escaped = escapeHtml(normalized);
+        return `<option value="${escaped}"${selected}>${escaped}</option>`;
+      })
+      .join("");
+
+    selectEl.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${optionsHtml}`;
+  }
+
+  function getAddProjectSourceType() {
+    if (cleanText(elements.addProperty.value, "")) {
+      return "home";
+    }
+
+    if (cleanText(elements.addVehicle.value, "")) {
+      return "vehicle";
+    }
+
+    return "";
+  }
+
+  function resetAddProjectModal() {
+    state.addProjectDraft = {
+      property: "",
+      vehicle: "",
+      addToRepeating: false,
+      recurrence: "",
+    };
+
+    elements.addForm.reset();
+    elements.addDynamicFields.innerHTML = "";
+    elements.addMessage.textContent = "";
+    elements.addSubmit.disabled = false;
+
+    setSelectValues(elements.addProperty, state.addProjectOptions.properties, "Select property", "");
+    setSelectValues(elements.addVehicle, state.addProjectOptions.vehicles, "Select vehicle/engine", "");
+    elements.addProperty.disabled = false;
+    elements.addVehicle.disabled = false;
+  }
+
+  function openAddProjectModal() {
+    resetAddProjectModal();
+    renderAddProjectDynamicFields();
+    elements.addModal.classList.remove("hidden");
+  }
+
+  function closeAddProjectModal() {
+    elements.addModal.classList.add("hidden");
+    resetAddProjectModal();
+  }
+
+  function openValidationResultDialog(message, ok) {
+    elements.addResultTitle.textContent = ok ? "Validation" : "Validation Error";
+    elements.addResultMessage.innerHTML = escapeHtml(cleanText(message, ok ? "Project created successfully." : "Unable to create project.")).replace(/\n/g, "<br>");
+    state.addProjectResultNeedsRefresh = Boolean(ok);
+    elements.addResultModal.classList.remove("hidden");
+  }
+
+  async function closeValidationResultDialog() {
+    elements.addResultModal.classList.add("hidden");
+    if (state.addProjectResultNeedsRefresh) {
+      state.addProjectResultNeedsRefresh = false;
+      await refreshProjectsFromSheet();
+      renderSummary("Projects refreshed after create.");
+    }
+  }
+
+  function snapshotAddProjectDraft() {
+    const draft = {
+      ...state.addProjectDraft,
+      property: cleanText(elements.addProperty.value, ""),
+      vehicle: cleanText(elements.addVehicle.value, ""),
+    };
+
+    const controls = elements.addDynamicFields.querySelectorAll("[data-add-key]");
+    controls.forEach((control) => {
+      const key = control.getAttribute("data-add-key");
+      if (!key) {
+        return;
       }
 
-      state.sheetDropdowns = fallback;
+      if (control.type === "checkbox") {
+        draft[key] = Boolean(control.checked);
+      } else {
+        draft[key] = cleanText(control.value, "");
+      }
+    });
+
+    state.addProjectDraft = draft;
+    return draft;
+  }
+
+  function handlePropertySelection() {
+    snapshotAddProjectDraft();
+    const selectedProperty = cleanText(elements.addProperty.value, "");
+    if (selectedProperty) {
+      elements.addVehicle.value = "";
+      state.addProjectDraft.vehicle = "";
+      elements.addVehicle.disabled = true;
+    } else {
+      elements.addVehicle.disabled = false;
+    }
+
+    state.addProjectDraft.property = selectedProperty;
+    renderAddProjectDynamicFields();
+  }
+
+  function handleVehicleSelection() {
+    snapshotAddProjectDraft();
+    const selectedVehicle = cleanText(elements.addVehicle.value, "");
+    if (selectedVehicle) {
+      elements.addProperty.value = "";
+      state.addProjectDraft.property = "";
+      elements.addProperty.disabled = true;
+    } else {
+      elements.addProperty.disabled = false;
+    }
+
+    state.addProjectDraft.vehicle = selectedVehicle;
+    renderAddProjectDynamicFields();
+  }
+
+  function handleRepeatingCheckbox() {
+    snapshotAddProjectDraft();
+    renderAddProjectDynamicFields();
+  }
+
+  function buildAddField(field) {
+    const key = field.key;
+    const label = escapeHtml(field.label);
+    const currentValue = cleanText(state.addProjectDraft[key], "");
+
+    if (field.type === "checkbox") {
+      const checked = state.addProjectDraft[key] ? " checked" : "";
+      return `
+        <label class="project-add-checkbox">
+          <input type="checkbox" data-add-key="${escapeHtml(key)}"${checked} />
+          <span>${label}</span>
+        </label>
+      `;
+    }
+
+    if (field.type === "textarea") {
+      return `
+        <div class="project-edit-field">
+          <label>${label}</label>
+          <textarea data-add-key="${escapeHtml(key)}">${escapeHtml(currentValue)}</textarea>
+        </div>
+      `;
+    }
+
+    if (field.type === "select") {
+      const options = (field.options || [])
+        .map((value) => cleanText(value, ""))
+        .filter(Boolean);
+      const optionsHtml = options
+        .map((value) => {
+          const selected = value === currentValue ? " selected" : "";
+          const escaped = escapeHtml(value);
+          return `<option value="${escaped}"${selected}>${escaped}</option>`;
+        })
+        .join("");
+
+      return `
+        <div class="project-edit-field">
+          <label>${label}</label>
+          <select data-add-key="${escapeHtml(key)}">
+            <option value=""></option>
+            ${optionsHtml}
+          </select>
+        </div>
+      `;
+    }
+
+    const inputType = field.type === "number" ? "number" : (field.type === "date" ? "date" : "text");
+    return `
+      <div class="project-edit-field">
+        <label>${label}</label>
+        <input type="${inputType}" data-add-key="${escapeHtml(key)}" value="${escapeHtml(currentValue)}" />
+      </div>
+    `;
+  }
+
+  function renderAddProjectDynamicFields() {
+    const sourceType = getAddProjectSourceType();
+    const draft = state.addProjectDraft;
+    const isRepeatingChecked = Boolean(draft.addToRepeating);
+
+    if (!sourceType) {
+      elements.addDynamicFields.innerHTML = '<p class="project-add-hint">Select Property or Vehicle / Engine to continue.</p>';
+      return;
+    }
+
+    const sourceDropdowns = state.sheetDropdowns[sourceType] || {};
+    const fallbackProject = { source: sourceType, metadata: {} };
+    const resolveOptions = (fieldKey, targetKey) => {
+      const fromMetadata = sortDropdownValues(sourceDropdowns[fieldKey] || []);
+      const fromProjectFallback = getDropdownValues(fallbackProject, {
+        key: fieldKey,
+        target: targetKey || fieldKey,
+      });
+
+      let merged = sortDropdownValues([...fromMetadata, ...fromProjectFallback]);
+
+      // Vehicle lists are commonly sparse in row values; widen from all known dropdown/project values.
+      if (sourceType === "vehicle" && (fieldKey === "state" || fieldKey === "category")) {
+        merged = sortDropdownValues([
+          ...merged,
+          ...getAllSheetDropdownValues(fieldKey),
+          ...getAllProjectFieldValues(fieldKey),
+        ]);
+      }
+
+      return merged;
+    };
+    const baseFields = sourceType === "home"
+      ? [
+        { key: "title", label: "Title", type: "text" },
+        { key: "area", label: "Area", type: "select", options: resolveOptions("area", "area") },
+        { key: "category", label: "Category", type: "select", options: resolveOptions("category", "category") },
+        { key: "priority", label: "Priority", type: "select", options: sourceDropdowns.priority || [] },
+        { key: "order", label: "Order", type: "number" },
+        { key: "resourceLinks", label: "ResourceLinks", type: "textarea" },
+        { key: "cost", label: "Cost", type: "number" },
+        { key: "state", label: "State", type: "select", options: resolveOptions("state", "state") },
+        { key: "dateCompleted", label: "Date Completed", type: "date" },
+        { key: "addToRepeating", label: "Add to Repeating List", type: "checkbox" },
+      ]
+      : [
+        { key: "title", label: "Title", type: "text" },
+        { key: "state", label: "State", type: "select", options: resolveOptions("state", "state") },
+        { key: "category", label: "Category", type: "select", options: resolveOptions("category", "category") },
+        { key: "dateCompleted", label: "Date Completed", type: "date" },
+        { key: "hours", label: "Hours", type: "number" },
+        { key: "mileage", label: "Mileage", type: "number" },
+        { key: "mechanic", label: "Mechanic", type: "text" },
+        { key: "resourceLinks", label: "ResourceLinks", type: "textarea" },
+        { key: "order", label: "Order", type: "number" },
+        { key: "addToRepeating", label: "Add to Repeating List", type: "checkbox" },
+      ];
+
+    const repeatingSource = ((state.sheetDropdowns || {}).repeating || {});
+    let repeatingOptions = sortDropdownValues([
+      ...(Array.isArray(state.addProjectOptions.recurrences) ? state.addProjectOptions.recurrences : []),
+      ...buildMergedRecurrenceOptions(),
+    ]);
+    if (!repeatingOptions.length) {
+      repeatingOptions = sortDropdownValues([
+        ...getRepeatingRecurrenceOptions(repeatingSource),
+        ...getDropdownValues({ source: "repeating", metadata: {} }, {
+          key: "recurrence",
+          target: "recurrence",
+        }),
+      ]);
+    }
+
+    const allFields = isRepeatingChecked
+      ? [...baseFields, { key: "recurrence", label: "Recurrance", type: "select", options: repeatingOptions }]
+      : baseFields;
+
+    elements.addDynamicFields.innerHTML = allFields.map(buildAddField).join("");
+
+    const repeatingCheckbox = elements.addDynamicFields.querySelector('input[data-add-key="addToRepeating"]');
+    if (repeatingCheckbox) {
+      repeatingCheckbox.addEventListener("change", handleRepeatingCheckbox, { signal: controller.signal });
+    }
+  }
+
+  async function refreshAddProjectOptions() {
+    try {
+      const [homeSheet, vehicleSheet] = await Promise.all([
+        window.SheetsService.fetchHomeSheet(),
+        window.SheetsService.fetchVehicleSheet(),
+      ]);
+
+      const homeRows = homeSheet && Array.isArray(homeSheet.rows) ? homeSheet.rows : [];
+      const vehicleRows = vehicleSheet && Array.isArray(vehicleSheet.rows) ? vehicleSheet.rows : [];
+      const recurrenceOptions = buildMergedRecurrenceOptions();
+
+      state.addProjectOptions = {
+        properties: extractDistinctColumnValues(homeRows, ["Property"]),
+        vehicles: extractDistinctColumnValues(vehicleRows, ["Vehicle/Small Engine", "Vehicle"]),
+        recurrences: recurrenceOptions,
+      };
+    } catch (error) {
+      console.warn("Unable to load add-project source options.", error);
+      state.addProjectOptions = {
+        properties: [],
+        vehicles: [],
+        recurrences: [],
+      };
+    }
+  }
+
+  function validateNewProjectDraft(draft) {
+    if (!cleanText(draft.property, "") && !cleanText(draft.vehicle, "")) {
+      return "Select Property or Vehicle / Engine.";
+    }
+
+    if (!cleanText(draft.title, "")) {
+      return "Title is required.";
+    }
+
+    if (!cleanText(draft.category, "")) {
+      return "Category is required.";
+    }
+
+    if (!cleanText(draft.state, "")) {
+      return "State is required.";
+    }
+
+    if (draft.addToRepeating && !cleanText(draft.recurrence, "")) {
+      return "Recurrance is required when Add to Repeating List is checked.";
+    }
+
+    return "";
+  }
+
+  async function submitNewProject() {
+    if (elements.addSubmit.disabled) {
+      return;
+    }
+
+    const draft = snapshotAddProjectDraft();
+    const validationError = validateNewProjectDraft(draft);
+    if (validationError) {
+      elements.addMessage.textContent = validationError;
+      openValidationResultDialog(validationError, false);
+      return;
+    }
+
+    elements.addSubmit.disabled = true;
+    elements.addMessage.textContent = "Submitting...";
+
+    try {
+      if (!window.ProjectsService || typeof window.ProjectsService.createProject !== "function") {
+        throw new Error("ProjectsService.createProject is unavailable.");
+      }
+
+      const result = await window.ProjectsService.createProject({
+        property: cleanText(draft.property, ""),
+        vehicle: cleanText(draft.vehicle, ""),
+        title: cleanText(draft.title, ""),
+        area: cleanText(draft.area, ""),
+        category: cleanText(draft.category, ""),
+        priority: cleanText(draft.priority, ""),
+        order: cleanText(draft.order, ""),
+        resourceLinks: cleanText(draft.resourceLinks, ""),
+        cost: cleanText(draft.cost, ""),
+        state: cleanText(draft.state, ""),
+        dateCompleted: cleanText(draft.dateCompleted, ""),
+        hours: cleanText(draft.hours, ""),
+        mileage: cleanText(draft.mileage, ""),
+        mechanic: cleanText(draft.mechanic, ""),
+        addToRepeating: Boolean(draft.addToRepeating),
+        recurrence: cleanText(draft.recurrence, ""),
+      });
+
+      if (!result || result.ok === false) {
+        throw new Error(cleanText(result && result.error, "Unable to create project."));
+      }
+
+      elements.addMessage.textContent = "Project created successfully.";
+      closeAddProjectModal();
+      const detailMessage = [
+        "Project created successfully.",
+        result.id ? `ID: ${result.id}` : "",
+        result.tabName ? `Sheet: ${result.tabName}` : "",
+        (result.rowNumber != null && result.rowNumber !== "") ? `Row: ${result.rowNumber}` : "",
+      ].filter(Boolean).join("\n");
+      openValidationResultDialog(detailMessage, true);
+    } catch (error) {
+      const reason = error && error.message ? error.message : "Unable to create project.";
+      elements.addMessage.textContent = reason;
+      openValidationResultDialog(reason, false);
+    } finally {
+      elements.addSubmit.disabled = false;
     }
   }
 
@@ -1133,6 +1645,28 @@ function initProjectsScreen() {
   }
 
   function attachEvents() {
+    elements.addBtn.addEventListener("click", openAddProjectModal, { signal: controller.signal });
+    elements.addClose.addEventListener("click", closeAddProjectModal, { signal: controller.signal });
+    elements.addCancel.addEventListener("click", closeAddProjectModal, { signal: controller.signal });
+    elements.addModal.addEventListener("click", (event) => {
+      if (event.target === elements.addModal) {
+        closeAddProjectModal();
+      }
+    }, { signal: controller.signal });
+    elements.addResultCloseTop.addEventListener("click", () => {
+      closeValidationResultDialog().catch((error) => console.error(error));
+    }, { signal: controller.signal });
+    elements.addResultClose.addEventListener("click", () => {
+      closeValidationResultDialog().catch((error) => console.error(error));
+    }, { signal: controller.signal });
+
+    elements.addProperty.addEventListener("change", handlePropertySelection, { signal: controller.signal });
+    elements.addVehicle.addEventListener("change", handleVehicleSelection, { signal: controller.signal });
+    elements.addForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitNewProject();
+    }, { signal: controller.signal });
+
     elements.source.addEventListener("change", () => {
       state.filters.source = elements.source.value;
       applyFiltersAndSort();
@@ -1238,6 +1772,8 @@ function initProjectsScreen() {
       window.loadAllProjects(),
       refreshSheetDropdowns(),
     ]);
+
+    await refreshAddProjectOptions();
 
     if (!isStillActive()) {
       return;

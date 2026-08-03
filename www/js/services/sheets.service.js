@@ -64,6 +64,27 @@
     return String(value).replace(/^\uFEFF/, "").trim();
   }
 
+  function normalizeOptionList(values) {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+
+    const map = new Map();
+    values.forEach((value) => {
+      const cleaned = cleanCell(value);
+      if (!cleaned) {
+        return;
+      }
+
+      const key = cleaned.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, cleaned);
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  }
+
   function fetchJsonp(url, timeoutMs) {
     const timeout = Number.isFinite(timeoutMs) ? timeoutMs : 10000;
 
@@ -446,6 +467,143 @@
     return TABS.home;
   }
 
+  function parseProjectId(value) {
+    const text = cleanCell(value);
+    if (!text) {
+      return null;
+    }
+
+    const num = Number(text);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function getRowId(row) {
+    if (!row || typeof row !== "object") {
+      return null;
+    }
+
+    const keys = Object.keys(row);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      const normalized = String(key).trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+      if (normalized === "id") {
+        return parseProjectId(row[key]);
+      }
+    }
+
+    return null;
+  }
+
+  function findRowById(rows, id) {
+    const target = parseProjectId(id);
+    if (target == null || !Array.isArray(rows)) {
+      return null;
+    }
+
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const rowId = getRowId(row);
+      if (rowId != null && rowId === target) {
+        return row;
+      }
+    }
+
+    return null;
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  async function verifyCreatedRow(tabName, id) {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+    if (!googleSheetsWriteUrl) {
+      return { ok: false, rowNumber: null };
+    }
+
+    const attempts = 8;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const url = new URL(googleSheetsWriteUrl);
+        url.searchParams.set("action", "projectExists");
+        url.searchParams.set("spreadsheetId", SPREADSHEET_ID);
+        url.searchParams.set("tabName", cleanCell(tabName));
+        url.searchParams.set("id", cleanCell(id));
+
+        const payload = await fetchJsonp(url.toString(), 12000);
+        if (payload && payload.ok === false) {
+          return { ok: false, rowNumber: null };
+        }
+
+        if (payload && payload.exists) {
+          return {
+            ok: true,
+            rowNumber: Number(payload.rowNumber) || null,
+          };
+        }
+      } catch (error) {
+        // Fall through to direct sheet-read verification when endpoint calls time out.
+      }
+
+      try {
+        const tab = await fetchTab(tabName);
+        const rows = tab && Array.isArray(tab.rows) ? tab.rows : [];
+        const matched = findRowById(rows, id);
+        if (matched) {
+          return {
+            ok: true,
+            rowNumber: Number(matched._rowNumber) || null,
+          };
+        }
+      } catch (error) {
+        // Ignore transient read errors and continue retry loop.
+      }
+
+      if (attempt < attempts - 1) {
+        await delay(500);
+      }
+    }
+
+    // Last-chance check to avoid false negatives after successful writes.
+    try {
+      const tab = await fetchTab(tabName);
+      const rows = tab && Array.isArray(tab.rows) ? tab.rows : [];
+      const matched = findRowById(rows, id);
+      if (matched) {
+        return {
+          ok: true,
+          rowNumber: Number(matched._rowNumber) || null,
+        };
+      }
+    } catch (error) {
+      // No-op; final failure returned below.
+    }
+
+    return { ok: false, rowNumber: null };
+  }
+
+  async function getNextProjectId(tabName) {
+    const resolvedTab = cleanCell(tabName);
+    if (!resolvedTab) {
+      throw new Error("getNextProjectId requires a tabName.");
+    }
+
+    const tab = await fetchTab(resolvedTab);
+    const rows = tab && Array.isArray(tab.rows) ? tab.rows : [];
+
+    let maxId = 0;
+    rows.forEach((row) => {
+      const rowId = getRowId(row);
+      if (rowId != null && rowId > maxId) {
+        maxId = rowId;
+      }
+    });
+
+    return maxId + 1;
+  }
+
   async function fetchProjectDropdownOptions() {
     const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
 
@@ -472,7 +630,31 @@
       );
     }
 
-    return payload.options || {};
+    const incoming = payload.options || {};
+    const home = incoming.home && typeof incoming.home === "object" ? incoming.home : {};
+    const vehicle = incoming.vehicle && typeof incoming.vehicle === "object" ? incoming.vehicle : {};
+    const repeating = incoming.repeating && typeof incoming.repeating === "object" ? incoming.repeating : {};
+
+    const recurranceValues = normalizeOptionList([
+      ...(Array.isArray(repeating.recurrance) ? repeating.recurrance : []),
+      ...(Array.isArray(repeating.recurrence) ? repeating.recurrence : []),
+    ]);
+
+    return {
+      home: {
+        ...home,
+      },
+      vehicle: {
+        ...vehicle,
+        category: normalizeOptionList(vehicle.category),
+        state: normalizeOptionList(vehicle.state),
+      },
+      repeating: {
+        ...repeating,
+        recurrance: recurranceValues,
+        recurrence: recurranceValues,
+      },
+    };
   }
 
   async function updateProjectInSheet(project) {
@@ -562,6 +744,68 @@
     }
   }
 
+  async function createProject(payload) {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+
+    if (!googleSheetsWriteUrl) {
+      throw new Error(
+        "Sheet write endpoint is not configured. Set window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL (or GOOGLE_APPS_SCRIPT_WEB_APP_URL)."
+      );
+    }
+
+    const source = cleanCell(payload && payload.source);
+    const tabName = cleanCell(payload && payload.tabName) || sourceToTabName(source);
+    if (!tabName) {
+      throw new Error("Unable to resolve destination tab for createProject.");
+    }
+
+    let id = cleanCell(payload && payload.id);
+    if (!id) {
+      id = String(await getNextProjectId(tabName));
+    }
+
+    const requestPayload = {
+      action: "createProject",
+      spreadsheetId: SPREADSHEET_ID,
+      tabName,
+      source,
+      id,
+      fields: payload && payload.fields ? payload.fields : {},
+    };
+
+    const response = await fetch(googleSheetsWriteUrl, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify(requestPayload),
+    });
+
+    if (response.type === "opaque") {
+      const verification = await verifyCreatedRow(tabName, id);
+      if (!verification.ok) {
+        throw new Error(`Create request could not be verified for ID ${id} in ${tabName}.`);
+      }
+
+      return {
+        ok: true,
+        id,
+        tabName,
+        rowNumber: verification.rowNumber,
+        transport: "no-cors",
+      };
+    }
+
+    if (!response.ok) {
+      const reason = await response.text().catch(() => "");
+      throw new Error(`Failed to create project in Google Sheets (${response.status}). ${cleanCell(reason)}`);
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      return { ok: true, id, tabName };
+    }
+  }
+
   window.SheetsService = {
     SPREADSHEET_ID,
     TABS,
@@ -570,7 +814,9 @@
     fetchVehicleSheet,
     fetchRepeatingSheet,
     fetchAllSheets,
+    getNextProjectId,
     fetchProjectDropdownOptions,
+    createProject,
     updateProjectInSheet,
     deleteProject,
   };
