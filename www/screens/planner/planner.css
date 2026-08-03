@@ -19,12 +19,33 @@
   font-size: 0.9rem;
 }
 
-.planner-pool {
+.planner-top-panels {
   margin-top: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.planner-pool {
+  flex: 0 0 clamp(520px, 46vw, 680px);
+}
+
+.planner-adhoc-column {
+  flex: 1 1 280px;
+}
+
+.planner-adhoc-panel {
+  position: sticky;
+  top: 0.75rem;
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.8rem;
 }
 
 .planner-pool h2,
-.planner-week h2 {
+.planner-week h2,
+.planner-adhoc-column h2 {
   margin: 0 0 0.65rem;
   font-size: 1.05rem;
 }
@@ -32,6 +53,9 @@
 .planner-task-pool {
   display: grid;
   gap: 0.6rem;
+  width: 100%;
+  max-width: 660px;
+  margin: 0 auto;
 }
 
 .pool-task-card {
@@ -54,23 +78,33 @@
 
 .pool-task-controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.45rem;
+  align-items: flex-end;
+  overflow-x: auto;
 }
 
 .pool-control-label {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.2rem;
   font-size: 0.8rem;
   color: #475569;
+  flex: 0 0 auto;
 }
 
-.pool-task-controls select {
+.planner-control-field {
   border: 1px solid #c7d4e2;
   border-radius: 8px;
   padding: 0.4rem 0.6rem;
   font: inherit;
+  font-size: 0.95rem;
   background: #ffffff;
+}
+
+.pool-task-controls select,
+.adhoc-form select.planner-control-field {
+  min-width: 160px;
 }
 
 .pool-task-controls button {
@@ -81,6 +115,8 @@
   padding: 0.4rem 0.65rem;
   font: inherit;
   cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .pool-task-controls button.danger {
@@ -89,8 +125,44 @@
   background: #fff7f7;
 }
 
+.adhoc-form {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.adhoc-form label {
+  font-size: 0.86rem;
+  color: #475569;
+}
+
+.adhoc-form input.planner-control-field {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.adhoc-form select.planner-control-field {
+  width: auto;
+}
+
+.adhoc-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.3rem;
+}
+
+.adhoc-actions .primary {
+  border: 1px solid #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 0.4rem 0.85rem;
+  font: inherit;
+  cursor: pointer;
+}
+
 .planner-week {
   margin-top: 1rem;
+  width: 100%;
 }
 
 .planner-week-grid {
@@ -99,6 +171,7 @@
   gap: 0.75rem;
   overflow-x: auto;
   padding-bottom: 0.3rem;
+  align-items: start;
 }
 
 .planner-day {
@@ -109,6 +182,8 @@
   min-width: 220px;
   display: grid;
   gap: 0.65rem;
+  align-content: start;
+  grid-auto-rows: min-content;
 }
 
 .planner-day h3 {
@@ -121,6 +196,7 @@
   border-radius: 10px;
   background: #ffffff;
   padding: 0.5rem;
+  min-height: 140px;
 }
 
 .day-slot h4 {
@@ -198,4 +274,24 @@
   border-radius: 10px;
   padding: 0.8rem;
   color: #6b7280;
+}
+
+@media (max-width: 1100px) {
+  .planner-top-panels {
+    flex-direction: column;
+  }
+
+  .planner-pool,
+  .planner-adhoc-column {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .planner-adhoc-panel {
+    position: static;
+  }
+
+  .pool-task-controls {
+    flex-wrap: wrap;
+  }
 }

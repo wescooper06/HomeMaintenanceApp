@@ -9,9 +9,43 @@
     <div id="plannerStatus" class="planner-status">Loading planner...</div>
   </header>
 
-  <section class="planner-pool" aria-label="Task assignment pool">
-    <h2>Curated Tasks</h2>
-    <div id="plannerTaskPool" class="planner-task-pool" aria-live="polite"></div>
+  <section class="planner-top-panels" aria-label="Task assignment panels">
+    <section class="planner-pool" aria-label="Task assignment pool">
+      <h2>Curated Tasks</h2>
+      <div id="plannerTaskPool" class="planner-task-pool" aria-live="polite"></div>
+    </section>
+
+    <section class="planner-adhoc-column" aria-label="Add ad-hoc task panel">
+      <h2>Add Ad-Hoc Task</h2>
+      <div class="planner-adhoc-panel">
+        <div class="adhoc-form">
+        <label for="adhocTaskTitle">Title</label>
+          <input id="adhocTaskTitle" class="planner-control-field" type="text" placeholder="Enter task title" />
+
+        <label for="adhocTaskDay">Day</label>
+          <select id="adhocTaskDay" class="planner-control-field">
+          <option value="mon">Monday</option>
+          <option value="tue">Tuesday</option>
+          <option value="wed">Wednesday</option>
+          <option value="thu">Thursday</option>
+          <option value="fri">Friday</option>
+          <option value="sat">Saturday</option>
+          <option value="sun">Sunday</option>
+        </select>
+
+        <label for="adhocTaskSlot">Time</label>
+          <select id="adhocTaskSlot" class="planner-control-field">
+          <option value="morning">Morning</option>
+          <option value="afternoon">Afternoon</option>
+          <option value="evening">Evening</option>
+        </select>
+
+          <div class="adhoc-actions">
+            <button id="adhocTaskAddBtn" type="button" class="primary">Add</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </section>
 
   <section class="planner-week" aria-label="Weekly planner grid">

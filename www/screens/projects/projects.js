@@ -1830,6 +1830,37 @@ function initProjectsScreen() {
   }
 
   function addToTaskManager(project) {
+    if (project.source === "repeating") {
+      const repeatableKey = "hm_repeatable_tasks";
+      let repeatableOverrides = [];
+
+      try {
+        const parsed = JSON.parse(localStorage.getItem(repeatableKey) || "[]");
+        repeatableOverrides = Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        repeatableOverrides = [];
+      }
+
+      const projectId = cleanText(project.id, "");
+      const repeatableIndex = repeatableOverrides.findIndex((item) => cleanText(item && item.projectId, "") === projectId);
+      if (repeatableIndex >= 0) {
+        repeatableOverrides[repeatableIndex] = {
+          ...repeatableOverrides[repeatableIndex],
+          projectId,
+          removed: false,
+        };
+      } else {
+        repeatableOverrides.push({
+          projectId,
+          removed: false,
+        });
+      }
+
+      localStorage.setItem(repeatableKey, JSON.stringify(repeatableOverrides));
+      renderSummary(`Added "${project.title}" to Repeatable Tasks.`);
+      return;
+    }
+
     const key = "hm_task_manager_tasks";
     const existing = JSON.parse(localStorage.getItem(key) || "[]");
     const rowNumber = firstDefined(project.metadata || {}, ["sheetRowNumber", "rownumber", "_rownumber"]);

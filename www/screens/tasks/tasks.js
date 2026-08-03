@@ -263,7 +263,8 @@ function initTasksScreen() {
           priority: parseNumber(item.priority, parseNumber(enriched.priority, 3)),
           order: parseNumber(item.order, parseNumber(enriched.order, 999)),
         };
-      });
+      })
+      .filter((item) => normalizeSource(item.source) !== "repeating");
 
     state.projectTasks = sortTaskList(state.projectTasks, "project");
   }
