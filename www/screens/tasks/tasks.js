@@ -95,6 +95,10 @@ function initTasksScreen() {
     return `task-${projectId}`;
   }
 
+  function makeProjectKey(source, projectId) {
+    return `${normalizeSource(source)}::${cleanText(projectId, "")}`;
+  }
+
   function loadTasks() {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.curated);
@@ -208,7 +212,7 @@ function initTasksScreen() {
     });
   }
 
-  function migrateLegacyQueue(projectMap) {
+  function migrateLegacyQueue(projectMapByKey, projectMapById) {
     let legacy;
     try {
       legacy = JSON.parse(localStorage.getItem(STORAGE_KEYS.legacyQueue) || "[]");
@@ -221,7 +225,10 @@ function initTasksScreen() {
     }
 
     legacy.forEach((entry) => {
-      const project = projectMap.get(cleanText(entry.projectId, ""));
+      const projectId = cleanText(entry.projectId, "");
+      const byId = projectMapById.get(projectId) || [];
+      const preferred = byId.find((item) => normalizeSource(item.source) !== "repeating") || byId[0] || null;
+      const project = preferred || projectMapByKey.get(makeProjectKey("unknown", projectId));
       if (project) {
         addTask(project);
       }
@@ -230,12 +237,16 @@ function initTasksScreen() {
     localStorage.removeItem(STORAGE_KEYS.legacyQueue);
   }
 
-  function buildProjectTasks(projectMap) {
+  function buildProjectTasks(projectMapByKey, projectMapById) {
     const curated = loadTasks();
 
     state.projectTasks = curated
       .map((item) => {
-        const enriched = projectMap.get(item.projectId);
+        const itemProjectId = cleanText(item.projectId, "");
+        const enrichedByKey = projectMapByKey.get(makeProjectKey(item.source, itemProjectId));
+        const byId = projectMapById.get(itemProjectId) || [];
+        const fallback = byId.find((project) => normalizeSource(project.source) !== "repeating") || byId[0] || null;
+        const enriched = enrichedByKey || fallback;
         if (!enriched) {
           return {
             ...item,
@@ -269,12 +280,12 @@ function initTasksScreen() {
     state.projectTasks = sortTaskList(state.projectTasks, "project");
   }
 
-  function buildRepeatableTasks(projectMap) {
+  function buildRepeatableTasks(projects) {
     const overrides = loadRepeatableOverrides();
     const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
     state.repeatableOverrideMap = overrideMap;
 
-    state.repeatableTasks = [...projectMap.values()]
+    state.repeatableTasks = [...(projects || [])]
       .filter((project) => project.source === "repeating")
       .map((project, index) => {
         const override = overrideMap.get(project.projectId) || {};
@@ -641,10 +652,19 @@ function initTasksScreen() {
     const projects = await window.loadAllProjects();
     state.allProjects = (projects || []).map(toProjectView);
 
-    const projectMap = new Map(state.allProjects.map((project) => [project.projectId, project]));
-    migrateLegacyQueue(projectMap);
-    buildProjectTasks(projectMap);
-    buildRepeatableTasks(projectMap);
+    const projectMapByKey = new Map(state.allProjects.map((project) => [makeProjectKey(project.source, project.projectId), project]));
+    const projectMapById = new Map();
+    state.allProjects.forEach((project) => {
+      const key = cleanText(project.projectId, "");
+      if (!projectMapById.has(key)) {
+        projectMapById.set(key, []);
+      }
+      projectMapById.get(key).push(project);
+    });
+
+    migrateLegacyQueue(projectMapByKey, projectMapById);
+    buildProjectTasks(projectMapByKey, projectMapById);
+    buildRepeatableTasks(state.allProjects);
     renderAll();
   }
 
