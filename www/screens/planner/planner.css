@@ -21,17 +21,34 @@
 
 .planner-top-panels {
   margin-top: 1rem;
+}
+
+#planner-top-columns {
   display: flex;
   align-items: flex-start;
   gap: 1rem;
 }
 
+#curated-left,
+#curated-middle {
+  flex: 0 0 clamp(300px, 30vw, 430px);
+}
+
 .planner-pool {
-  flex: 0 0 clamp(520px, 46vw, 680px);
+  min-width: 0;
 }
 
 .planner-adhoc-column {
   flex: 1 1 280px;
+}
+
+#curated-warning {
+  background-color: #fff3cd;
+  color: #856404;
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  display: none;
 }
 
 .planner-adhoc-panel {
@@ -48,6 +65,11 @@
 .planner-adhoc-column h2 {
   margin: 0 0 0.65rem;
   font-size: 1.05rem;
+}
+
+.planner-pool-note {
+  margin: -0.2rem 0 0.65rem;
+  font-size: 0.86rem;
 }
 
 .planner-task-pool {
@@ -67,8 +89,69 @@
   gap: 0.55rem;
 }
 
+.pool-task-layout {
+  display: flex;
+  gap: 0.45rem;
+  align-items: stretch;
+}
+
+.pool-task-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.pool-card-drag-handle {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  padding: 4px;
+  color: #64748b;
+  font-size: 0.95rem;
+  line-height: 1;
+  letter-spacing: -0.06em;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #f8fbff;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.pool-card-drag-handle:active {
+  cursor: grabbing;
+}
+
+.pool-task-card.is-dragging {
+  opacity: 0.6;
+}
+
+.pool-task-card.is-drop-target {
+  border-color: #0f766e;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.25);
+}
+
+.pool-task-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
 .pool-task-title {
   font-weight: 600;
+}
+
+.pool-order-pill {
+  background-color: #e0e0e0;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #1f2937;
+  white-space: nowrap;
 }
 
 .pool-task-meta {
@@ -79,9 +162,9 @@
 .pool-task-controls {
   display: flex;
   flex-wrap: nowrap;
-  gap: 0.45rem;
+  gap: 0.3rem;
   align-items: flex-end;
-  overflow-x: auto;
+  overflow-x: hidden;
 }
 
 .pool-control-label {
@@ -91,6 +174,7 @@
   font-size: 0.8rem;
   color: #475569;
   flex: 0 0 auto;
+  min-width: 0;
 }
 
 .planner-control-field {
@@ -104,7 +188,11 @@
 
 .pool-task-controls select,
 .adhoc-form select.planner-control-field {
-  min-width: 160px;
+  min-width: 0;
+}
+
+.pool-task-controls .planner-control-field {
+  width: 140px;
 }
 
 .pool-task-controls button {
@@ -119,10 +207,29 @@
   flex: 0 0 auto;
 }
 
+.pool-task-controls .pool-icon-btn {
+  padding: 4px;
+  min-width: 30px;
+  min-height: 30px;
+  line-height: 1;
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .pool-task-controls button.danger {
   border-color: #b91c1c;
   color: #b91c1c;
   background: #fff7f7;
+}
+
+.pool-task-controls button.curated-only {
+  border-color: #1d4ed8;
+  color: #1d4ed8;
+  background: #eff6ff;
 }
 
 .adhoc-form {
@@ -219,6 +326,36 @@
   cursor: grab;
 }
 
+.slot-task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.slot-task-complete {
+  margin-top: 0.1rem;
+  flex: 0 0 auto;
+}
+
+.slot-task.is-complete {
+  opacity: 0.6;
+}
+
+.slot-task.is-complete .slot-task-title {
+  text-decoration: line-through;
+}
+
+.slot-task-curated {
+  background: #f2f8ff;
+  border-color: #cfe2f6;
+}
+
+.slot-task-adhoc {
+  background: #f6fbf1;
+  border-color: #d6e9c7;
+}
+
 .slot-task.is-dragging {
   opacity: 0.6;
 }
@@ -244,6 +381,121 @@
   padding: 0.25rem 0.5rem;
   cursor: pointer;
   font: inherit;
+}
+
+.slot-checklist {
+  margin-top: 0.35rem;
+  border-top: 1px solid #dbe3ec;
+  padding-top: 0.35rem;
+}
+
+.slot-checklist-toggle {
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+}
+
+.slot-checklist-body {
+  margin-top: 0.4rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.slot-checklist-list {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.slot-checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.slot-checklist-item.is-dragging {
+  opacity: 0.45;
+}
+
+.slot-checklist-item.is-drop-target {
+  outline: 1px dashed #0f766e;
+  border-radius: 6px;
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.slot-checklist-handle {
+  color: #64748b;
+  font-size: 0.82rem;
+  line-height: 1;
+  letter-spacing: -0.06em;
+  cursor: grab;
+  user-select: none;
+  flex: 0 0 auto;
+}
+
+.slot-checklist-handle:active {
+  cursor: grabbing;
+}
+
+.slot-checklist-item input[type="checkbox"] {
+  margin: 0;
+}
+
+.slot-checklist-text {
+  flex: 1 1 auto;
+  color: #334155;
+  font-size: 0.84rem;
+}
+
+.slot-checklist-item.is-complete .slot-checklist-text {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+
+.slot-checklist-remove {
+  border: 1px solid #d1dbe8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #64748b;
+  font: inherit;
+  font-size: 0.76rem;
+  line-height: 1;
+  padding: 0.2rem 0.38rem;
+  cursor: pointer;
+}
+
+.slot-checklist-add {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.slot-checklist-add input {
+  flex: 1 1 auto;
+  border: 1px solid #c7d4e2;
+  border-radius: 7px;
+  padding: 0.25rem 0.45rem;
+  font: inherit;
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.slot-checklist-add button {
+  border: 1px solid #c7d4e2;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 0.2rem 0.55rem;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.slot-checklist-empty {
+  color: #64748b;
+  font-size: 0.8rem;
 }
 
 .slot-empty {
@@ -277,12 +529,13 @@
 }
 
 @media (max-width: 1100px) {
-  .planner-top-panels {
+  #planner-top-columns {
     flex-direction: column;
   }
 
-  .planner-pool,
-  .planner-adhoc-column {
+  #curated-left,
+  #curated-middle,
+  #adhoc-right {
     width: 100%;
     flex: 1 1 auto;
   }
