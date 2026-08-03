@@ -16,15 +16,22 @@ function initTasksScreen() {
     allProjects: [],
     projectTasks: [],
     repeatableTasks: [],
+    repeatableOverrideMap: new Map(),
+    sortDirection: {
+      project: "asc",
+      repeatable: "asc",
+    },
   };
 
   const elements = {
     status: document.getElementById("tasksStatus"),
     projectList: document.getElementById("projectTaskList"),
     repeatableList: document.getElementById("repeatableTaskList"),
+    projectSortToggle: document.getElementById("projectTaskSortToggle"),
+    repeatableSortToggle: document.getElementById("repeatableTaskSortToggle"),
   };
 
-  if (!elements.status || !elements.projectList || !elements.repeatableList) {
+  if (!elements.status || !elements.projectList || !elements.repeatableList || !elements.projectSortToggle || !elements.repeatableSortToggle) {
     return;
   }
 
@@ -257,28 +264,68 @@ function initTasksScreen() {
           order: parseNumber(item.order, parseNumber(enriched.order, 999)),
         };
       })
-      .sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
+      .filter((item) => normalizeSource(item.source) !== "repeating");
+
+    state.projectTasks = sortTaskList(state.projectTasks, "project");
   }
 
   function buildRepeatableTasks(projectMap) {
     const overrides = loadRepeatableOverrides();
     const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
+    state.repeatableOverrideMap = overrideMap;
 
     state.repeatableTasks = [...projectMap.values()]
       .filter((project) => project.source === "repeating")
       .map((project, index) => {
         const override = overrideMap.get(project.projectId) || {};
+        if (override.removed === true) {
+          return null;
+        }
+
         return {
           taskId: `repeatable-${project.projectId}`,
           projectId: project.projectId,
           title: project.title,
+          source: "repeating",
+          state: cleanText(project.state, "unknown"),
           recurrence: cleanText(project.recurrence, "none").toLowerCase(),
           priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
           order: parseNumber(override.order, parseNumber(project.order, index + 1)),
           category: project.category,
+          asset: cleanText(project.asset, ""),
+          mileage: cleanText(project.mileage, ""),
         };
       })
-      .sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
+      .filter(Boolean);
+
+    state.repeatableTasks = sortTaskList(state.repeatableTasks, "repeatable");
+  }
+
+  function compareTasksAscending(a, b) {
+    const leftOrder = parseNumber(a.order, Number.MAX_SAFE_INTEGER);
+    const rightOrder = parseNumber(b.order, Number.MAX_SAFE_INTEGER);
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+
+    return a.title.localeCompare(b.title);
+  }
+
+  function sortTaskList(items, listType) {
+    const direction = (state.sortDirection && state.sortDirection[listType]) === "desc" ? "desc" : "asc";
+    const sorted = [...(items || [])].sort(compareTasksAscending);
+    return direction === "desc" ? sorted.reverse() : sorted;
+  }
+
+  function orderBadge(task) {
+    const orderValue = parseNumber(task.order, null);
+    const displayOrder = orderValue == null ? "" : String(orderValue);
+    return `<span class="task-order-badge">Order: ${displayOrder || "-"}</span>`;
+  }
+
+  function updateSortToggleLabels() {
+    elements.projectSortToggle.textContent = `Sort: ${state.sortDirection.project === "asc" ? "Ascending" : "Descending"}`;
+    elements.repeatableSortToggle.textContent = `Sort: ${state.sortDirection.repeatable === "asc" ? "Ascending" : "Descending"}`;
   }
 
   function renderProjectTasks() {
@@ -290,20 +337,17 @@ function initTasksScreen() {
     elements.projectList.innerHTML = state.projectTasks
       .map((task) => {
         const recurrence = task.recurrence || "-";
+        const orderPill = orderBadge(task);
         return `
           <article class="task-card" data-type="project" data-task-id="${task.taskId}">
-            <h3>${task.title}</h3>
+            <h3 class="task-card-title"><span class="task-title-main">${task.title}</span>${orderPill}</h3>
             <div class="task-meta-grid">
               <div class="task-meta"><strong>Source:</strong> ${task.source}</div>
               <div class="task-meta"><strong>Category:</strong> ${task.category}</div>
               <div class="task-meta"><strong>State:</strong> ${task.state}</div>
-              <div class="task-meta"><strong>Priority:</strong> ${task.priority}</div>
-              <div class="task-meta"><strong>Order:</strong> ${task.order}</div>
               <div class="task-meta"><strong>Recurrence:</strong> ${recurrence}</div>
             </div>
             <div class="task-actions">
-              <button type="button" data-action="priority-up">Increase priority</button>
-              <button type="button" data-action="priority-down">Decrease priority</button>
               <button type="button" data-action="move-up">Move up</button>
               <button type="button" data-action="move-down">Move down</button>
               <button type="button" class="primary" data-action="send-weekly">Send to Weekly Planner</button>
@@ -322,24 +366,24 @@ function initTasksScreen() {
     }
 
     elements.repeatableList.innerHTML = state.repeatableTasks
-      .map((task) => `
+      .map((task) => {
+        const orderPill = orderBadge(task);
+        return `
         <article class="task-card" data-type="repeatable" data-task-id="${task.taskId}">
-          <h3>${task.title}</h3>
+          <h3 class="task-card-title"><span class="task-title-main">${task.title}</span>${orderPill}</h3>
           <div class="task-meta-grid">
             <div class="task-meta"><strong>Recurrence:</strong> ${task.recurrence}</div>
-            <div class="task-meta"><strong>Priority:</strong> ${task.priority}</div>
-            <div class="task-meta"><strong>Order:</strong> ${task.order}</div>
             <div class="task-meta"><strong>Category:</strong> ${task.category}</div>
           </div>
           <div class="task-actions">
-            <button type="button" data-action="priority-up">Increase priority</button>
-            <button type="button" data-action="priority-down">Decrease priority</button>
             <button type="button" data-action="move-up">Move up</button>
             <button type="button" data-action="move-down">Move down</button>
             <button type="button" class="primary" data-action="send-weekly">Add to weekly planner</button>
+            <button type="button" class="danger" data-action="remove">Remove from Task Manager</button>
           </div>
         </article>
-      `)
+      `;
+      })
       .join("");
   }
 
@@ -348,6 +392,7 @@ function initTasksScreen() {
   }
 
   function renderAll() {
+    updateSortToggleLabels();
     renderProjectTasks();
     renderRepeatableTasks();
     refreshStatus();
@@ -377,23 +422,77 @@ function initTasksScreen() {
   }
 
   function updateProjectTaskList(nextList) {
-    state.projectTasks = nextList.sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
+    state.projectTasks = sortTaskList(nextList, "project");
     saveTasks(state.projectTasks);
     renderAll();
   }
 
+  function toProjectTaskRecord(task) {
+    return {
+      taskId: cleanText(task.taskId, ""),
+      projectId: cleanText(task.projectId, ""),
+      title: cleanText(task.title, "Untitled Task"),
+      source: normalizeSource(task.source),
+      category: cleanText(task.category, "uncategorized"),
+      state: cleanText(task.state, "unknown"),
+      priority: parseNumber(task.priority, 3),
+      order: parseNumber(task.order, 999),
+      recurrence: cleanText(task.recurrence, ""),
+      asset: cleanText(task.asset, ""),
+      mileage: cleanText(task.mileage, ""),
+    };
+  }
+
+  function addRepeatableToCuratedTasks(task) {
+    const saved = addTask({
+      projectId: cleanText(task.projectId, ""),
+      title: cleanText(task.title, "Untitled Task"),
+      source: cleanText(task.source, "repeating"),
+      category: cleanText(task.category, "uncategorized"),
+      state: cleanText(task.state, "unknown"),
+      priority: parseNumber(task.priority, 3),
+      order: parseNumber(task.order, 999),
+      recurrence: cleanText(task.recurrence, ""),
+      asset: cleanText(task.asset, ""),
+      mileage: cleanText(task.mileage, ""),
+    });
+
+    const normalized = toProjectTaskRecord(saved);
+    const list = [...state.projectTasks];
+    const index = list.findIndex((item) => item.taskId === normalized.taskId);
+    if (index >= 0) {
+      list[index] = {
+        ...list[index],
+        ...normalized,
+      };
+    } else {
+      list.push(normalized);
+    }
+
+    state.projectTasks = sortTaskList(list, "project");
+    renderAll();
+  }
+
   function saveRepeatableState() {
-    const overrides = state.repeatableTasks.map((task) => ({
-      projectId: task.projectId,
-      priority: task.priority,
-      order: task.order,
-    }));
+    const overrides = Array.from(state.repeatableOverrideMap.values());
 
     saveRepeatableOverrides(overrides);
   }
 
   function updateRepeatableTaskList(nextList) {
-    state.repeatableTasks = nextList.sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
+    state.repeatableTasks = sortTaskList(nextList, "repeatable");
+
+    state.repeatableTasks.forEach((task) => {
+      const existing = state.repeatableOverrideMap.get(task.projectId) || {};
+      state.repeatableOverrideMap.set(task.projectId, {
+        ...existing,
+        projectId: task.projectId,
+        priority: task.priority,
+        order: task.order,
+        removed: false,
+      });
+    });
+
     saveRepeatableState();
     renderAll();
   }
@@ -420,20 +519,6 @@ function initTasksScreen() {
     const list = [...state.projectTasks];
     const index = list.findIndex((item) => item.taskId === taskId);
     if (index < 0) {
-      return;
-    }
-
-    if (action === "priority-up") {
-      list[index].priority = Math.max(1, parseNumber(list[index].priority, 3) - 1);
-      updateTask(list[index]);
-      updateProjectTaskList(list);
-      return;
-    }
-
-    if (action === "priority-down") {
-      list[index].priority = Math.min(9, parseNumber(list[index].priority, 3) + 1);
-      updateTask(list[index]);
-      updateProjectTaskList(list);
       return;
     }
 
@@ -466,18 +551,6 @@ function initTasksScreen() {
       return;
     }
 
-    if (action === "priority-up") {
-      list[index].priority = Math.max(1, parseNumber(list[index].priority, 3) - 1);
-      updateRepeatableTaskList(list);
-      return;
-    }
-
-    if (action === "priority-down") {
-      list[index].priority = Math.min(9, parseNumber(list[index].priority, 3) + 1);
-      updateRepeatableTaskList(list);
-      return;
-    }
-
     if (action === "move-up") {
       updateRepeatableTaskList(shiftOrder(list, taskId, -1));
       return;
@@ -489,11 +562,41 @@ function initTasksScreen() {
     }
 
     if (action === "send-weekly") {
-      sendToWeeklyPlanner(list[index], "repeatable");
+      addRepeatableToCuratedTasks(list[index]);
+      elements.status.textContent = `Added "${list[index].title}" to Curated Tasks for Planner assignment.`;
+      return;
+    }
+
+    if (action === "remove") {
+      const task = list[index];
+      const existing = state.repeatableOverrideMap.get(task.projectId) || {};
+      state.repeatableOverrideMap.set(task.projectId, {
+        ...existing,
+        projectId: task.projectId,
+        priority: task.priority,
+        order: task.order,
+        removed: true,
+      });
+
+      state.repeatableTasks = state.repeatableTasks.filter((item) => item.taskId !== taskId);
+      saveRepeatableState();
+      renderAll();
     }
   }
 
   function attachEvents() {
+    elements.projectSortToggle.addEventListener("click", () => {
+      state.sortDirection.project = state.sortDirection.project === "asc" ? "desc" : "asc";
+      state.projectTasks = sortTaskList(state.projectTasks, "project");
+      renderAll();
+    }, { signal: controller.signal });
+
+    elements.repeatableSortToggle.addEventListener("click", () => {
+      state.sortDirection.repeatable = state.sortDirection.repeatable === "asc" ? "desc" : "asc";
+      state.repeatableTasks = sortTaskList(state.repeatableTasks, "repeatable");
+      renderAll();
+    }, { signal: controller.signal });
+
     elements.projectList.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-action]");
       if (!button) {

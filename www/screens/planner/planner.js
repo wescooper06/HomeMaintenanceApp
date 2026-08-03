@@ -25,9 +25,13 @@ function initPlannerScreen() {
     status: document.getElementById("plannerStatus"),
     taskPool: document.getElementById("plannerTaskPool"),
     weekGrid: document.getElementById("plannerWeekGrid"),
+    adhocTitle: document.getElementById("adhocTaskTitle"),
+    adhocDay: document.getElementById("adhocTaskDay"),
+    adhocSlot: document.getElementById("adhocTaskSlot"),
+    adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.taskPool || !elements.weekGrid) {
+  if (!elements.status || !elements.taskPool || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -54,6 +58,10 @@ function initPlannerScreen() {
 
     const num = Number(String(text).replace(/[$,]/g, ""));
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function getSlotItemId(item) {
+    return cleanText(item && (item.id || item.taskId), "");
   }
 
   function getWeekStartISO(dateValue) {
@@ -132,13 +140,15 @@ function initPlannerScreen() {
           const slotItems = Array.isArray(existingDay[slot]) ? existingDay[slot] : [];
           safePlanner.days[day.key][slot] = slotItems
             .map((item, index) => ({
-              taskId: cleanText(item.taskId, `slot-${index + 1}`),
+              id: cleanText(item.id || item.taskId, `slot-${index + 1}`),
+              taskId: cleanText(item.taskId, ""),
               title: cleanText(item.title, "Untitled Task"),
-              priority: parseNumber(item.priority, 3),
+              type: cleanText(item.type, "curated"),
+              priority: parseNumber(item.priority, null),
               source: cleanText(item.source, "unknown"),
               recurrence: cleanText(item.recurrence, ""),
             }))
-            .filter((item) => item.taskId);
+            .filter((item) => getSlotItemId(item));
         });
         safePlanner.days[day.key].notes = cleanText(existingDay.notes, "");
       });
@@ -158,17 +168,49 @@ function initPlannerScreen() {
     localStorage.setItem(STORAGE_KEYS.planner, JSON.stringify(state.planner));
   }
 
-  function hasAssignment(taskId) {
-    return DAY_ORDER.some((day) => {
-      return SLOT_ORDER.some((slot) => {
-        return state.planner.days[day.key][slot].some((item) => item.taskId === taskId);
-      });
-    });
+  function saveCuratedTasks() {
+    localStorage.setItem(STORAGE_KEYS.curatedTasks, JSON.stringify(state.curatedTasks));
   }
 
-  function isRepeatableTask(task) {
-    const recurrence = cleanText(task.recurrence, "").toLowerCase();
-    return task.source === "repeating" || Boolean(recurrence);
+  function findAssignment(taskId) {
+    const targetId = cleanText(taskId, "");
+    if (!targetId) {
+      return null;
+    }
+
+    for (let d = 0; d < DAY_ORDER.length; d += 1) {
+      const dayKey = DAY_ORDER[d].key;
+      for (let s = 0; s < SLOT_ORDER.length; s += 1) {
+        const slotKey = SLOT_ORDER[s];
+        const slotItems = state.planner.days[dayKey][slotKey] || [];
+        const index = slotItems.findIndex((item) => getSlotItemId(item) === targetId);
+        if (index >= 0) {
+          return {
+            day: dayKey,
+            slot: slotKey,
+            index,
+            item: slotItems[index],
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function toPlannerSlotItem(taskLike) {
+    const type = cleanText(taskLike && taskLike.type, "curated");
+    const normalizedId = cleanText(taskLike && (taskLike.id || taskLike.taskId), "");
+
+    return {
+      id: normalizedId,
+      taskId: cleanText(taskLike && taskLike.taskId, ""),
+      title: cleanText(taskLike.title, "Untitled Task"),
+      type,
+      priority: parseNumber(taskLike.priority, null),
+      source: cleanText(taskLike.source, "unknown"),
+      recurrence: cleanText(taskLike.recurrence, ""),
+    };
   }
 
   function assignTask(taskId, day, slot) {
@@ -182,22 +224,116 @@ function initPlannerScreen() {
       return false;
     }
 
-    if (!isRepeatableTask(task) && hasAssignment(taskId)) {
-      elements.status.textContent = `Task \"${task.title}\" is already assigned this week.`;
+    const existing = findAssignment(taskId);
+    if (existing && existing.day === day && existing.slot === slot) {
+      return true;
+    }
+
+    if (existing) {
+      state.planner.days[existing.day][existing.slot].splice(existing.index, 1);
+    }
+
+    dayBucket[slot].push(toPlannerSlotItem({
+      ...task,
+      id: cleanText(task.taskId, ""),
+      type: "curated",
+    }));
+
+    savePlanner();
+    renderTaskPool();
+    renderWeekGrid();
+    elements.status.textContent = `Assigned \"${task.title}\" to ${day.toUpperCase()} ${slot}.`;
+    return true;
+  }
+
+  function addAdHocTask(title, day, slot) {
+    const normalizedTitle = cleanText(title, "");
+    if (!normalizedTitle) {
+      elements.status.textContent = "Ad-hoc task title is required.";
       return false;
     }
 
-    dayBucket[slot].push({
-      taskId: task.taskId,
-      title: task.title,
-      priority: task.priority,
-      source: task.source,
-      recurrence: task.recurrence,
-    });
+    const dayBucket = state.planner.days[day];
+    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+      elements.status.textContent = "Please select a valid day and time for the ad-hoc task.";
+      return false;
+    }
 
+    const adHocItem = {
+      id: `adhoc-${Date.now()}`,
+      title: normalizedTitle,
+      type: "adhoc",
+      source: "adhoc",
+      recurrence: "",
+      priority: null,
+    };
+
+    dayBucket[slot].push(toPlannerSlotItem(adHocItem));
     savePlanner();
     renderWeekGrid();
-    elements.status.textContent = `Assigned \"${task.title}\" to ${day.toUpperCase()} ${slot}.`;
+
+    elements.adhocTitle.value = "";
+    elements.adhocDay.value = "mon";
+    elements.adhocSlot.value = "morning";
+    elements.status.textContent = `Added ad-hoc task "${normalizedTitle}" to ${day.toUpperCase()} ${slot}.`;
+    return true;
+  }
+
+  function assignEntryToSlot(entry, day, slot) {
+    const dayBucket = state.planner.days[day];
+    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+      return false;
+    }
+
+    const normalizedTaskId = cleanText(entry.taskId, "") || cleanText(entry.projectId, "") || cleanText(entry.id, "");
+    if (!normalizedTaskId) {
+      return false;
+    }
+
+    const existing = findAssignment(normalizedTaskId);
+    if (existing && existing.day === day && existing.slot === slot) {
+      return true;
+    }
+
+    if (existing) {
+      state.planner.days[existing.day][existing.slot].splice(existing.index, 1);
+    }
+
+    dayBucket[slot].push(toPlannerSlotItem({
+      id: normalizedTaskId,
+      taskId: normalizedTaskId,
+      title: cleanText(entry.title, "Untitled Task"),
+      type: "curated",
+      priority: parseNumber(entry.priority, 3),
+      source: cleanText(entry.source, "unknown"),
+      recurrence: cleanText(entry.recurrence, ""),
+    }));
+
+    return true;
+  }
+
+  function moveTask(taskId, toDay, toSlot) {
+    const targetDay = state.planner.days[toDay];
+    if (!targetDay || !SLOT_ORDER.includes(toSlot)) {
+      return false;
+    }
+
+    const existing = findAssignment(taskId);
+    if (!existing) {
+      return false;
+    }
+
+    if (existing.day === toDay && existing.slot === toSlot) {
+      return true;
+    }
+
+    state.planner.days[existing.day][existing.slot].splice(existing.index, 1);
+    state.planner.days[toDay][toSlot].push(existing.item);
+
+    savePlanner();
+    renderTaskPool();
+    renderWeekGrid();
+    elements.status.textContent = `Moved "${existing.item.title}" to ${toDay.toUpperCase()} ${toSlot}.`;
     return true;
   }
 
@@ -208,16 +344,70 @@ function initPlannerScreen() {
     }
 
     const before = dayBucket[slot].length;
-    dayBucket[slot] = dayBucket[slot].filter((item) => item.taskId !== taskId);
+    dayBucket[slot] = dayBucket[slot].filter((item) => getSlotItemId(item) !== taskId);
 
     if (before === dayBucket[slot].length) {
       return false;
     }
 
     savePlanner();
+    renderTaskPool();
     renderWeekGrid();
     elements.status.textContent = "Task removed from planner slot.";
     return true;
+  }
+
+  function removeTaskFromPlanner(taskId) {
+    const beforeCurated = state.curatedTasks.length;
+    state.curatedTasks = state.curatedTasks.filter((task) => task.taskId !== taskId);
+    const removedFromCurated = state.curatedTasks.length !== beforeCurated;
+
+    let removedFromSchedule = false;
+    DAY_ORDER.forEach((day) => {
+      SLOT_ORDER.forEach((slot) => {
+        const before = state.planner.days[day.key][slot].length;
+        state.planner.days[day.key][slot] = state.planner.days[day.key][slot].filter((item) => getSlotItemId(item) !== taskId);
+        if (state.planner.days[day.key][slot].length !== before) {
+          removedFromSchedule = true;
+        }
+      });
+    });
+
+    if (!removedFromCurated && !removedFromSchedule) {
+      return false;
+    }
+
+    saveCuratedTasks();
+    savePlanner();
+    renderTaskPool();
+    renderWeekGrid();
+    elements.status.textContent = "Task removed from Planner and schedule.";
+    return true;
+  }
+
+  function buildAssignmentMap() {
+    const map = new Map();
+
+    DAY_ORDER.forEach((day) => {
+      SLOT_ORDER.forEach((slot) => {
+        const items = state.planner.days[day.key][slot] || [];
+        items.forEach((item) => {
+          const id = cleanText(item.taskId, "");
+          if (!id) {
+            return;
+          }
+
+          if (!map.has(id)) {
+            map.set(id, {
+              day: day.key,
+              slot,
+            });
+          }
+        });
+      });
+    });
+
+    return map;
   }
 
   function renderTaskPool() {
@@ -226,26 +416,49 @@ function initPlannerScreen() {
       return;
     }
 
+    const assignmentMap = buildAssignmentMap();
+
     elements.taskPool.innerHTML = state.curatedTasks
       .slice()
       .sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title))
       .map((task) => {
+        const assignment = assignmentMap.get(task.taskId);
         const dayOptions = DAY_ORDER.map((day) => `<option value="${day.key}">${day.label}</option>`).join("");
         const slotOptions = SLOT_ORDER.map((slot) => `<option value="${slot}">${slot[0].toUpperCase()}${slot.slice(1)}</option>`).join("");
+
+        const daySelectOptions = `<option value="">Day</option>${dayOptions}`;
+        const slotSelectOptions = `<option value="">Time</option>${slotOptions}`;
 
         return `
           <article class="pool-task-card" data-task-id="${task.taskId}">
             <div class="pool-task-title">${task.title}</div>
             <div class="pool-task-meta">Priority: ${task.priority} | Source: ${task.source} | Category: ${task.category}</div>
             <div class="pool-task-controls">
-              <select data-role="day">${dayOptions}</select>
-              <select data-role="slot">${slotOptions}</select>
-              <button type="button" data-action="assign">Send to Weekly Planner</button>
+              <label class="pool-control-label">Day
+                <select class="planner-control-field" data-role="day">${daySelectOptions}</select>
+              </label>
+              <label class="pool-control-label">Time
+                <select class="planner-control-field" data-role="slot">${slotSelectOptions}</select>
+              </label>
+              <button type="button" class="danger" data-action="remove-planner">Remove from Planner</button>
             </div>
           </article>
         `;
       })
       .join("");
+
+    elements.taskPool.querySelectorAll(".pool-task-card").forEach((card) => {
+      const taskId = card.getAttribute("data-task-id");
+      const assignment = assignmentMap.get(taskId);
+      const daySelect = card.querySelector("select[data-role='day']");
+      const slotSelect = card.querySelector("select[data-role='slot']");
+      if (daySelect) {
+        daySelect.value = assignment ? assignment.day : "";
+      }
+      if (slotSelect) {
+        slotSelect.value = assignment ? assignment.slot : "";
+      }
+    });
   }
 
   function renderWeekGrid() {
@@ -258,13 +471,23 @@ function initPlannerScreen() {
             const tasks = dayData[slot] || [];
             const taskHtml = tasks.length
               ? tasks
-                  .map((task) => `
-                    <div class="slot-task" data-day="${day.key}" data-slot="${slot}" data-task-id="${task.taskId}">
+                  .map((task) => {
+                    const taskId = getSlotItemId(task);
+                    const type = cleanText(task.type, "curated");
+                    const sourceLabel = type === "adhoc" ? "Ad-Hoc" : cleanText(task.source, "unknown");
+                    const recurrence = cleanText(task.recurrence, "");
+                    const meta = recurrence
+                      ? `${sourceLabel} | ${recurrence}`
+                      : sourceLabel;
+
+                    return `
+                    <div class="slot-task" draggable="true" data-day="${day.key}" data-slot="${slot}" data-task-id="${taskId}">
                       <div class="slot-task-title">${task.title}</div>
-                      <div class="slot-task-meta">Priority: ${task.priority}</div>
+                      <div class="slot-task-meta">${meta}</div>
                       <button type="button" data-action="remove">Remove</button>
                     </div>
-                  `)
+                    `;
+                  })
                   .join("")
               : '<div class="slot-empty">No tasks assigned</div>';
 
@@ -309,24 +532,48 @@ function initPlannerScreen() {
       if (task) {
         const assigned = assignTask(task.taskId, "mon", "morning");
         changed = changed || assigned;
+      } else {
+        const assigned = assignEntryToSlot(entry, "mon", "morning");
+        changed = changed || assigned;
       }
     });
 
     localStorage.removeItem(STORAGE_KEYS.staged);
 
     if (changed) {
+      savePlanner();
+      renderTaskPool();
+      renderWeekGrid();
       elements.status.textContent = "Staged tasks were added to Monday morning.";
     }
   }
 
   function attachEvents() {
+    elements.adhocAddBtn.addEventListener("click", () => {
+      addAdHocTask(elements.adhocTitle.value, elements.adhocDay.value, elements.adhocSlot.value);
+    }, { signal: controller.signal });
+
     elements.taskPool.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-action='assign']");
-      if (!button) {
+      const removeButton = event.target.closest("button[data-action='remove-planner']");
+      if (!removeButton) {
         return;
       }
 
-      const card = button.closest(".pool-task-card");
+      const card = removeButton.closest(".pool-task-card");
+      if (!card) {
+        return;
+      }
+
+      removeTaskFromPlanner(card.dataset.taskId);
+    }, { signal: controller.signal });
+
+    elements.taskPool.addEventListener("change", (event) => {
+      const select = event.target.closest("select[data-role]");
+      if (!select) {
+        return;
+      }
+
+      const card = select.closest(".pool-task-card");
       if (!card) {
         return;
       }
@@ -334,7 +581,14 @@ function initPlannerScreen() {
       const taskId = card.dataset.taskId;
       const daySelect = card.querySelector("select[data-role='day']");
       const slotSelect = card.querySelector("select[data-role='slot']");
-      assignTask(taskId, daySelect.value, slotSelect.value);
+      const day = cleanText(daySelect && daySelect.value, "");
+      const slot = cleanText(slotSelect && slotSelect.value, "");
+
+      if (!day || !slot) {
+        return;
+      }
+
+      assignTask(taskId, day, slot);
     }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("click", (event) => {
@@ -368,6 +622,76 @@ function initPlannerScreen() {
       state.planner.days[day].notes = notesArea.value;
       savePlanner();
       elements.status.textContent = `Saved notes for ${day.toUpperCase()}.`;
+    }, { signal: controller.signal });
+
+    elements.weekGrid.addEventListener("dragstart", (event) => {
+      const taskEl = event.target.closest(".slot-task[draggable='true']");
+      if (!taskEl) {
+        return;
+      }
+
+      const payload = {
+        taskId: cleanText(taskEl.dataset.taskId, ""),
+      };
+
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", JSON.stringify(payload));
+      taskEl.classList.add("is-dragging");
+    }, { signal: controller.signal });
+
+    elements.weekGrid.addEventListener("dragend", (event) => {
+      const taskEl = event.target.closest(".slot-task[draggable='true']");
+      if (taskEl) {
+        taskEl.classList.remove("is-dragging");
+      }
+
+      elements.weekGrid.querySelectorAll(".day-slot.is-drop-target").forEach((slotEl) => {
+        slotEl.classList.remove("is-drop-target");
+      });
+    }, { signal: controller.signal });
+
+    elements.weekGrid.addEventListener("dragover", (event) => {
+      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
+      if (!slotEl) {
+        return;
+      }
+
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      slotEl.classList.add("is-drop-target");
+    }, { signal: controller.signal });
+
+    elements.weekGrid.addEventListener("dragleave", (event) => {
+      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
+      if (!slotEl) {
+        return;
+      }
+
+      slotEl.classList.remove("is-drop-target");
+    }, { signal: controller.signal });
+
+    elements.weekGrid.addEventListener("drop", (event) => {
+      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
+      if (!slotEl) {
+        return;
+      }
+
+      event.preventDefault();
+      slotEl.classList.remove("is-drop-target");
+
+      let payload = null;
+      try {
+        payload = JSON.parse(event.dataTransfer.getData("text/plain") || "null");
+      } catch (error) {
+        payload = null;
+      }
+
+      const taskId = payload && payload.taskId ? payload.taskId : "";
+      if (!taskId) {
+        return;
+      }
+
+      moveTask(taskId, slotEl.dataset.day, slotEl.dataset.slot);
     }, { signal: controller.signal });
 
     const teardownIfRouteChanges = () => {

@@ -114,11 +114,96 @@
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 
-.projects-controls label {
+.projects-controls > label {
   display: grid;
   gap: 0.3rem;
   font-weight: 600;
   font-size: 0.9rem;
+}
+
+.projects-filter-group {
+  position: relative;
+}
+
+.projects-filter-dropdown {
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.projects-filter-dropdown summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.5rem;
+  color: #1f2937;
+  font-weight: 500;
+}
+
+.projects-filter-dropdown summary::-webkit-details-marker {
+  display: none;
+}
+
+.projects-filter-dropdown summary::after {
+  content: "▾";
+  float: right;
+  color: #64748b;
+}
+
+.projects-filter-dropdown[open] summary {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.projects-filter-dropdown[open] summary::after {
+  content: "▴";
+}
+
+.projects-filter-options {
+  max-height: 220px;
+  overflow: auto;
+  padding: 0.35rem 0.5rem 0.5rem;
+  display: grid;
+  gap: 0;
+}
+
+.projects-filter-actions {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 0.4rem;
+  padding-bottom: 0.35rem;
+  background: #ffffff;
+}
+
+.projects-filter-action-btn {
+  border: 1px solid #cfd8e3;
+  background: #f8fafc;
+  color: #1f2937;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.projects-filter-action-btn:hover {
+  background: #eef2f7;
+}
+
+.projects-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 500;
+  color: #1f2937;
+  margin: 0;
+  padding: 0;
+  line-height: 1.2;
+}
+
+.projects-filter-option input[type="checkbox"] {
+  margin: 0;
+  flex: 0 0 auto;
 }
 
 .projects-controls select {
@@ -147,6 +232,46 @@
 .project-card h2 {
   font-size: 1.05rem;
   margin: 0 0 0.5rem;
+}
+
+.project-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-weight: 700;
+}
+
+.project-title-main {
+  font-weight: 700;
+}
+
+.project-title-id,
+.project-title-order {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.project-title-order-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #0f766e;
+  background: #ecfeff;
+  color: #115e59;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  min-width: 5.5rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.project-title-order-badge.is-empty {
+  border-color: #dbe3ec;
+  background: #f8fafc;
+  color: transparent;
 }
 
 .project-grid {
