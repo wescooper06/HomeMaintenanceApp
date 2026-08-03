@@ -3,7 +3,7 @@ function initDashboardScreen() {
     return;
   }
 
-  const SERVICE_VERSION = "20260727-4";
+  const SERVICE_VERSION = "20260802-8";
 
   const STORAGE_KEYS = {
     curatedTasks: "hm_task_manager_tasks",

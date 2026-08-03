@@ -563,6 +563,105 @@
     return UnifiedProjectList;
   }
 
+  function buildHomeCreateFields(payload) {
+    return {
+      Property: cleanString(payload.property),
+      Area: cleanString(payload.area),
+      Category: cleanString(payload.category),
+      "Task Description": cleanString(payload.title),
+      Priority: cleanString(payload.priority),
+      Order: cleanString(payload.order),
+      ResourceLinks: cleanString(payload.resourceLinks),
+      "Cost ($)": cleanString(payload.cost),
+      State: cleanString(payload.state),
+      "Date Completed": cleanString(payload.dateCompleted),
+    };
+  }
+
+  function buildVehicleCreateFields(payload) {
+    return {
+      "Vehicle/Small Engine": cleanString(payload.vehicle),
+      State: cleanString(payload.state),
+      Category: cleanString(payload.category),
+      "Date Completed": cleanString(payload.dateCompleted),
+      Hours: cleanString(payload.hours),
+      Mileage: cleanString(payload.mileage),
+      Mechanic: cleanString(payload.mechanic),
+      "Service Description": cleanString(payload.title),
+      "Resource Links": cleanString(payload.resourceLinks),
+      Order: cleanString(payload.order),
+    };
+  }
+
+  function buildRepeatingCreateFields(payload) {
+    return {
+      Property: cleanString(payload.property || payload.vehicle),
+      Asset: cleanString(payload.vehicle),
+      Area: cleanString(payload.area),
+      Category: cleanString(payload.category),
+      "Task Description": cleanString(payload.title),
+      Priority: cleanString(payload.priority),
+      Order: cleanString(payload.order),
+      ResourceLinks: cleanString(payload.resourceLinks),
+      State: cleanString(payload.state),
+      Recurrance: cleanString(payload.recurrence),
+      Recurrence: cleanString(payload.recurrence),
+      "Date Completed": cleanString(payload.dateCompleted),
+    };
+  }
+
+  async function createProject(payload) {
+    const sheets = getSheetsService();
+    if (!sheets || typeof sheets.createProject !== "function" || typeof sheets.getNextProjectId !== "function") {
+      throw new Error("SheetsService.createProject is unavailable.");
+    }
+
+    const isVehicle = cleanString(payload.vehicle) !== "";
+    const isProperty = cleanString(payload.property) !== "";
+    if (!isVehicle && !isProperty) {
+      throw new Error("Select Property or Vehicle/Engine before creating a project.");
+    }
+
+    let destination = null;
+    if (payload.addToRepeating) {
+      destination = {
+        source: SOURCE.repeating,
+        tabName: sheets.TABS.repeating,
+        fields: buildRepeatingCreateFields(payload),
+      };
+    } else if (isVehicle) {
+      destination = {
+        source: SOURCE.vehicle,
+        tabName: sheets.TABS.vehicle,
+        fields: buildVehicleCreateFields(payload),
+      };
+    } else {
+      destination = {
+        source: SOURCE.home,
+        tabName: sheets.TABS.home,
+        fields: buildHomeCreateFields(payload),
+      };
+    }
+
+    const nextId = await sheets.getNextProjectId(destination.tabName);
+    const result = await sheets.createProject({
+      ...destination,
+      id: String(nextId),
+    });
+
+    if (!result || result.ok === false) {
+      throw new Error(cleanString(result && result.error) || "Create project request failed.");
+    }
+
+    return {
+      ok: true,
+      id: cleanString(result.id || nextId),
+      tabName: cleanString(result.tabName || destination.tabName),
+      rowNumber: result.rowNumber,
+      created: result,
+    };
+  }
+
   function deleteProject(projectOrId) {
     const project = typeof projectOrId === "object" && projectOrId != null ? projectOrId : null;
     const targetId = cleanString(project ? project.id : projectOrId);
@@ -612,6 +711,7 @@
     loadVehicleProjects,
     loadRepeatingProjects,
     loadAllProjects,
+    createProject,
     deleteProject,
   };
 
@@ -620,5 +720,6 @@
   window.loadVehicleProjects = loadVehicleProjects;
   window.loadRepeatingProjects = loadRepeatingProjects;
   window.loadAllProjects = loadAllProjects;
+  window.createProjectInSheets = createProject;
   window.deleteProjectFromUnifiedList = deleteProject;
 })();

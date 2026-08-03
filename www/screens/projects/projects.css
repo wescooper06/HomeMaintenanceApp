@@ -13,6 +13,23 @@
   flex-wrap: wrap;
 }
 
+.projects-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.projects-header-actions > button {
+  border: 1px solid #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 0.45rem 0.75rem;
+  font: inherit;
+  cursor: pointer;
+}
+
 .projects-summary {
   border: 1px solid #dbe3ec;
   background: #f7fbff;
@@ -246,6 +263,28 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0.6rem 0.8rem;
+}
+
+.project-add-initial-grid {
+  margin-bottom: 0.8rem;
+}
+
+.project-add-initial-grid select[disabled] {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.project-add-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding-top: 0.35rem;
+}
+
+.project-add-hint {
+  margin: 0;
+  color: #64748b;
 }
 
 .project-edit-field {
