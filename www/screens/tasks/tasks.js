@@ -285,6 +285,8 @@ function initTasksScreen() {
     const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
     state.repeatableOverrideMap = overrideMap;
 
+    const projectMapById = new Map((projects || []).map((project) => [cleanText(project.projectId, ""), project]));
+
     state.repeatableTasks = [...(projects || [])]
       .filter((project) => project.source === "repeating")
       .map((project, index) => {
@@ -308,6 +310,36 @@ function initTasksScreen() {
         };
       })
       .filter(Boolean);
+
+    overrides.forEach((override, index) => {
+      if (!override || override.removed === true) {
+        return;
+      }
+
+      const projectId = cleanText(override.projectId, "");
+      if (!projectId || projectMapById.has(projectId)) {
+        return;
+      }
+
+      const title = cleanText(override.title, "");
+      if (!title) {
+        return;
+      }
+
+      state.repeatableTasks.push({
+        taskId: `repeatable-${projectId}`,
+        projectId,
+        title,
+        source: "repeating",
+        state: cleanText(override.state, "unknown"),
+        recurrence: cleanText(override.recurrence, "none").toLowerCase(),
+        priority: parseNumber(override.priority, 3),
+        order: parseNumber(override.order, index + 1),
+        category: cleanText(override.category, "uncategorized"),
+        asset: cleanText(override.asset, ""),
+        mileage: cleanText(override.mileage, ""),
+      });
+    });
 
     state.repeatableTasks = sortTaskList(state.repeatableTasks, "repeatable");
   }

@@ -1843,17 +1843,26 @@ function initProjectsScreen() {
 
       const projectId = cleanText(project.id, "");
       const repeatableIndex = repeatableOverrides.findIndex((item) => cleanText(item && item.projectId, "") === projectId);
+      const repeatableRecord = {
+        projectId,
+        title: cleanText(project.title, "Untitled Task"),
+        source: "repeating",
+        category: cleanText(project.category, "uncategorized"),
+        state: cleanText(project.state, "unknown"),
+        priority: parseNumber(project.priority, 3),
+        order: parseNumber(project.order, 999),
+        recurrence: cleanText(project.recurrence, ""),
+        asset: cleanText(project.asset, ""),
+        mileage: cleanText(project.mileage, ""),
+        removed: false,
+      };
       if (repeatableIndex >= 0) {
         repeatableOverrides[repeatableIndex] = {
           ...repeatableOverrides[repeatableIndex],
-          projectId,
-          removed: false,
+          ...repeatableRecord,
         };
       } else {
-        repeatableOverrides.push({
-          projectId,
-          removed: false,
-        });
+        repeatableOverrides.push(repeatableRecord);
       }
 
       localStorage.setItem(repeatableKey, JSON.stringify(repeatableOverrides));

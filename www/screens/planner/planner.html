@@ -4,7 +4,6 @@
   <header class="planner-header">
     <div>
       <h1>Weekly Planner</h1>
-      <p class="hm-muted">Assign curated tasks to day and time slots for the current week.</p>
     </div>
     <div id="plannerStatus" class="planner-status">Loading planner...</div>
   </header>
@@ -53,10 +52,16 @@
           </div>
         </div>
       </section>
+
+      <section id="repeatable-right" class="planner-repeatable-column" aria-label="Repeatable tasks panel">
+        <h2>Repeatable Tasks</h2>
+        <div id="repeatable-tasks-panel" class="repeatable-task-panel" aria-live="polite"></div>
+      </section>
     </div>
   </section>
 
   <section class="planner-week" aria-label="Weekly planner grid">
+    <h2>Weekly Schedule</h2>
     <div id="plannerWeekGrid" class="planner-week-grid" aria-live="polite"></div>
   </section>
 
