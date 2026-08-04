@@ -3,10 +3,13 @@ function initPlannerScreen() {
     return;
   }
 
+  const SERVICE_VERSION = "20260802-8";
+
   const STORAGE_KEYS = {
     curatedTasks: "hm_planner_curated_tasks",
     planner: "hm_weekly_planner",
     staged: "hm_weekly_planner_queue",
+    repeatable: "hm_repeatable_tasks",
   };
 
   const DAY_ORDER = [
@@ -25,6 +28,7 @@ function initPlannerScreen() {
     status: document.getElementById("plannerStatus"),
     taskPoolLeft: document.getElementById("plannerTaskPoolLeft"),
     taskPoolMiddle: document.getElementById("plannerTaskPoolMiddle"),
+    repeatablePanel: document.getElementById("repeatable-tasks-panel"),
     curatedWarning: document.getElementById("curated-warning"),
     weekGrid: document.getElementById("plannerWeekGrid"),
     adhocTitle: document.getElementById("adhocTaskTitle"),
@@ -33,16 +37,20 @@ function initPlannerScreen() {
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.curatedWarning || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.curatedWarning || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
   const controller = new AbortController();
   const state = {
     curatedTasks: [],
+    repeatableTasks: [],
+    repeatableOverrideMap: new Map(),
     planner: null,
     curatedWarningTimer: null,
     activeCuratedDragTaskId: "",
+    activeWeeklyDrag: null,
+    allProjects: [],
   };
 
   const CURATED_TASK_LIMIT = 8;
@@ -64,6 +72,83 @@ function initPlannerScreen() {
 
     const num = Number(String(text).replace(/[$,]/g, ""));
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function cleanSource(source) {
+    return cleanText(source, "unknown").toLowerCase();
+  }
+
+  function firstDefined(obj, keys) {
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      if (Object.prototype.hasOwnProperty.call(obj, key) && obj[key] != null && String(obj[key]).trim() !== "") {
+        return obj[key];
+      }
+    }
+
+    return null;
+  }
+
+  function normalizeSource(source) {
+    const text = cleanSource(source);
+    if (text.includes("list_a") || text.includes("home")) return "home";
+    if (text.includes("list_b") || text.includes("vehicle")) return "vehicle";
+    if (text.includes("list_c") || text.includes("repeating")) return "repeating";
+    return text;
+  }
+
+  function ensureProjectServicesLoaded() {
+    return loadScriptFresh("js/services/sheets.service.js")
+      .then(() => loadScriptFresh("js/services/projects.service.js"));
+  }
+
+  function loadScriptFresh(src) {
+    const versionedSrc = `${src}?v=${SERVICE_VERSION}`;
+
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-module-src="${src}"]`);
+      if (existing) {
+        existing.remove();
+      }
+
+      const script = document.createElement("script");
+      script.src = versionedSrc;
+      script.dataset.moduleSrc = src;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+      document.body.appendChild(script);
+    });
+  }
+
+  function toProjectView(project) {
+    const metadata = project.metadata || {};
+    return {
+      projectId: cleanText(project.id, "unknown"),
+      title: cleanText(project.title, "Untitled Project"),
+      source: normalizeSource(project.source),
+      category: cleanText(project.category, "uncategorized"),
+      state: cleanText(project.state, "unknown"),
+      priority: parseNumber(firstDefined(metadata, ["priority", "rank", "urgency"]), 3),
+      order: parseNumber(firstDefined(metadata, ["order", "sortorder", "sequence", "displayorder"]), 999),
+      recurrence: cleanText(firstDefined(metadata, ["recurrence", "frequency", "interval"]), ""),
+      asset: cleanText(firstDefined(metadata, ["asset", "vehicle", "equipment", "assetname"]), ""),
+      mileage: cleanText(firstDefined(metadata, ["mileage", "odometer"]), ""),
+    };
+  }
+
+  function loadRepeatableOverrides() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.repeatable);
+      const parsed = JSON.parse(raw || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      console.warn("Failed to read repeatable task overrides", error);
+      return [];
+    }
+  }
+
+  function saveRepeatableOverrides(items) {
+    localStorage.setItem(STORAGE_KEYS.repeatable, JSON.stringify(items));
   }
 
   function normalizeChecklist(items) {
@@ -174,7 +259,8 @@ function initPlannerScreen() {
               id: cleanText(item.id || item.taskId, `slot-${index + 1}`),
               taskId: cleanText(item.taskId, ""),
               title: cleanText(item.title, "Untitled Task"),
-              type: cleanText(item.type, "curated"),
+              type: cleanText(item.type || item.taskType, "curated"),
+              taskType: cleanText(item.taskType || item.type, "curated"),
               priority: parseNumber(item.priority, null),
               source: cleanText(item.source, "unknown"),
               recurrence: cleanText(item.recurrence, ""),
@@ -256,7 +342,7 @@ function initPlannerScreen() {
   }
 
   function toPlannerSlotItem(taskLike) {
-    const type = cleanText(taskLike && taskLike.type, "curated");
+    const taskType = cleanText(taskLike && (taskLike.taskType || taskLike.type), "curated");
     const normalizedId = cleanText(taskLike && (taskLike.id || taskLike.taskId), "");
     const checklist = normalizeChecklist(taskLike && taskLike.checklist);
 
@@ -264,7 +350,8 @@ function initPlannerScreen() {
       id: normalizedId,
       taskId: cleanText(taskLike && taskLike.taskId, ""),
       title: cleanText(taskLike.title, "Untitled Task"),
-      type,
+      type: taskType,
+      taskType,
       priority: parseNumber(taskLike.priority, null),
       source: cleanText(taskLike.source, "unknown"),
       recurrence: cleanText(taskLike.recurrence, ""),
@@ -298,6 +385,7 @@ function initPlannerScreen() {
       ...task,
       id: cleanText(task.taskId, ""),
       type: "curated",
+      taskType: "curated",
     }));
 
     savePlanner();
@@ -324,6 +412,7 @@ function initPlannerScreen() {
       id: `adhoc-${Date.now()}`,
       title: normalizedTitle,
       type: "adhoc",
+      taskType: "adhoc",
       source: "adhoc",
       recurrence: "",
       priority: null,
@@ -365,6 +454,7 @@ function initPlannerScreen() {
       taskId: normalizedTaskId,
       title: cleanText(entry.title, "Untitled Task"),
       type: "curated",
+      taskType: "curated",
       priority: parseNumber(entry.priority, 3),
       source: cleanText(entry.source, "unknown"),
       recurrence: cleanText(entry.recurrence, ""),
@@ -459,6 +549,143 @@ function initPlannerScreen() {
     renderTaskPool();
     elements.status.textContent = "Task removed from Curated Tasks.";
     return true;
+  }
+
+  function removeWeeklyCopiesForRepeatable(projectId) {
+    let changed = false;
+    DAY_ORDER.forEach((day) => {
+      SLOT_ORDER.forEach((slot) => {
+        const before = state.planner.days[day.key][slot].length;
+        state.planner.days[day.key][slot] = state.planner.days[day.key][slot].filter((item) => {
+          const taskType = cleanText(item.taskType || item.type, "curated");
+          const sameProject = cleanText(item.projectId, "") === cleanText(projectId, "");
+          if (taskType === "repeatable" && sameProject) {
+            changed = true;
+            return false;
+          }
+          return true;
+        });
+        if (state.planner.days[day.key][slot].length !== before) {
+          changed = true;
+        }
+      });
+    });
+
+    return changed;
+  }
+
+  function removeRepeatableMaster(projectId) {
+    const override = state.repeatableOverrideMap.get(projectId) || {};
+    state.repeatableOverrideMap.set(projectId, {
+      ...override,
+      projectId,
+      removed: true,
+    });
+
+    const removedCopies = removeWeeklyCopiesForRepeatable(projectId);
+    state.repeatableTasks = state.repeatableTasks.filter((task) => task.projectId !== projectId);
+
+    saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+    savePlanner();
+    renderRepeatablePanel();
+    renderWeekGrid();
+    if (removedCopies) {
+      elements.status.textContent = "Repeatable task removed and all weekly copies cleared.";
+    } else {
+      elements.status.textContent = "Repeatable task removed from master list.";
+    }
+  }
+
+  function createWeeklyRepeatableCopy(masterTask, day, slot) {
+    const dayBucket = state.planner.days[day];
+    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+      return false;
+    }
+
+    const uniqueId = `repeatable-${masterTask.projectId}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+
+    const weeklyTask = toPlannerSlotItem({
+      id: uniqueId,
+      taskId: uniqueId,
+      projectId: masterTask.projectId,
+      title: cleanText(masterTask.title, "Untitled Task"),
+      type: "repeatable",
+      taskType: "repeatable",
+      source: "repeating",
+      category: cleanText(masterTask.category, "uncategorized"),
+      state: cleanText(masterTask.state, "unknown"),
+      priority: null,
+      recurrence: "",
+      order: null,
+      checklist: [],
+      checklistOpen: false,
+      completed: false,
+    });
+
+    dayBucket[slot].push(weeklyTask);
+    savePlanner();
+    renderWeekGrid();
+    elements.status.textContent = `Added repeatable task "${masterTask.title}" to ${day.toUpperCase()} ${slot}.`;
+    return true;
+  }
+
+  function renderRepeatablePanel() {
+    if (!state.repeatableTasks.length) {
+      elements.repeatablePanel.innerHTML = '<div class="pool-empty">No repeatable tasks found.</div>';
+      return;
+    }
+
+    elements.repeatablePanel.innerHTML = state.repeatableTasks
+      .map((task) => `
+        <article class="repeatable-task-card" data-repeatable-project-id="${task.projectId}">
+          <span class="repeatable-task-handle" data-action="repeatable-drag-handle" draggable="true" title="Drag to weekly planner" aria-label="Drag repeatable task">⋮⋮</span>
+          <div class="repeatable-task-title">${task.title}</div>
+          <button type="button" class="repeatable-task-remove" data-action="remove-repeatable-master" title="Remove repeatable task" aria-label="Remove repeatable task">X</button>
+        </article>
+      `)
+      .join("");
+  }
+
+  async function loadRepeatableTasks() {
+    try {
+      await ensureProjectServicesLoaded();
+      const projects = await window.loadAllProjects();
+      state.allProjects = (projects || []).map(toProjectView);
+
+      const overrides = loadRepeatableOverrides();
+      const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
+      state.repeatableOverrideMap = overrideMap;
+
+      state.repeatableTasks = [...state.allProjects]
+        .filter((project) => project.source === "repeating")
+        .map((project, index) => {
+          const override = overrideMap.get(project.projectId) || {};
+          if (override.removed === true) {
+            return null;
+          }
+
+          return {
+            taskId: `repeatable-${project.projectId}`,
+            projectId: project.projectId,
+            title: project.title,
+            source: "repeating",
+            state: cleanText(project.state, "unknown"),
+            recurrence: cleanText(project.recurrence, "none").toLowerCase(),
+            priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
+            order: parseNumber(override.order, parseNumber(project.order, index + 1)),
+            category: project.category,
+            asset: cleanText(project.asset, ""),
+            mileage: cleanText(project.mileage, ""),
+          };
+        })
+        .filter(Boolean);
+
+      renderRepeatablePanel();
+    } catch (error) {
+      console.warn("Failed to load repeatable tasks", error);
+      state.repeatableTasks = [];
+      renderRepeatablePanel();
+    }
   }
 
   function findSlotTask(day, slot, taskId) {
@@ -621,6 +848,93 @@ function initPlannerScreen() {
     return map;
   }
 
+  function getWeeklyTaskType(task) {
+    return cleanText(task && (task.taskType || task.type), "curated");
+  }
+
+  function renderWeeklyTaskCard(task, dayKey, slot) {
+    const taskType = getWeeklyTaskType(task);
+    const taskId = getSlotItemId(task);
+    const taskCompleted = Boolean(task.completed);
+    const title = cleanText(task.title, "Untitled Task");
+    const cardClass = taskType === "repeatable"
+      ? "slot-task slot-task-repeatable"
+      : taskType === "adhoc"
+        ? "slot-task slot-task-adhoc"
+        : "slot-task slot-task-curated";
+
+    if (taskType === "repeatable") {
+      return `
+        <div class="${cardClass} ${taskCompleted ? "is-complete" : ""}" data-day="${dayKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
+          <div class="slot-task-layout">
+            <span class="slot-task-handle" data-action="weekly-drag-handle" draggable="true" title="Drag to move" aria-label="Drag to move">⋮⋮</span>
+            <div class="slot-task-main">
+              <div class="slot-task-header">
+                <div class="slot-task-title">${title}</div>
+                <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
+              </div>
+              <button type="button" data-action="remove">Remove</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const sourceLabel = taskType === "adhoc" ? "Ad-Hoc" : cleanText(task.source, "unknown");
+    const recurrence = cleanText(task.recurrence, "");
+    const meta = recurrence
+      ? `${sourceLabel} | ${recurrence}`
+      : sourceLabel;
+
+    const checklist = normalizeChecklist(task.checklist);
+    const checklistOpen = Boolean(task.checklistOpen);
+    const checklistToggleLabel = `Checklist ${checklistOpen ? "▲" : "▼"}`;
+    const checklistHtml = taskType === "curated"
+      ? `
+        <div class="slot-checklist">
+          <button type="button" class="slot-checklist-toggle" data-action="checklist-toggle">${checklistToggleLabel}</button>
+          ${checklistOpen ? `
+          <div class="slot-checklist-body">
+            <div class="slot-checklist-list">
+              ${checklist.length
+                ? checklist.map((entry) => `
+                <div class="slot-checklist-item ${entry.completed ? "is-complete" : ""}" data-checklist-id="${entry.id}">
+                  <span class="slot-checklist-handle" data-action="checklist-drag-handle" draggable="true" aria-label="Drag sub-task" title="Drag to reorder">⋮⋮</span>
+                  <input type="checkbox" data-action="checklist-item-toggle" data-checklist-id="${entry.id}" ${entry.completed ? "checked" : ""} />
+                  <span class="slot-checklist-text">${entry.text}</span>
+                  <button type="button" class="slot-checklist-remove" data-action="checklist-item-remove" data-checklist-id="${entry.id}">X</button>
+                </div>
+                `).join("")
+                : '<div class="slot-checklist-empty">No sub-tasks yet.</div>'}
+            </div>
+            <div class="slot-checklist-add">
+              <input type="text" data-action="checklist-add-input" placeholder="Add sub-task" aria-label="Add sub-task" />
+              <button type="button" data-action="checklist-item-add">Add</button>
+            </div>
+          </div>
+          ` : ""}
+        </div>
+      `
+      : "";
+
+    return `
+      <div class="${cardClass} ${taskCompleted ? "is-complete" : ""}" data-day="${dayKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
+        <div class="slot-task-layout">
+          <span class="slot-task-handle" data-action="weekly-drag-handle" draggable="true" title="Drag to move" aria-label="Drag to move">⋮⋮</span>
+          <div class="slot-task-main">
+            <div class="slot-task-header">
+              <div class="slot-task-title">${title}</div>
+              <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
+            </div>
+            <div class="slot-task-meta">${meta}</div>
+            ${checklistHtml}
+            <button type="button" data-action="remove">Remove</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderTaskPool() {
     const renderPoolCards = (tasks) => tasks
       .map((task, index) => {
@@ -733,59 +1047,7 @@ function initPlannerScreen() {
             const tasks = dayData[slot] || [];
             const taskHtml = tasks.length
               ? tasks
-                  .map((task) => {
-                    const taskId = getSlotItemId(task);
-                    const type = cleanText(task.type, "curated");
-                    const sourceLabel = type === "adhoc" ? "Ad-Hoc" : cleanText(task.source, "unknown");
-                    const recurrence = cleanText(task.recurrence, "");
-                    const meta = recurrence
-                      ? `${sourceLabel} | ${recurrence}`
-                      : sourceLabel;
-                    const checklist = normalizeChecklist(task.checklist);
-                    const checklistOpen = Boolean(task.checklistOpen);
-                    const taskCompleted = Boolean(task.completed);
-                    const checklistToggleLabel = `Checklist ${checklistOpen ? "▲" : "▼"}`;
-
-                    const checklistHtml = type === "curated"
-                      ? `
-                      <div class="slot-checklist">
-                        <button type="button" class="slot-checklist-toggle" data-action="checklist-toggle">${checklistToggleLabel}</button>
-                        ${checklistOpen ? `
-                        <div class="slot-checklist-body">
-                          <div class="slot-checklist-list">
-                            ${checklist.length
-                              ? checklist.map((entry) => `
-                              <div class="slot-checklist-item ${entry.completed ? "is-complete" : ""}" data-checklist-id="${entry.id}">
-                                <span class="slot-checklist-handle" data-action="checklist-drag-handle" draggable="true" aria-label="Drag sub-task" title="Drag to reorder">⋮⋮</span>
-                                <input type="checkbox" data-action="checklist-item-toggle" data-checklist-id="${entry.id}" ${entry.completed ? "checked" : ""} />
-                                <span class="slot-checklist-text">${entry.text}</span>
-                                <button type="button" class="slot-checklist-remove" data-action="checklist-item-remove" data-checklist-id="${entry.id}">X</button>
-                              </div>
-                              `).join("")
-                              : '<div class="slot-checklist-empty">No sub-tasks yet.</div>'}
-                          </div>
-                          <div class="slot-checklist-add">
-                            <input type="text" data-action="checklist-add-input" placeholder="Add sub-task" aria-label="Add sub-task" />
-                            <button type="button" data-action="checklist-item-add">Add</button>
-                          </div>
-                        </div>
-                        ` : ""}
-                      </div>
-                      `
-                      : "";
-
-                    return `
-                    <div class="slot-task slot-task-${type === "adhoc" ? "adhoc" : "curated"} ${taskCompleted ? "is-complete" : ""}" draggable="true" data-day="${day.key}" data-slot="${slot}" data-task-id="${taskId}">
-                      <div class="slot-task-header">
-                        <div class="slot-task-title">${task.title}</div>
-                        <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
-                      </div>
-                      <div class="slot-task-meta">${meta}</div>
-                      ${checklistHtml}
-                      <button type="button" data-action="remove">Remove</button>
-                    </div>
-                    `;
-                  })
+                  .map((task) => renderWeeklyTaskCard(task, day.key, slot))
                   .join("")
               : '<div class="slot-empty">No tasks assigned</div>';
 
@@ -802,10 +1064,6 @@ function initPlannerScreen() {
           <article class="planner-day" data-day="${day.key}">
             <h3>${day.label}</h3>
             ${slotHtml}
-            <div class="day-notes">
-              <label for="notes-${day.key}">Notes</label>
-              <textarea id="notes-${day.key}" data-role="notes" data-day="${day.key}" placeholder="Notes for ${day.label}...">${dayData.notes || ""}</textarea>
-            </div>
           </article>
         `;
       })
@@ -876,6 +1134,46 @@ function initPlannerScreen() {
   function attachEvents() {
     elements.adhocAddBtn.addEventListener("click", () => {
       addAdHocTask(elements.adhocTitle.value, elements.adhocDay.value, elements.adhocSlot.value);
+    }, { signal: controller.signal });
+
+    elements.repeatablePanel.addEventListener("click", (event) => {
+      const removeButton = event.target.closest("button[data-action='remove-repeatable-master']");
+      if (!removeButton) {
+        return;
+      }
+
+      const card = removeButton.closest(".repeatable-task-card");
+      if (!card) {
+        return;
+      }
+
+      removeRepeatableMaster(card.dataset.repeatableProjectId);
+    }, { signal: controller.signal });
+
+    elements.repeatablePanel.addEventListener("dragstart", (event) => {
+      const handle = event.target.closest("[data-action='repeatable-drag-handle'][draggable='true']");
+      if (!handle) {
+        return;
+      }
+
+      const card = handle.closest(".repeatable-task-card");
+      if (!card) {
+        return;
+      }
+
+      const payload = {
+        kind: "repeatable-copy",
+        projectId: cleanText(card.dataset.repeatableProjectId, ""),
+      };
+
+      state.activeWeeklyDrag = payload;
+      event.dataTransfer.effectAllowed = "copyMove";
+      event.dataTransfer.setData("text/plain", JSON.stringify(payload));
+    }, { signal: controller.signal });
+
+    elements.repeatablePanel.addEventListener("dragend", () => {
+      state.activeWeeklyDrag = null;
+      elements.repeatablePanel.querySelectorAll(".repeatable-task-card.is-drop-target").forEach((item) => item.classList.remove("is-drop-target"));
     }, { signal: controller.signal });
 
     const onTaskPoolClick = (event) => {
@@ -1130,22 +1428,6 @@ function initPlannerScreen() {
       );
     }, { signal: controller.signal });
 
-    elements.weekGrid.addEventListener("input", (event) => {
-      const notesArea = event.target.closest("textarea[data-role='notes']");
-      if (!notesArea) {
-        return;
-      }
-
-      const day = notesArea.dataset.day;
-      if (!state.planner.days[day]) {
-        return;
-      }
-
-      state.planner.days[day].notes = notesArea.value;
-      savePlanner();
-      elements.status.textContent = `Saved notes for ${day.toUpperCase()}.`;
-    }, { signal: controller.signal });
-
     elements.weekGrid.addEventListener("dragstart", (event) => {
       const handle = event.target.closest("[data-action='checklist-drag-handle'][draggable='true']");
       if (!handle) {
@@ -1166,169 +1448,112 @@ function initPlannerScreen() {
         checklistId: cleanText(checklistItem.dataset.checklistId, ""),
       };
 
+      state.activeWeeklyDrag = payload;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", JSON.stringify(payload));
       checklistItem.classList.add("is-dragging");
       event.stopPropagation();
     }, { signal: controller.signal });
 
-    elements.weekGrid.addEventListener("dragend", (event) => {
-      const handle = event.target.closest("[data-action='checklist-drag-handle'][draggable='true']");
+    elements.weekGrid.addEventListener("dragstart", (event) => {
+      const checklistHandle = event.target.closest("[data-action='checklist-drag-handle'][draggable='true']");
+      if (checklistHandle) {
+        return;
+      }
+
+      const handle = event.target.closest("[data-action='weekly-drag-handle'][draggable='true']");
       if (!handle) {
         return;
       }
 
-      elements.weekGrid.querySelectorAll(".slot-checklist-item.is-dragging, .slot-checklist-item.is-drop-target").forEach((itemEl) => {
-        itemEl.classList.remove("is-dragging", "is-drop-target");
-      });
-    }, { signal: controller.signal });
-
-    elements.weekGrid.addEventListener("dragover", (event) => {
-      const targetItem = event.target.closest(".slot-checklist-item[data-checklist-id]");
-      if (!targetItem) {
-        return;
-      }
-
-      let payload = null;
-      try {
-        payload = JSON.parse(event.dataTransfer.getData("text/plain") || "null");
-      } catch (error) {
-        payload = null;
-      }
-
-      if (!payload || payload.kind !== "checklist-reorder") {
-        return;
-      }
-
-      const slotTask = targetItem.closest(".slot-task[data-day][data-slot][data-task-id]");
-      if (!slotTask) {
-        return;
-      }
-
-      const sameTask = cleanText(slotTask.dataset.taskId, "") === cleanText(payload.taskId, "")
-        && cleanText(slotTask.dataset.day, "") === cleanText(payload.day, "")
-        && cleanText(slotTask.dataset.slot, "") === cleanText(payload.slot, "");
-
-      if (!sameTask) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = "move";
-      targetItem.classList.add("is-drop-target");
-    }, { signal: controller.signal });
-
-    elements.weekGrid.addEventListener("dragleave", (event) => {
-      const targetItem = event.target.closest(".slot-checklist-item[data-checklist-id]");
-      if (!targetItem) {
-        return;
-      }
-
-      if (event.relatedTarget && targetItem.contains(event.relatedTarget)) {
-        return;
-      }
-
-      targetItem.classList.remove("is-drop-target");
-    }, { signal: controller.signal });
-
-    elements.weekGrid.addEventListener("drop", (event) => {
-      const targetItem = event.target.closest(".slot-checklist-item[data-checklist-id]");
-      if (!targetItem) {
-        return;
-      }
-
-      let payload = null;
-      try {
-        payload = JSON.parse(event.dataTransfer.getData("text/plain") || "null");
-      } catch (error) {
-        payload = null;
-      }
-
-      if (!payload || payload.kind !== "checklist-reorder") {
-        return;
-      }
-
-      const slotTask = targetItem.closest(".slot-task[data-day][data-slot][data-task-id]");
-      if (!slotTask) {
-        return;
-      }
-
-      const sameTask = cleanText(slotTask.dataset.taskId, "") === cleanText(payload.taskId, "")
-        && cleanText(slotTask.dataset.day, "") === cleanText(payload.day, "")
-        && cleanText(slotTask.dataset.slot, "") === cleanText(payload.slot, "");
-
-      if (!sameTask) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopImmediatePropagation();
-
-      const targetChecklistId = cleanText(targetItem.dataset.checklistId, "");
-      reorderChecklistItem(payload.taskId, payload.day, payload.slot, payload.checklistId, targetChecklistId);
-    }, { signal: controller.signal });
-
-    elements.weekGrid.addEventListener("dragstart", (event) => {
-      if (event.target.closest("[data-action='checklist-drag-handle']")) {
-        return;
-      }
-
-      if (event.target.closest("button, input, textarea, select, label")) {
-        event.preventDefault();
-        return;
-      }
-
-      const taskEl = event.target.closest(".slot-task[draggable='true']");
-      if (!taskEl) {
+      const taskCard = handle.closest(".slot-task[data-day][data-slot][data-task-id]");
+      if (!taskCard) {
         return;
       }
 
       const payload = {
-        taskId: cleanText(taskEl.dataset.taskId, ""),
+        kind: "weekly-move",
+        taskId: cleanText(taskCard.dataset.taskId, ""),
       };
 
+      state.activeWeeklyDrag = payload;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", JSON.stringify(payload));
-      taskEl.classList.add("is-dragging");
     }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("dragend", (event) => {
-      const taskEl = event.target.closest(".slot-task[draggable='true']");
-      if (taskEl) {
-        taskEl.classList.remove("is-dragging");
+      const checklistHandle = event.target.closest("[data-action='checklist-drag-handle'][draggable='true']");
+      if (checklistHandle) {
+        state.activeWeeklyDrag = null;
+        elements.weekGrid.querySelectorAll(".slot-checklist-item.is-dragging, .slot-checklist-item.is-drop-target").forEach((itemEl) => {
+          itemEl.classList.remove("is-dragging", "is-drop-target");
+        });
+        return;
       }
 
+      state.activeWeeklyDrag = null;
       elements.weekGrid.querySelectorAll(".day-slot.is-drop-target").forEach((slotEl) => {
         slotEl.classList.remove("is-drop-target");
+      });
+      elements.weekGrid.querySelectorAll(".slot-task.is-dragging").forEach((card) => {
+        card.classList.remove("is-dragging");
       });
     }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("dragover", (event) => {
-      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
-      if (!slotEl) {
+      const checklistTarget = event.target.closest(".slot-checklist-item[data-checklist-id]");
+      if (checklistTarget && state.activeWeeklyDrag && state.activeWeeklyDrag.kind === "checklist-reorder") {
+        const slotTask = checklistTarget.closest(".slot-task[data-day][data-slot][data-task-id]");
+        if (!slotTask) {
+          return;
+        }
+
+        const sameTask = cleanText(slotTask.dataset.taskId, "") === cleanText(state.activeWeeklyDrag.taskId, "")
+          && cleanText(slotTask.dataset.day, "") === cleanText(state.activeWeeklyDrag.day, "")
+          && cleanText(slotTask.dataset.slot, "") === cleanText(state.activeWeeklyDrag.slot, "");
+
+        if (!sameTask) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = "move";
+        checklistTarget.classList.add("is-drop-target");
         return;
       }
 
-      let payload = null;
-      try {
-        payload = JSON.parse(event.dataTransfer.getData("text/plain") || "null");
-      } catch (error) {
-        payload = null;
+      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
+      if (!slotEl || !state.activeWeeklyDrag) {
+        return;
       }
 
-      if (payload && payload.kind === "checklist-reorder") {
+      if (state.activeWeeklyDrag.kind === "checklist-reorder") {
         return;
       }
 
       event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
+      event.dataTransfer.dropEffect = state.activeWeeklyDrag.kind === "repeatable-copy" ? "copy" : "move";
       slotEl.classList.add("is-drop-target");
     }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("dragleave", (event) => {
+      const checklistTarget = event.target.closest(".slot-checklist-item[data-checklist-id]");
+      if (checklistTarget) {
+        if (event.relatedTarget && checklistTarget.contains(event.relatedTarget)) {
+          return;
+        }
+
+        checklistTarget.classList.remove("is-drop-target");
+        return;
+      }
+
       const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
       if (!slotEl) {
+        return;
+      }
+
+      if (event.relatedTarget && slotEl.contains(event.relatedTarget)) {
         return;
       }
 
@@ -1336,31 +1561,60 @@ function initPlannerScreen() {
     }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("drop", (event) => {
+      const checklistTarget = event.target.closest(".slot-checklist-item[data-checklist-id]");
+      if (checklistTarget && state.activeWeeklyDrag && state.activeWeeklyDrag.kind === "checklist-reorder") {
+        const slotTask = checklistTarget.closest(".slot-task[data-day][data-slot][data-task-id]");
+        if (!slotTask) {
+          return;
+        }
+
+        const sameTask = cleanText(slotTask.dataset.taskId, "") === cleanText(state.activeWeeklyDrag.taskId, "")
+          && cleanText(slotTask.dataset.day, "") === cleanText(state.activeWeeklyDrag.day, "")
+          && cleanText(slotTask.dataset.slot, "") === cleanText(state.activeWeeklyDrag.slot, "");
+
+        if (!sameTask) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        const targetChecklistId = cleanText(checklistTarget.dataset.checklistId, "");
+        reorderChecklistItem(state.activeWeeklyDrag.taskId, state.activeWeeklyDrag.day, state.activeWeeklyDrag.slot, state.activeWeeklyDrag.checklistId, targetChecklistId);
+        state.activeWeeklyDrag = null;
+        return;
+      }
+
       const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
-      if (!slotEl) {
+      if (!slotEl || !state.activeWeeklyDrag) {
+        return;
+      }
+
+      if (state.activeWeeklyDrag.kind === "checklist-reorder") {
         return;
       }
 
       event.preventDefault();
       slotEl.classList.remove("is-drop-target");
 
-      let payload = null;
-      try {
-        payload = JSON.parse(event.dataTransfer.getData("text/plain") || "null");
-      } catch (error) {
-        payload = null;
-      }
+      const day = cleanText(slotEl.dataset.day, "");
+      const slot = cleanText(slotEl.dataset.slot, "");
+      const payload = state.activeWeeklyDrag;
 
-      if (payload && payload.kind === "checklist-reorder") {
+      if (payload.kind === "repeatable-copy") {
+        const masterTask = state.repeatableTasks.find((task) => cleanText(task.projectId, "") === cleanText(payload.projectId, ""));
+        if (masterTask) {
+          createWeeklyRepeatableCopy(masterTask, day, slot);
+        }
+        state.activeWeeklyDrag = null;
         return;
       }
 
-      const taskId = payload && payload.taskId ? payload.taskId : "";
-      if (!taskId) {
-        return;
+      if (payload.kind === "weekly-move") {
+        moveTask(payload.taskId, day, slot);
       }
 
-      moveTask(taskId, slotEl.dataset.day, slotEl.dataset.slot);
+      state.activeWeeklyDrag = null;
     }, { signal: controller.signal });
 
     const teardownIfRouteChanges = () => {
@@ -1373,9 +1627,10 @@ function initPlannerScreen() {
     window.addEventListener("hashchange", teardownIfRouteChanges);
   }
 
-  function initialize() {
+  async function initialize() {
     state.curatedTasks = loadCuratedTasks();
     state.planner = loadPlanner();
+    await loadRepeatableTasks();
     renderTaskPool();
     renderWeekGrid();
     consumeStagedQueue();
@@ -1388,7 +1643,10 @@ function initPlannerScreen() {
   window.removeTask = removeTask;
 
   attachEvents();
-  initialize();
+  initialize().catch((error) => {
+    console.error(error);
+    elements.status.textContent = "Unable to load Planner.";
+  });
 }
 
 window.initPlannerScreen = initPlannerScreen;
