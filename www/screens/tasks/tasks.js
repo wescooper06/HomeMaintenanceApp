@@ -291,7 +291,7 @@ function initTasksScreen() {
       .filter((project) => project.source === "repeating")
       .map((project, index) => {
         const override = overrideMap.get(project.projectId) || {};
-        if (override.removed === true) {
+        if (override.removedFromTaskManager === true || override.removed === true) {
           return null;
         }
 
@@ -312,7 +312,7 @@ function initTasksScreen() {
       .filter(Boolean);
 
     overrides.forEach((override, index) => {
-      if (!override || override.removed === true) {
+      if (!override || override.removedFromTaskManager === true || override.removed === true) {
         return;
       }
 
@@ -533,6 +533,7 @@ function initTasksScreen() {
         priority: task.priority,
         order: task.order,
         removed: false,
+        removedFromTaskManager: false,
       });
     });
 
@@ -618,7 +619,7 @@ function initTasksScreen() {
         projectId: task.projectId,
         priority: task.priority,
         order: task.order,
-        removed: true,
+        removedFromTaskManager: true,
       });
 
       state.repeatableTasks = state.repeatableTasks.filter((item) => item.taskId !== taskId);

@@ -31,6 +31,7 @@ function initPlannerScreen() {
     taskPoolLeft: document.getElementById("plannerTaskPoolLeft"),
     taskPoolMiddle: document.getElementById("plannerTaskPoolMiddle"),
     repeatablePanel: document.getElementById("repeatable-tasks-panel"),
+    miniCalendar: document.getElementById("mini-calendar"),
     curatedWarning: document.getElementById("curated-warning"),
     weekPrev: document.getElementById("week-prev"),
     weekNext: document.getElementById("week-next"),
@@ -43,7 +44,7 @@ function initPlannerScreen() {
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.curatedWarning || !elements.weekPrev || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -58,6 +59,8 @@ function initPlannerScreen() {
     activeCuratedDragIndex: -1,
     activeWeeklyDrag: null,
     allProjects: [],
+    calendarMonthDate: "",
+    selectedCalendarDate: "",
   };
 
   const CURATED_TASK_LIMIT = 8;
@@ -73,6 +76,8 @@ function initPlannerScreen() {
     }
 
     state.planner.weekStartDate = addDaysToDateKey(state.planner.weekStartDate, days);
+  state.selectedCalendarDate = state.planner.weekStartDate;
+  state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
@@ -134,6 +139,67 @@ function initPlannerScreen() {
 
     date.setDate(date.getDate() + days);
     return toDateKey(date);
+  }
+
+  function toMonthStartDateKey(dateKey) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "";
+    }
+
+    date.setDate(1);
+    return toDateKey(date);
+  }
+
+  function addMonthsToDateKey(dateKey, months) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "";
+    }
+
+    date.setDate(1);
+    date.setMonth(date.getMonth() + months);
+    return toDateKey(date);
+  }
+
+  function formatMonthYearLabel(dateKey) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "";
+    }
+
+    return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  }
+
+  function getDaysInMonth(dateKey) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return 30;
+    }
+
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  }
+
+  function jumpPlannerToDate(dateKey, selectedDateKey) {
+    const clickedDate = cleanText(dateKey, "");
+    const weekStartDate = getWeekStartISO(parseDateKey(clickedDate) || clickedDate);
+    if (!clickedDate || !weekStartDate) {
+      return false;
+    }
+
+    state.planner.weekStartDate = weekStartDate;
+    state.selectedCalendarDate = cleanText(selectedDateKey, clickedDate);
+    state.calendarMonthDate = toMonthStartDateKey(clickedDate);
+    savePlanner();
+    renderTaskPool();
+    renderWeekGrid();
+    if (elements.weekScrollContainer && typeof elements.weekScrollContainer.scrollTo === "function") {
+      elements.weekScrollContainer.scrollTo({ left: 0, behavior: "smooth" });
+    } else {
+      elements.weekScrollContainer.scrollLeft = 0;
+    }
+    elements.status.textContent = `Planning week of ${state.planner.weekStartDate}.`;
+    return true;
   }
 
   function cleanSource(source) {
@@ -632,6 +698,8 @@ function initPlannerScreen() {
     existing.item.id = buildWeeklyTaskId(taskType, sourceId, newDate);
     existing.item.taskId = existing.item.id;
     state.planner.weekStartDate = newWeekStartDate;
+    state.selectedCalendarDate = newDate;
+    state.calendarMonthDate = toMonthStartDateKey(newDate);
 
     savePlanner();
     renderTaskPool();
@@ -715,7 +783,7 @@ function initPlannerScreen() {
     state.repeatableOverrideMap.set(projectId, {
       ...override,
       projectId,
-      removed: true,
+      removedFromPlanner: true,
     });
 
     const removedCopies = removeWeeklyCopiesForRepeatable(projectId);
@@ -881,7 +949,7 @@ function initPlannerScreen() {
         .filter((project) => project.source === "repeating")
         .map((project, index) => {
           const override = overrideMap.get(project.projectId) || {};
-          if (override.removed === true) {
+          if (override.removedFromPlanner === true) {
             return null;
           }
 
@@ -1209,13 +1277,26 @@ function initPlannerScreen() {
     }
 
     const assignmentMap = buildAssignmentMap();
-    const ordered = state.curatedTasks.slice();
+    const leftTasks = [];
+    const middleTasks = [];
 
-    const leftTasks = ordered.slice(0, 4);
-    const middleTasks = ordered.slice(4, CURATED_TASK_LIMIT);
+    state.curatedTasks.forEach((task, index) => {
+      if (index % 2 === 0) {
+        leftTasks.push(task);
+      } else {
+        middleTasks.push(task);
+      }
+    });
 
-    elements.taskPoolLeft.innerHTML = renderPoolCards(leftTasks, 0);
-    elements.taskPoolMiddle.innerHTML = renderPoolCards(middleTasks, 4);
+    const renderColumnCards = (tasks) => tasks
+      .map((task) => {
+        const globalIndex = state.curatedTasks.findIndex((item) => cleanText(item.taskId, "") === cleanText(task.taskId, ""));
+        return renderPoolCards([task], globalIndex).trim();
+      })
+      .join("");
+
+    elements.taskPoolLeft.innerHTML = renderColumnCards(leftTasks);
+    elements.taskPoolMiddle.innerHTML = renderColumnCards(middleTasks);
 
     const cards = [
       ...elements.taskPoolLeft.querySelectorAll(".pool-task-card"),
@@ -1256,7 +1337,7 @@ function initPlannerScreen() {
       state.curatedTasks.splice(toIndex, 0, moved);
     } else {
       const insertIndex = targetSide === "left"
-        ? Math.min(4, state.curatedTasks.length)
+        ? 0
         : state.curatedTasks.length;
       state.curatedTasks.splice(insertIndex, 0, moved);
     }
@@ -1307,6 +1388,73 @@ function initPlannerScreen() {
         `;
       })
       .join("");
+
+    renderMiniCalendar();
+  }
+
+  function renderMiniCalendar() {
+    const selectedDate = cleanText(state.selectedCalendarDate, state.planner && state.planner.weekStartDate);
+    const monthDate = cleanText(state.calendarMonthDate, toMonthStartDateKey(selectedDate || (state.planner && state.planner.weekStartDate)));
+    if (!monthDate) {
+      elements.miniCalendar.innerHTML = "";
+      return;
+    }
+
+    const visibleWeekDates = new Set(getVisibleWeekDateRange(state.planner.weekStartDate).map((item) => item.date));
+    const firstOfMonth = parseDateKey(monthDate);
+    if (!firstOfMonth) {
+      elements.miniCalendar.innerHTML = "";
+      return;
+    }
+
+    const startOffset = (firstOfMonth.getDay() + 6) % 7;
+    const gridStart = new Date(firstOfMonth.getTime());
+    gridStart.setDate(firstOfMonth.getDate() - startOffset);
+    const monthKey = `${firstOfMonth.getFullYear()}-${firstOfMonth.getMonth()}`;
+    const todayKey = toDateKey(new Date());
+
+    const weekdayHeader = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+      .map((label) => `<div class="mini-calendar-weekday">${label}</div>`)
+      .join("");
+
+    const dayCells = Array.from({ length: 42 }, (_, index) => {
+      const cellDate = new Date(gridStart.getTime());
+      cellDate.setDate(gridStart.getDate() + index);
+      const cellDateKey = toDateKey(cellDate);
+      const cellMonthKey = `${cellDate.getFullYear()}-${cellDate.getMonth()}`;
+      const classNames = ["mini-calendar-day"];
+
+      if (cellMonthKey !== monthKey) {
+        classNames.push("is-outside-month");
+      }
+      if (visibleWeekDates.has(cellDateKey)) {
+        classNames.push("is-in-visible-week");
+      }
+      if (cellDateKey === todayKey) {
+        classNames.push("is-today");
+      }
+      if (cellDateKey === selectedDate) {
+        classNames.push("is-selected");
+      }
+
+      return `
+        <button type="button" class="${classNames.join(" ")}" data-action="mini-calendar-date" data-date="${cellDateKey}" aria-label="Jump to week of ${cellDate.toDateString()}">
+          ${cellDate.getDate()}
+        </button>
+      `;
+    }).join("");
+
+    elements.miniCalendar.innerHTML = `
+      <div class="mini-calendar-shell">
+        <div class="mini-calendar-nav">
+          <button type="button" data-action="mini-calendar-prev-month" aria-label="Previous month">◀</button>
+          <div class="mini-calendar-month-label">${formatMonthYearLabel(monthDate)}</div>
+          <button type="button" data-action="mini-calendar-next-month" aria-label="Next month">▶</button>
+        </div>
+        <div class="mini-calendar-weekdays">${weekdayHeader}</div>
+        <div class="mini-calendar-grid">${dayCells}</div>
+      </div>
+    `;
   }
 
   function consumeStagedQueue() {
@@ -1413,6 +1561,30 @@ function initPlannerScreen() {
     elements.repeatablePanel.addEventListener("dragend", () => {
       state.activeWeeklyDrag = null;
       elements.repeatablePanel.querySelectorAll(".repeatable-task-card.is-drop-target").forEach((item) => item.classList.remove("is-drop-target"));
+    }, { signal: controller.signal });
+
+    elements.miniCalendar.addEventListener("click", (event) => {
+      const actionButton = event.target.closest("button[data-action]");
+      if (!actionButton) {
+        return;
+      }
+
+      const action = cleanText(actionButton.dataset.action, "");
+      if (action === "mini-calendar-prev-month") {
+        state.calendarMonthDate = addMonthsToDateKey(state.calendarMonthDate, -1);
+        renderMiniCalendar();
+        return;
+      }
+
+      if (action === "mini-calendar-next-month") {
+        state.calendarMonthDate = addMonthsToDateKey(state.calendarMonthDate, 1);
+        renderMiniCalendar();
+        return;
+      }
+
+      if (action === "mini-calendar-date") {
+        jumpPlannerToDate(cleanText(actionButton.dataset.date, ""), cleanText(actionButton.dataset.date, ""));
+      }
     }, { signal: controller.signal });
 
     const onTaskPoolClick = (event) => {
@@ -1556,12 +1728,6 @@ function initPlannerScreen() {
         if (targetGlobalIndex > fromIndex) {
           insertIndex -= 1;
         }
-      }
-
-      if (side === "left") {
-        insertIndex = Math.min(insertIndex, Math.min(4, next.length));
-      } else if (side === "middle") {
-        insertIndex = Math.max(insertIndex, Math.min(4, next.length));
       }
 
       insertIndex = Math.max(0, Math.min(insertIndex, next.length));
@@ -2063,6 +2229,8 @@ function initPlannerScreen() {
   async function initialize() {
     state.curatedTasks = loadCuratedTasks();
     state.planner = loadPlanner();
+    state.selectedCalendarDate = state.planner.weekStartDate;
+    state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
     await loadRepeatableTasks();
     renderTaskPool();
     renderWeekGrid();
