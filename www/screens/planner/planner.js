@@ -24,6 +24,15 @@ function initPlannerScreen() {
 
   const SLOT_ORDER = ["morning", "afternoon", "evening"];
 
+  const WEATHER_LOCATION = {
+    name: "Mirrormont, WA",
+    latitude: "47.4810",
+    longitude: "-121.9960",
+  };
+  const WEATHER_FALLBACK_ICON = "⛅";
+  const WEATHER_FALLBACK_VALUE = "—";
+  const WEATHER_REFRESH_WINDOW_MS = 20 * 60 * 1000;
+
   const elements = {
     status: document.getElementById("plannerStatus"),
     curatedLeftColumn: document.getElementById("curated-left"),
@@ -38,13 +47,14 @@ function initPlannerScreen() {
     weekRangeLabel: document.getElementById("weekly-week-label"),
     weekScrollContainer: document.getElementById("weekly-scroll-container"),
     weekGrid: document.getElementById("plannerWeekGrid"),
+    weatherModal: document.getElementById("weather-modal"),
     adhocTitle: document.getElementById("adhocTaskTitle"),
     adhocDay: document.getElementById("adhocTaskDay"),
     adhocSlot: document.getElementById("adhocTaskSlot"),
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -61,6 +71,11 @@ function initPlannerScreen() {
     allProjects: [],
     calendarMonthDate: "",
     selectedCalendarDate: "",
+    weatherByDate: {},
+    weatherLastFetchedAt: 0,
+    weatherFetchPromise: null,
+    weatherModalOpenDate: "",
+    weekScrollLocked: false,
   };
 
   const CURATED_TASK_LIMIT = 8;
@@ -267,6 +282,207 @@ function initPlannerScreen() {
 
     const day = DAY_ORDER[(date.getDay() + 6) % 7];
     return `${day.label} (${formatDateLabel(dateKey)})`;
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function buildWeatherApiUrl() {
+    const apiKey = cleanText(window.APP_CONFIG && window.APP_CONFIG.WEATHERAPI_KEY, "");
+    const base = `https://api.weatherapi.com/v1/forecast.json?q=${WEATHER_LOCATION.latitude},${WEATHER_LOCATION.longitude}&days=7&aqi=no&alerts=no`;
+    return apiKey ? `${base}&key=${encodeURIComponent(apiKey)}` : base;
+  }
+
+  function mapWeatherApiConditionToIcon(conditionText) {
+    const text = cleanText(conditionText, "").toLowerCase();
+    if (!text) {
+      return WEATHER_FALLBACK_ICON;
+    }
+
+    if (text.includes("thunderstorm") || text.includes("thunder")) return "⛈";
+    if (text.includes("snow")) return "❄";
+    if (text.includes("drizzle")) return "🌦";
+    if (text.includes("rain")) return "🌧";
+    if (text.includes("fog") || text.includes("mist") || text.includes("haze")) return "🌫";
+    if (text.includes("partly cloudy")) return "⛅";
+    if (text.includes("cloudy") || text.includes("overcast")) return "☁";
+    if (text.includes("sunny") || text.includes("clear")) return "☀";
+    return WEATHER_FALLBACK_ICON;
+  }
+
+  function toWeekWeatherFallback(dateKey) {
+    return {
+      date: dateKey,
+      icon: WEATHER_FALLBACK_ICON,
+      condition: "Unavailable",
+      high: WEATHER_FALLBACK_VALUE,
+      low: WEATHER_FALLBACK_VALUE,
+      precipitation: WEATHER_FALLBACK_VALUE,
+      wind: WEATHER_FALLBACK_VALUE,
+      humidity: WEATHER_FALLBACK_VALUE,
+    };
+  }
+
+  function normalizeWeatherForecast(payload) {
+    const normalizedByDate = {};
+    if (!payload || typeof payload !== "object") {
+      return normalizedByDate;
+    }
+
+    const forecastDays = Array.isArray(payload.forecast && payload.forecast.forecastday)
+      ? payload.forecast.forecastday
+      : [];
+
+    forecastDays.slice(0, 7).forEach((entry) => {
+      const dateKey = cleanText(entry && entry.date, "");
+      if (!dateKey) {
+        return;
+      }
+
+      const day = entry && typeof entry.day === "object" ? entry.day : {};
+      const conditionText = cleanText(day.condition && day.condition.text, "Unavailable");
+      const maxTempRaw = Number(day.maxtemp_f);
+      const minTempRaw = Number(day.mintemp_f);
+      const precipRaw = Number(day.daily_chance_of_rain);
+      const windRaw = Number(day.maxwind_mph);
+      const humidityRaw = Number(day.avghumidity);
+
+      const high = Number.isFinite(maxTempRaw) ? `${Math.round(maxTempRaw)}°F` : WEATHER_FALLBACK_VALUE;
+      const low = Number.isFinite(minTempRaw) ? `${Math.round(minTempRaw)}°F` : WEATHER_FALLBACK_VALUE;
+      const precipitation = Number.isFinite(precipRaw) ? `${Math.round(precipRaw)}%` : WEATHER_FALLBACK_VALUE;
+      const wind = Number.isFinite(windRaw) ? `${Math.round(windRaw)} mph` : WEATHER_FALLBACK_VALUE;
+      const humidity = Number.isFinite(humidityRaw) ? `${Math.round(humidityRaw)}%` : WEATHER_FALLBACK_VALUE;
+
+      normalizedByDate[dateKey] = {
+        date: dateKey,
+        icon: mapWeatherApiConditionToIcon(conditionText),
+        condition: conditionText || "Unavailable",
+        high,
+        low,
+        precipitation,
+        wind,
+        humidity,
+      };
+    });
+
+    return normalizedByDate;
+  }
+
+  async function refreshWeekWeather(weekDates) {
+    const now = Date.now();
+    const needsRefresh = now - state.weatherLastFetchedAt > WEATHER_REFRESH_WINDOW_MS;
+
+    if (!needsRefresh || state.weatherFetchPromise) {
+      return;
+    }
+
+    let didUpdateWeather = false;
+
+    state.weatherFetchPromise = fetch(buildWeatherApiUrl())
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Weather forecast request failed with ${response.status}`);
+        }
+
+        return response.json();
+      })
+      .then((payload) => {
+        const normalized = normalizeWeatherForecast(payload);
+        state.weatherByDate = {
+          ...state.weatherByDate,
+          ...normalized,
+        };
+        didUpdateWeather = true;
+      })
+      .catch((error) => {
+        console.debug("Weather forecast unavailable", error);
+      })
+      .finally(() => {
+        state.weatherLastFetchedAt = Date.now();
+        state.weatherFetchPromise = null;
+        if (didUpdateWeather) {
+          renderWeekGrid();
+        }
+        if (state.weatherModalOpenDate) {
+          renderWeatherModal(state.weatherModalOpenDate);
+        }
+      });
+  }
+
+  function getWeatherForDate(dateKey) {
+    return state.weatherByDate[dateKey] || toWeekWeatherFallback(dateKey);
+  }
+
+  function formatFullDayLabel(dateKey) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "Unknown date";
+    }
+
+    return date.toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  function closeWeatherModal() {
+    state.weatherModalOpenDate = "";
+    elements.weatherModal.hidden = true;
+    elements.weatherModal.innerHTML = "";
+  }
+
+  function renderWeatherModal(dateKey) {
+    const weather = getWeatherForDate(dateKey);
+    const title = formatFullDayLabel(dateKey);
+    const conditionSummary = cleanText(weather.condition, "Unavailable");
+    const high = cleanText(weather.high, WEATHER_FALLBACK_VALUE);
+    const low = cleanText(weather.low, WEATHER_FALLBACK_VALUE);
+    const precip = cleanText(weather.precipitation, WEATHER_FALLBACK_VALUE);
+    const wind = cleanText(weather.wind, WEATHER_FALLBACK_VALUE);
+    const humidity = cleanText(weather.humidity, WEATHER_FALLBACK_VALUE);
+
+    elements.weatherModal.innerHTML = `
+      <div class="weather-modal-card" role="dialog" aria-modal="true" aria-label="Daily weather forecast">
+        <header class="weather-modal-header">
+          <div>
+            <h3 class="weather-modal-title">${escapeHtml(title)}</h3>
+            <p class="weather-modal-location">${escapeHtml(WEATHER_LOCATION.name)}</p>
+          </div>
+          <button type="button" class="weather-modal-close" data-action="weather-close" aria-label="Close weather modal">X</button>
+        </header>
+        <div class="weather-modal-body">
+          <div class="weather-modal-summary">
+            <span class="weather-modal-summary-icon" aria-hidden="true">${weather.icon}</span>
+            <span>${escapeHtml(conditionSummary)}</span>
+          </div>
+          <div class="weather-modal-grid">
+            <div class="weather-modal-item"><strong>High:</strong> ${escapeHtml(high)}</div>
+            <div class="weather-modal-item"><strong>Low:</strong> ${escapeHtml(low)}</div>
+            <div class="weather-modal-item"><strong>Precipitation:</strong> ${escapeHtml(precip)}</div>
+            <div class="weather-modal-item"><strong>Wind:</strong> ${escapeHtml(wind)}</div>
+            <div class="weather-modal-item"><strong>Humidity:</strong> ${escapeHtml(humidity)}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    elements.weatherModal.hidden = false;
+  }
+
+  function openWeatherModal(dateKey) {
+    const targetDate = cleanText(dateKey, "");
+    if (!targetDate) {
+      return;
+    }
+
+    state.weatherModalOpenDate = targetDate;
+    renderWeatherModal(targetDate);
   }
 
   function buildWeeklyTaskId(taskType, sourceId, dateKey) {
@@ -1361,6 +1577,8 @@ function initPlannerScreen() {
     elements.weekGrid.innerHTML = weekDates
       .map((day) => {
         const dayHeading = formatWeekDayLabel(day.date);
+        const weather = getWeatherForDate(day.date);
+        const weatherSummary = cleanText(weather.condition, "Unavailable");
         const slotHtml = SLOT_ORDER
           .map((slot) => {
             const tasks = state.planner.tasks.filter((item) => cleanText(item.date, "") === day.date && cleanText(item.timeSlot, "") === slot);
@@ -1382,7 +1600,17 @@ function initPlannerScreen() {
 
         return `
           <article class="weekly-day-column" data-day="${day.key}" data-date="${day.date}">
-            <h3 class="weekly-day-label">${dayHeading}</h3>
+            <h3 class="weekly-day-label">
+              <span class="weekly-day-label-text">${dayHeading}</span>
+              <button
+                type="button"
+                class="weekly-weather-icon"
+                data-action="weather-open"
+                data-date="${day.date}"
+                title="${escapeHtml(weatherSummary)}"
+                aria-label="Open weather for ${dayHeading}: ${escapeHtml(weatherSummary)}"
+              >${weather.icon}</button>
+            </h3>
             ${slotHtml}
           </article>
         `;
@@ -1390,6 +1618,7 @@ function initPlannerScreen() {
       .join("");
 
     renderMiniCalendar();
+    refreshWeekWeather(weekDates);
   }
 
   function renderMiniCalendar() {
@@ -1885,11 +2114,46 @@ function initPlannerScreen() {
       shiftPlannerWeek(7);
     }, { signal: controller.signal });
 
+    elements.weekScrollContainer.addEventListener("wheel", (event) => {
+      const dominantDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+        ? event.deltaX
+        : (event.shiftKey ? event.deltaY : 0);
+      if (Math.abs(dominantDelta) < 16 || state.weekScrollLocked) {
+        return;
+      }
+
+      event.preventDefault();
+      state.weekScrollLocked = true;
+      shiftPlannerWeek(dominantDelta > 0 ? 7 : -7);
+      window.setTimeout(() => {
+        state.weekScrollLocked = false;
+      }, 220);
+    }, { passive: false, signal: controller.signal });
+
+    elements.weatherModal.addEventListener("click", (event) => {
+      const closeButton = event.target.closest("button[data-action='weather-close']");
+      if (closeButton || event.target === elements.weatherModal) {
+        closeWeatherModal();
+      }
+    }, { signal: controller.signal });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !elements.weatherModal.hidden) {
+        closeWeatherModal();
+      }
+    }, { signal: controller.signal });
+
     document.addEventListener("click", (event) => {
       closeWeekMenus(event.target.closest(".slot-task-week-picker"));
     }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("click", (event) => {
+      const weatherButton = event.target.closest("button[data-action='weather-open']");
+      if (weatherButton) {
+        openWeatherModal(cleanText(weatherButton.dataset.date, ""));
+        return;
+      }
+
       const slotTask = event.target.closest(".slot-task[data-date][data-slot][data-task-id]");
       const actionButton = event.target.closest("button[data-action]");
 
