@@ -26,10 +26,16 @@ function initPlannerScreen() {
 
   const elements = {
     status: document.getElementById("plannerStatus"),
+    curatedLeftColumn: document.getElementById("curated-left"),
+    curatedMiddleColumn: document.getElementById("curated-middle"),
     taskPoolLeft: document.getElementById("plannerTaskPoolLeft"),
     taskPoolMiddle: document.getElementById("plannerTaskPoolMiddle"),
     repeatablePanel: document.getElementById("repeatable-tasks-panel"),
     curatedWarning: document.getElementById("curated-warning"),
+    weekPrev: document.getElementById("week-prev"),
+    weekNext: document.getElementById("week-next"),
+    weekRangeLabel: document.getElementById("weekly-week-label"),
+    weekScrollContainer: document.getElementById("weekly-scroll-container"),
     weekGrid: document.getElementById("plannerWeekGrid"),
     adhocTitle: document.getElementById("adhocTaskTitle"),
     adhocDay: document.getElementById("adhocTaskDay"),
@@ -37,7 +43,7 @@ function initPlannerScreen() {
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.curatedWarning || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.curatedWarning || !elements.weekPrev || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -49,11 +55,30 @@ function initPlannerScreen() {
     planner: null,
     curatedWarningTimer: null,
     activeCuratedDragTaskId: "",
+    activeCuratedDragIndex: -1,
     activeWeeklyDrag: null,
     allProjects: [],
   };
 
   const CURATED_TASK_LIMIT = 8;
+
+  function shiftPlannerWeek(offsetDays) {
+    if (!state.planner) {
+      return false;
+    }
+
+    const days = parseNumber(offsetDays, 0);
+    if (!days) {
+      return false;
+    }
+
+    state.planner.weekStartDate = addDaysToDateKey(state.planner.weekStartDate, days);
+    savePlanner();
+    renderTaskPool();
+    renderWeekGrid();
+    elements.status.textContent = `Planning week of ${state.planner.weekStartDate}.`;
+    return true;
+  }
 
   function cleanText(value, fallback) {
     const text = value == null ? "" : String(value).trim();
@@ -72,6 +97,43 @@ function initPlannerScreen() {
 
     const num = Number(String(text).replace(/[$,]/g, ""));
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function toDateKey(dateValue) {
+    const date = dateValue instanceof Date ? new Date(dateValue.getTime()) : new Date(dateValue);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function parseDateKey(dateKey) {
+    const [year, month, day] = cleanText(dateKey, "").split("-").map((part) => parseInt(part, 10));
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+      return null;
+    }
+
+    const date = new Date(year, month - 1, day);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  function addDaysToDateKey(dateKey, days) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "";
+    }
+
+    date.setDate(date.getDate() + days);
+    return toDateKey(date);
   }
 
   function cleanSource(source) {
@@ -95,6 +157,150 @@ function initPlannerScreen() {
     if (text.includes("list_b") || text.includes("vehicle")) return "vehicle";
     if (text.includes("list_c") || text.includes("repeating")) return "repeating";
     return text;
+  }
+
+  function getWeekStartISO(dateValue) {
+    const date = dateValue instanceof Date ? new Date(dateValue.getTime()) : new Date(dateValue);
+    if (Number.isNaN(date.getTime())) {
+      return toDateKey(new Date());
+    }
+
+    date.setHours(0, 0, 0, 0);
+    const day = date.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    date.setDate(date.getDate() + diff);
+    return toDateKey(date);
+  }
+
+  function getWeekDateKey(weekStartDate, dayIndex) {
+    return addDaysToDateKey(weekStartDate, dayIndex);
+  }
+
+  function getVisibleWeekDateRange(weekStartDate) {
+    return DAY_ORDER.map((day, index) => ({
+      key: day.key,
+      label: day.label,
+      date: getWeekDateKey(weekStartDate, index),
+    }));
+  }
+
+  function formatDateLabel(dateKey) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "";
+    }
+
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function formatWeekDayLabel(dateKey) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "";
+    }
+
+    const day = DAY_ORDER[(date.getDay() + 6) % 7];
+    return `${day.label} (${formatDateLabel(dateKey)})`;
+  }
+
+  function buildWeeklyTaskId(taskType, sourceId, dateKey) {
+    const safeSource = cleanText(sourceId, "");
+    const safeDate = cleanText(dateKey, "");
+    const stamp = `${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+
+    if (taskType === "adhoc") {
+      return `adhoc-${safeDate}-${stamp}`;
+    }
+
+    return `${taskType}-${safeSource}-${safeDate}-${stamp}`;
+  }
+
+  function parseWeeklySourceId(task) {
+    const id = cleanText(task && (task.id || task.taskId), "");
+    if (!id) {
+      return "";
+    }
+
+    const taskType = cleanText(task && (task.taskType || task.type), "curated");
+    if (taskType === "adhoc") {
+      return "";
+    }
+
+    const match = id.match(/^(curated|repeatable)-(.+)-(\d{4}-\d{2}-\d{2})-\d+(?:-\d+)?$/);
+    if (!match) {
+      return cleanText(task.projectId, "");
+    }
+
+    return cleanText(match[2], "");
+  }
+
+  function buildEmptyPlanner(weekStartDate) {
+    return {
+      weekStartDate,
+      tasks: [],
+    };
+  }
+
+  function normalizeWeeklyTask(task, fallbackDate, fallbackTimeSlot) {
+    if (!task || typeof task !== "object") {
+      return null;
+    }
+
+    const taskType = cleanText(task.taskType || task.type, "curated");
+    const date = cleanText(task.date, fallbackDate);
+    const timeSlot = cleanText(task.timeSlot || task.slot, fallbackTimeSlot);
+    const id = cleanText(task.id || task.taskId, buildWeeklyTaskId(taskType, task.projectId || task.taskId || task.id || "task", date));
+
+    if (!date || !SLOT_ORDER.includes(timeSlot) || !id) {
+      return null;
+    }
+
+    return {
+      id,
+      taskId: id,
+      date,
+      timeSlot,
+      taskType,
+      type: taskType,
+      title: cleanText(task.title, "Untitled Task"),
+      checklist: normalizeChecklist(task.checklist),
+      checklistOpen: Boolean(task.checklistOpen),
+      completed: Boolean(task.completed),
+      source: cleanText(task.source, "unknown"),
+      recurrence: cleanText(task.recurrence, ""),
+      projectId: cleanText(task.projectId, ""),
+      priority: parseNumber(task.priority, null),
+    };
+  }
+
+  function migrateLegacyPlanner(parsed, weekStartDate) {
+    const legacyWeekStart = cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate);
+    const tasks = [];
+
+    DAY_ORDER.forEach((day, dayIndex) => {
+      const existingDay = parsed.days && parsed.days[day.key] ? parsed.days[day.key] : {};
+      SLOT_ORDER.forEach((slot) => {
+        const slotItems = Array.isArray(existingDay[slot]) ? existingDay[slot] : [];
+        const date = getWeekDateKey(legacyWeekStart, dayIndex);
+        slotItems.forEach((item, index) => {
+          const normalized = normalizeWeeklyTask({
+            ...item,
+            id: cleanText(item.id || item.taskId, `legacy-${day.key}-${slot}-${index + 1}`),
+            taskId: cleanText(item.taskId || item.id, `legacy-${day.key}-${slot}-${index + 1}`),
+            date,
+            timeSlot: slot,
+          }, date, slot);
+          if (normalized) {
+            tasks.push(normalized);
+          }
+        });
+      });
+    });
+
+    return {
+      weekStartDate: legacyWeekStart,
+      tasks,
+    };
   }
 
   function ensureProjectServicesLoaded() {
@@ -189,27 +395,6 @@ function initPlannerScreen() {
     return d.toISOString().slice(0, 10);
   }
 
-  function emptyDay() {
-    return {
-      morning: [],
-      afternoon: [],
-      evening: [],
-      notes: "",
-    };
-  }
-
-  function buildEmptyPlanner(weekStart) {
-    const days = {};
-    DAY_ORDER.forEach((day) => {
-      days[day.key] = emptyDay();
-    });
-
-    return {
-      weekStart,
-      days,
-    };
-  }
-
   function loadCuratedTasks() {
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.curatedTasks);
@@ -235,48 +420,32 @@ function initPlannerScreen() {
   }
 
   function loadPlanner() {
-    const weekStart = getWeekStartISO(new Date());
+    const weekStartDate = getWeekStartISO(new Date());
 
     try {
       const raw = localStorage.getItem(STORAGE_KEYS.planner);
       const parsed = JSON.parse(raw || "null");
 
       if (!parsed || typeof parsed !== "object") {
-        return buildEmptyPlanner(weekStart);
+        return buildEmptyPlanner(weekStartDate);
       }
 
-      if (cleanText(parsed.weekStart, "") !== weekStart) {
-        return buildEmptyPlanner(weekStart);
+      if (Array.isArray(parsed.tasks)) {
+        const safePlanner = buildEmptyPlanner(cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate));
+        safePlanner.tasks = parsed.tasks
+          .map((item) => normalizeWeeklyTask(item, cleanText(item.date, safePlanner.weekStartDate), cleanText(item.timeSlot || item.slot, "morning")))
+          .filter(Boolean);
+        return safePlanner;
       }
 
-      const safePlanner = buildEmptyPlanner(weekStart);
-      DAY_ORDER.forEach((day) => {
-        const existingDay = parsed.days && parsed.days[day.key] ? parsed.days[day.key] : {};
-        SLOT_ORDER.forEach((slot) => {
-          const slotItems = Array.isArray(existingDay[slot]) ? existingDay[slot] : [];
-          safePlanner.days[day.key][slot] = slotItems
-            .map((item, index) => ({
-              id: cleanText(item.id || item.taskId, `slot-${index + 1}`),
-              taskId: cleanText(item.taskId, ""),
-              title: cleanText(item.title, "Untitled Task"),
-              type: cleanText(item.type || item.taskType, "curated"),
-              taskType: cleanText(item.taskType || item.type, "curated"),
-              priority: parseNumber(item.priority, null),
-              source: cleanText(item.source, "unknown"),
-              recurrence: cleanText(item.recurrence, ""),
-              checklist: normalizeChecklist(item && item.checklist),
-              checklistOpen: Boolean(item && item.checklistOpen),
-              completed: Boolean(item && item.completed),
-            }))
-            .filter((item) => getSlotItemId(item));
-        });
-        safePlanner.days[day.key].notes = cleanText(existingDay.notes, "");
-      });
+      if (parsed.days) {
+        return migrateLegacyPlanner(parsed, cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate));
+      }
 
-      return safePlanner;
+      return buildEmptyPlanner(cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate));
     } catch (error) {
       console.warn("Failed to read planner data", error);
-      return buildEmptyPlanner(weekStart);
+      return buildEmptyPlanner(weekStartDate);
     }
   }
 
@@ -315,55 +484,18 @@ function initPlannerScreen() {
     }, 5000);
   }
 
-  function findAssignment(taskId) {
-    const targetId = cleanText(taskId, "");
-    if (!targetId) {
-      return null;
+  function getVisibleDateForDay(dayKey) {
+    const dayIndex = DAY_ORDER.findIndex((item) => item.key === dayKey);
+    if (dayIndex < 0) {
+      return "";
     }
 
-    for (let d = 0; d < DAY_ORDER.length; d += 1) {
-      const dayKey = DAY_ORDER[d].key;
-      for (let s = 0; s < SLOT_ORDER.length; s += 1) {
-        const slotKey = SLOT_ORDER[s];
-        const slotItems = state.planner.days[dayKey][slotKey] || [];
-        const index = slotItems.findIndex((item) => getSlotItemId(item) === targetId);
-        if (index >= 0) {
-          return {
-            day: dayKey,
-            slot: slotKey,
-            index,
-            item: slotItems[index],
-          };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  function toPlannerSlotItem(taskLike) {
-    const taskType = cleanText(taskLike && (taskLike.taskType || taskLike.type), "curated");
-    const normalizedId = cleanText(taskLike && (taskLike.id || taskLike.taskId), "");
-    const checklist = normalizeChecklist(taskLike && taskLike.checklist);
-
-    return {
-      id: normalizedId,
-      taskId: cleanText(taskLike && taskLike.taskId, ""),
-      title: cleanText(taskLike.title, "Untitled Task"),
-      type: taskType,
-      taskType,
-      priority: parseNumber(taskLike.priority, null),
-      source: cleanText(taskLike.source, "unknown"),
-      recurrence: cleanText(taskLike.recurrence, ""),
-      checklist,
-      checklistOpen: Boolean(taskLike && taskLike.checklistOpen),
-      completed: Boolean(taskLike && taskLike.completed),
-    };
+    return getWeekDateKey(state.planner.weekStartDate, dayIndex);
   }
 
   function assignTask(taskId, day, slot) {
-    const dayBucket = state.planner.days[day];
-    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+    const date = getVisibleDateForDay(day);
+    if (!date || !SLOT_ORDER.includes(slot)) {
       return false;
     }
 
@@ -372,26 +504,18 @@ function initPlannerScreen() {
       return false;
     }
 
-    const existing = findAssignment(taskId);
-    if (existing && existing.day === day && existing.slot === slot) {
-      return true;
-    }
-
-    if (existing) {
-      state.planner.days[existing.day][existing.slot].splice(existing.index, 1);
-    }
-
-    dayBucket[slot].push(toPlannerSlotItem({
+    upsertWeeklyTaskFromSource({
       ...task,
-      id: cleanText(task.taskId, ""),
-      type: "curated",
       taskType: "curated",
-    }));
+      type: "curated",
+      checklist: task.checklist || [],
+      completed: false,
+    }, date, slot, "curated");
 
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
-    elements.status.textContent = `Assigned \"${task.title}\" to ${day.toUpperCase()} ${slot}.`;
+    elements.status.textContent = `Assigned "${task.title}" to ${day.toUpperCase()} ${slot}.`;
     return true;
   }
 
@@ -402,23 +526,29 @@ function initPlannerScreen() {
       return false;
     }
 
-    const dayBucket = state.planner.days[day];
-    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+    const date = getVisibleDateForDay(day);
+    if (!date || !SLOT_ORDER.includes(slot)) {
       elements.status.textContent = "Please select a valid day and time for the ad-hoc task.";
       return false;
     }
 
-    const adHocItem = {
-      id: `adhoc-${Date.now()}`,
+    const adHocItem = toPlannerSlotItem({
+      id: buildWeeklyTaskId("adhoc", "adhoc", date),
+      taskId: buildWeeklyTaskId("adhoc", "adhoc", date),
+      date,
+      timeSlot: slot,
       title: normalizedTitle,
       type: "adhoc",
       taskType: "adhoc",
       source: "adhoc",
       recurrence: "",
       priority: null,
-    };
+      checklist: [],
+      checklistOpen: false,
+      completed: false,
+    });
 
-    dayBucket[slot].push(toPlannerSlotItem(adHocItem));
+    state.planner.tasks.push(adHocItem);
     savePlanner();
     renderWeekGrid();
 
@@ -430,8 +560,8 @@ function initPlannerScreen() {
   }
 
   function assignEntryToSlot(entry, day, slot) {
-    const dayBucket = state.planner.days[day];
-    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+    const date = getVisibleDateForDay(day);
+    if (!date || !SLOT_ORDER.includes(slot)) {
       return false;
     }
 
@@ -440,16 +570,7 @@ function initPlannerScreen() {
       return false;
     }
 
-    const existing = findAssignment(normalizedTaskId);
-    if (existing && existing.day === day && existing.slot === slot) {
-      return true;
-    }
-
-    if (existing) {
-      state.planner.days[existing.day][existing.slot].splice(existing.index, 1);
-    }
-
-    dayBucket[slot].push(toPlannerSlotItem({
+    upsertWeeklyTaskFromSource({
       id: normalizedTaskId,
       taskId: normalizedTaskId,
       title: cleanText(entry.title, "Untitled Task"),
@@ -458,49 +579,88 @@ function initPlannerScreen() {
       priority: parseNumber(entry.priority, 3),
       source: cleanText(entry.source, "unknown"),
       recurrence: cleanText(entry.recurrence, ""),
-    }));
+      checklist: normalizeChecklist(entry.checklist),
+      checklistOpen: Boolean(entry.checklistOpen),
+      completed: Boolean(entry.completed),
+    }, date, slot, "curated");
 
     return true;
   }
 
-  function moveTask(taskId, toDay, toSlot) {
-    const targetDay = state.planner.days[toDay];
-    if (!targetDay || !SLOT_ORDER.includes(toSlot)) {
+  function moveTask(taskId, toDate, toSlot) {
+    const targetDate = cleanText(toDate, "");
+    if (!targetDate || !SLOT_ORDER.includes(toSlot)) {
       return false;
     }
 
-    const existing = findAssignment(taskId);
+    const existing = findWeeklyTaskById(taskId);
     if (!existing) {
       return false;
     }
 
-    if (existing.day === toDay && existing.slot === toSlot) {
+    const taskType = cleanText(existing.item.taskType || existing.item.type, "curated");
+    const sourceId = parseWeeklySourceId(existing.item) || cleanText(existing.item.projectId, "") || cleanText(existing.item.taskId, "");
+    existing.item.date = targetDate;
+    existing.item.timeSlot = toSlot;
+    existing.item.id = buildWeeklyTaskId(taskType, sourceId, targetDate);
+    existing.item.taskId = existing.item.id;
+    savePlanner();
+    renderTaskPool();
+    renderWeekGrid();
+    elements.status.textContent = `Moved "${existing.item.title}" to ${targetDate} ${toSlot}.`;
+    return true;
+  }
+
+  function shiftTaskWeek(taskId, offsetWeeks) {
+    const existing = findWeeklyTaskById(taskId);
+    const weekOffset = parseNumber(offsetWeeks, 0);
+    if (!existing) {
+      return false;
+    }
+
+    if (!weekOffset) {
+      renderWeekGrid();
       return true;
     }
 
-    state.planner.days[existing.day][existing.slot].splice(existing.index, 1);
-    state.planner.days[toDay][toSlot].push(existing.item);
+    const taskType = cleanText(existing.item.taskType || existing.item.type, "curated");
+    const sourceId = parseWeeklySourceId(existing.item) || cleanText(existing.item.projectId, "") || cleanText(existing.item.taskId, "");
+    const newDate = addDaysToDateKey(existing.item.date, weekOffset * 7);
+    const newWeekStartDate = getWeekStartISO(parseDateKey(newDate) || newDate);
+
+    existing.item.date = newDate;
+    existing.item.id = buildWeeklyTaskId(taskType, sourceId, newDate);
+    existing.item.taskId = existing.item.id;
+    state.planner.weekStartDate = newWeekStartDate;
 
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
-    elements.status.textContent = `Moved "${existing.item.title}" to ${toDay.toUpperCase()} ${toSlot}.`;
+    elements.status.textContent = `Moved "${existing.item.title}" ${weekOffset > 0 ? "forward" : "back"} one week.`;
     return true;
   }
 
-  function removeTask(taskId, day, slot) {
-    const dayBucket = state.planner.days[day];
-    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+  function closeWeekMenus(exceptPicker) {
+    elements.weekGrid.querySelectorAll(".slot-task-week-picker.is-open").forEach((picker) => {
+      if (exceptPicker && picker === exceptPicker) {
+        return;
+      }
+
+      picker.classList.remove("is-open");
+      const menu = picker.querySelector("[data-role='task-week-menu']");
+      if (menu) {
+        menu.hidden = true;
+      }
+    });
+  }
+
+  function removeTask(taskId) {
+    const existing = findWeeklyTaskById(taskId);
+    if (!existing) {
       return false;
     }
 
-    const before = dayBucket[slot].length;
-    dayBucket[slot] = dayBucket[slot].filter((item) => getSlotItemId(item) !== taskId);
-
-    if (before === dayBucket[slot].length) {
-      return false;
-    }
-
+    state.planner.tasks.splice(existing.index, 1);
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
@@ -513,16 +673,9 @@ function initPlannerScreen() {
     state.curatedTasks = state.curatedTasks.filter((task) => task.taskId !== taskId);
     const removedFromCurated = state.curatedTasks.length !== beforeCurated;
 
-    let removedFromSchedule = false;
-    DAY_ORDER.forEach((day) => {
-      SLOT_ORDER.forEach((slot) => {
-        const before = state.planner.days[day.key][slot].length;
-        state.planner.days[day.key][slot] = state.planner.days[day.key][slot].filter((item) => getSlotItemId(item) !== taskId);
-        if (state.planner.days[day.key][slot].length !== before) {
-          removedFromSchedule = true;
-        }
-      });
-    });
+    const beforeSchedule = state.planner.tasks.length;
+    state.planner.tasks = state.planner.tasks.filter((item) => cleanText(item.taskType || item.type, "curated") !== "curated" || parseWeeklySourceId(item) !== cleanText(taskId, ""));
+    const removedFromSchedule = state.planner.tasks.length !== beforeSchedule;
 
     if (!removedFromCurated && !removedFromSchedule) {
       return false;
@@ -552,26 +705,9 @@ function initPlannerScreen() {
   }
 
   function removeWeeklyCopiesForRepeatable(projectId) {
-    let changed = false;
-    DAY_ORDER.forEach((day) => {
-      SLOT_ORDER.forEach((slot) => {
-        const before = state.planner.days[day.key][slot].length;
-        state.planner.days[day.key][slot] = state.planner.days[day.key][slot].filter((item) => {
-          const taskType = cleanText(item.taskType || item.type, "curated");
-          const sameProject = cleanText(item.projectId, "") === cleanText(projectId, "");
-          if (taskType === "repeatable" && sameProject) {
-            changed = true;
-            return false;
-          }
-          return true;
-        });
-        if (state.planner.days[day.key][slot].length !== before) {
-          changed = true;
-        }
-      });
-    });
-
-    return changed;
+    const before = state.planner.tasks.length;
+    state.planner.tasks = state.planner.tasks.filter((item) => cleanText(item.taskType || item.type, "curated") !== "repeatable" || parseWeeklySourceId(item) !== cleanText(projectId, ""));
+    return state.planner.tasks.length !== before;
   }
 
   function removeRepeatableMaster(projectId) {
@@ -596,17 +732,18 @@ function initPlannerScreen() {
     }
   }
 
-  function createWeeklyRepeatableCopy(masterTask, day, slot) {
-    const dayBucket = state.planner.days[day];
-    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+  function createWeeklyRepeatableCopy(masterTask, date, slot) {
+    if (!date || !SLOT_ORDER.includes(slot)) {
       return false;
     }
 
-    const uniqueId = `repeatable-${masterTask.projectId}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const uniqueId = buildWeeklyTaskId("repeatable", masterTask.projectId, date);
 
     const weeklyTask = toPlannerSlotItem({
       id: uniqueId,
       taskId: uniqueId,
+      date,
+      timeSlot: slot,
       projectId: masterTask.projectId,
       title: cleanText(masterTask.title, "Untitled Task"),
       type: "repeatable",
@@ -622,11 +759,95 @@ function initPlannerScreen() {
       completed: false,
     });
 
-    dayBucket[slot].push(weeklyTask);
+    state.planner.tasks.push(weeklyTask);
     savePlanner();
     renderWeekGrid();
-    elements.status.textContent = `Added repeatable task "${masterTask.title}" to ${day.toUpperCase()} ${slot}.`;
+    elements.status.textContent = `Added repeatable task "${masterTask.title}" to ${date}.`;
     return true;
+  }
+
+  function findWeeklyTaskById(taskId) {
+    const targetId = cleanText(taskId, "");
+    if (!targetId) {
+      return null;
+    }
+
+    const index = Array.isArray(state.planner.tasks)
+      ? state.planner.tasks.findIndex((item) => getSlotItemId(item) === targetId)
+      : -1;
+
+    if (index < 0) {
+      return null;
+    }
+
+    return {
+      item: state.planner.tasks[index],
+      index,
+    };
+  }
+
+  function findVisibleWeeklySourceTask(taskType, sourceId) {
+    const visibleDates = new Set(getVisibleWeekDateRange(state.planner.weekStartDate).map((item) => item.date));
+    const targetSourceId = cleanText(sourceId, "");
+
+    return state.planner.tasks.find((item) => {
+      if (cleanText(item.taskType || item.type, "curated") !== taskType) {
+        return false;
+      }
+
+      if (!visibleDates.has(cleanText(item.date, ""))) {
+        return false;
+      }
+
+      return parseWeeklySourceId(item) === targetSourceId;
+    }) || null;
+  }
+
+  function toPlannerSlotItem(taskLike) {
+    return normalizeWeeklyTask(taskLike, cleanText(taskLike && taskLike.date, ""), cleanText(taskLike && (taskLike.timeSlot || taskLike.slot), "morning"));
+  }
+
+  function upsertWeeklyTaskFromSource(taskLike, date, timeSlot, taskType) {
+    const normalizedDate = cleanText(date, "");
+    const normalizedSlot = cleanText(timeSlot, "");
+    if (!normalizedDate || !SLOT_ORDER.includes(normalizedSlot)) {
+      return null;
+    }
+
+    const sourceId = cleanText(taskLike.taskId || taskLike.projectId || taskLike.id, "");
+    const existingIndex = state.planner.tasks.findIndex((item) => {
+      return cleanText(item.taskType || item.type, "curated") === taskType
+        && parseWeeklySourceId(item) === sourceId
+        && cleanText(item.date, "") === normalizedDate;
+    });
+
+    const weeklyTask = toPlannerSlotItem({
+      id: existingIndex >= 0 ? state.planner.tasks[existingIndex].id : buildWeeklyTaskId(taskType, sourceId, normalizedDate),
+      taskId: existingIndex >= 0 ? state.planner.tasks[existingIndex].taskId : buildWeeklyTaskId(taskType, sourceId, normalizedDate),
+      date: normalizedDate,
+      timeSlot: normalizedSlot,
+      taskType,
+      type: taskType,
+      title: cleanText(taskLike.title, "Untitled Task"),
+      checklist: taskType === "curated" ? normalizeChecklist(taskLike.checklist) : [],
+      checklistOpen: Boolean(taskLike.checklistOpen),
+      completed: Boolean(taskLike.completed),
+      source: cleanText(taskLike.source, taskType === "adhoc" ? "adhoc" : "unknown"),
+      recurrence: cleanText(taskLike.recurrence, ""),
+      projectId: cleanText(taskLike.projectId, ""),
+      priority: parseNumber(taskLike.priority, null),
+    });
+
+    if (existingIndex >= 0) {
+      state.planner.tasks[existingIndex] = {
+        ...state.planner.tasks[existingIndex],
+        ...weeklyTask,
+      };
+    } else {
+      state.planner.tasks.push(weeklyTask);
+    }
+
+    return weeklyTask;
   }
 
   function renderRepeatablePanel() {
@@ -689,19 +910,19 @@ function initPlannerScreen() {
   }
 
   function findSlotTask(day, slot, taskId) {
-    const dayBucket = state.planner.days[day];
-    if (!dayBucket || !SLOT_ORDER.includes(slot)) {
+    const dayIndex = DAY_ORDER.findIndex((item) => item.key === day);
+    if (dayIndex < 0 || !SLOT_ORDER.includes(slot)) {
       return null;
     }
 
-    const slotItems = dayBucket[slot] || [];
-    const index = slotItems.findIndex((item) => getSlotItemId(item) === taskId);
+    const date = getWeekDateKey(state.planner.weekStartDate, dayIndex);
+    const index = state.planner.tasks.findIndex((item) => getSlotItemId(item) === taskId && cleanText(item.date, "") === date && cleanText(item.timeSlot, "") === slot);
     if (index < 0) {
       return null;
     }
 
     return {
-      item: slotItems[index],
+      item: state.planner.tasks[index],
       index,
     };
   }
@@ -826,23 +1047,20 @@ function initPlannerScreen() {
   function buildAssignmentMap() {
     const map = new Map();
 
-    DAY_ORDER.forEach((day) => {
-      SLOT_ORDER.forEach((slot) => {
-        const items = state.planner.days[day.key][slot] || [];
-        items.forEach((item) => {
-          const id = cleanText(item.taskId, "");
-          if (!id) {
-            return;
-          }
+    const visibleDates = new Set(getVisibleWeekDateRange(state.planner.weekStartDate).map((item) => item.date));
+    state.planner.tasks.forEach((item) => {
+      const taskType = cleanText(item.taskType || item.type, "curated");
+      const sourceId = parseWeeklySourceId(item);
+      if (taskType !== "curated" || !sourceId || !visibleDates.has(cleanText(item.date, ""))) {
+        return;
+      }
 
-          if (!map.has(id)) {
-            map.set(id, {
-              day: day.key,
-              slot,
-            });
-          }
+      if (!map.has(sourceId)) {
+        map.set(sourceId, {
+          date: cleanText(item.date, ""),
+          slot: cleanText(item.timeSlot, ""),
         });
-      });
+      }
     });
 
     return map;
@@ -852,11 +1070,23 @@ function initPlannerScreen() {
     return cleanText(task && (task.taskType || task.type), "curated");
   }
 
-  function renderWeeklyTaskCard(task, dayKey, slot) {
+  function renderWeeklyTaskCard(task, dateKey, slot) {
     const taskType = getWeeklyTaskType(task);
     const taskId = getSlotItemId(task);
     const taskCompleted = Boolean(task.completed);
     const title = cleanText(task.title, "Untitled Task");
+    const weekPickerMenu = `
+      <div class="slot-task-week-picker">
+        <button type="button" class="slot-task-week-button" data-action="task-week-picker" aria-label="Move task to week" title="Move task to week">
+          <span class="slot-task-week-icon" aria-hidden="true"></span>
+        </button>
+        <div class="slot-task-week-menu" data-role="task-week-menu" hidden>
+          <button type="button" class="slot-task-week-menu-item" data-action="task-week-shift" data-week-offset="-1">Last Week</button>
+          <button type="button" class="slot-task-week-menu-item" data-action="task-week-shift" data-week-offset="0">This Week</button>
+          <button type="button" class="slot-task-week-menu-item" data-action="task-week-shift" data-week-offset="1">Next Week</button>
+        </div>
+      </div>
+    `;
     const cardClass = taskType === "repeatable"
       ? "slot-task slot-task-repeatable"
       : taskType === "adhoc"
@@ -865,26 +1095,23 @@ function initPlannerScreen() {
 
     if (taskType === "repeatable") {
       return `
-        <div class="${cardClass} ${taskCompleted ? "is-complete" : ""}" data-day="${dayKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
+        <div class="${cardClass} ${taskCompleted ? "is-complete" : ""}" data-date="${dateKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
           <div class="slot-task-layout">
             <span class="slot-task-handle" data-action="weekly-drag-handle" draggable="true" title="Drag to move" aria-label="Drag to move">⋮⋮</span>
             <div class="slot-task-main">
               <div class="slot-task-header">
                 <div class="slot-task-title">${title}</div>
-                <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
+                <div class="slot-task-header-actions">
+                  ${weekPickerMenu}
+                  <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
+                  <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
+                </div>
               </div>
-              <button type="button" data-action="remove">Remove</button>
             </div>
           </div>
         </div>
       `;
     }
-
-    const sourceLabel = taskType === "adhoc" ? "Ad-Hoc" : cleanText(task.source, "unknown");
-    const recurrence = cleanText(task.recurrence, "");
-    const meta = recurrence
-      ? `${sourceLabel} | ${recurrence}`
-      : sourceLabel;
 
     const checklist = normalizeChecklist(task.checklist);
     const checklistOpen = Boolean(task.checklistOpen);
@@ -918,17 +1145,19 @@ function initPlannerScreen() {
       : "";
 
     return `
-      <div class="${cardClass} ${taskCompleted ? "is-complete" : ""}" data-day="${dayKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
+      <div class="${cardClass} ${taskCompleted ? "is-complete" : ""}" data-date="${dateKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
         <div class="slot-task-layout">
           <span class="slot-task-handle" data-action="weekly-drag-handle" draggable="true" title="Drag to move" aria-label="Drag to move">⋮⋮</span>
           <div class="slot-task-main">
             <div class="slot-task-header">
               <div class="slot-task-title">${title}</div>
-              <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
+              <div class="slot-task-header-actions">
+                ${weekPickerMenu}
+                <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
+                <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
+              </div>
             </div>
-            <div class="slot-task-meta">${meta}</div>
             ${checklistHtml}
-            <button type="button" data-action="remove">Remove</button>
           </div>
         </div>
       </div>
@@ -936,7 +1165,7 @@ function initPlannerScreen() {
   }
 
   function renderTaskPool() {
-    const renderPoolCards = (tasks) => tasks
+    const renderPoolCards = (tasks, startIndex) => tasks
       .map((task, index) => {
         const assignment = assignmentMap.get(task.taskId);
         const dayOptions = DAY_ORDER.map((day) => `<option value="${day.key}">${day.label}</option>`).join("");
@@ -947,7 +1176,7 @@ function initPlannerScreen() {
         const orderValue = task.order == null || String(task.order).trim() === "" ? "-" : String(task.order);
 
         return `
-          <article class="pool-task-card" data-curated-index="${index}" data-task-id="${task.taskId}">
+          <article class="pool-task-card" data-curated-index="${index}" data-curated-global-index="${startIndex + index}" data-task-id="${task.taskId}">
             <div class="pool-task-layout">
               <span class="pool-card-drag-handle" data-action="curated-drag-handle" draggable="true" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span>
               <div class="pool-task-main">
@@ -985,8 +1214,8 @@ function initPlannerScreen() {
     const leftTasks = ordered.slice(0, 4);
     const middleTasks = ordered.slice(4, CURATED_TASK_LIMIT);
 
-    elements.taskPoolLeft.innerHTML = renderPoolCards(leftTasks);
-    elements.taskPoolMiddle.innerHTML = renderPoolCards(middleTasks);
+    elements.taskPoolLeft.innerHTML = renderPoolCards(leftTasks, 0);
+    elements.taskPoolMiddle.innerHTML = renderPoolCards(middleTasks, 4);
 
     const cards = [
       ...elements.taskPoolLeft.querySelectorAll(".pool-task-card"),
@@ -1038,22 +1267,32 @@ function initPlannerScreen() {
   }
 
   function renderWeekGrid() {
-    elements.weekGrid.innerHTML = DAY_ORDER
-      .map((day) => {
-        const dayData = state.planner.days[day.key];
+    const weekDates = getVisibleWeekDateRange(state.planner.weekStartDate);
+    if (elements.weekRangeLabel) {
+      const first = weekDates[0] ? formatDateLabel(weekDates[0].date) : "";
+      const last = weekDates[6] ? formatDateLabel(weekDates[6].date) : "";
+      const year = weekDates[0] ? parseDateKey(weekDates[0].date)?.getFullYear() : "";
+      elements.weekRangeLabel.textContent = first && last ? `${first} - ${last}${year ? ` (${year})` : ""}` : "";
+    }
 
+    elements.weekScrollContainer.scrollLeft = 0;
+
+    elements.weekGrid.innerHTML = weekDates
+      .map((day) => {
+        const dayHeading = formatWeekDayLabel(day.date);
         const slotHtml = SLOT_ORDER
           .map((slot) => {
-            const tasks = dayData[slot] || [];
+            const tasks = state.planner.tasks.filter((item) => cleanText(item.date, "") === day.date && cleanText(item.timeSlot, "") === slot);
             const taskHtml = tasks.length
               ? tasks
-                  .map((task) => renderWeeklyTaskCard(task, day.key, slot))
+                  .map((task) => renderWeeklyTaskCard(task, day.date, slot))
                   .join("")
               : '<div class="slot-empty">No tasks assigned</div>';
+            const slotLabel = `${slot.charAt(0).toUpperCase()}${slot.slice(1)}`;
 
             return `
-              <section class="day-slot" data-day="${day.key}" data-slot="${slot}">
-                <h4>${slot[0].toUpperCase()}${slot.slice(1)}</h4>
+              <section class="day-slot" data-day="${day.key}" data-date="${day.date}" data-slot="${slot}">
+                <h4 class="day-slot-label">${slotLabel}</h4>
                 <div class="slot-task-list">${taskHtml}</div>
               </section>
             `;
@@ -1061,8 +1300,8 @@ function initPlannerScreen() {
           .join("");
 
         return `
-          <article class="planner-day" data-day="${day.key}">
-            <h3>${day.label}</h3>
+          <article class="weekly-day-column" data-day="${day.key}" data-date="${day.date}">
+            <h3 class="weekly-day-label">${dayHeading}</h3>
             ${slotHtml}
           </article>
         `;
@@ -1237,10 +1476,100 @@ function initPlannerScreen() {
     elements.taskPoolMiddle.addEventListener("change", onTaskPoolChange, { signal: controller.signal });
 
     const clearCuratedDropTargets = () => {
+      elements.curatedLeftColumn.classList.remove("drag-over");
+      elements.curatedMiddleColumn.classList.remove("drag-over");
       [
         ...elements.taskPoolLeft.querySelectorAll(".pool-task-card.is-drop-target"),
         ...elements.taskPoolMiddle.querySelectorAll(".pool-task-card.is-drop-target"),
       ].forEach((card) => card.classList.remove("is-drop-target"));
+    };
+
+    const getCuratedColumnSide = (columnEl) => {
+      if (columnEl === elements.curatedLeftColumn) {
+        return "left";
+      }
+      if (columnEl === elements.curatedMiddleColumn) {
+        return "middle";
+      }
+      return "";
+    };
+
+    const resolveCuratedColumn = (eventTarget, fallbackTarget) => {
+      const fromEventTarget = eventTarget && eventTarget.closest
+        ? eventTarget.closest("#curated-left, #curated-middle")
+        : null;
+      if (fromEventTarget) {
+        return fromEventTarget;
+      }
+
+      const fromCurrentTarget = fallbackTarget && fallbackTarget.closest
+        ? fallbackTarget.closest("#curated-left, #curated-middle")
+        : null;
+      return fromCurrentTarget || null;
+    };
+
+    const getCuratedDropPlacement = (columnEl, clientY) => {
+      const cards = Array.from(columnEl.querySelectorAll(".pool-task-card"));
+      const cardWithoutDragged = cards.filter((card) => parseNumber(card.dataset.curatedGlobalIndex, -1) !== state.activeCuratedDragIndex);
+
+      if (!cardWithoutDragged.length) {
+        return {
+          targetGlobalIndex: null,
+          highlightTaskId: "",
+        };
+      }
+
+      for (let i = 0; i < cardWithoutDragged.length; i += 1) {
+        const card = cardWithoutDragged[i];
+        const rect = card.getBoundingClientRect();
+        const midpoint = rect.top + (rect.height / 2);
+        if (clientY <= midpoint) {
+          const globalIndex = parseNumber(card.dataset.curatedGlobalIndex, null);
+          return {
+            targetGlobalIndex: globalIndex,
+            highlightTaskId: cleanText(card.dataset.taskId, ""),
+          };
+        }
+      }
+
+      const lastCard = cardWithoutDragged[cardWithoutDragged.length - 1];
+      const lastGlobalIndex = parseNumber(lastCard.dataset.curatedGlobalIndex, null);
+      return {
+        targetGlobalIndex: lastGlobalIndex == null ? null : (lastGlobalIndex + 1),
+        highlightTaskId: cleanText(lastCard.dataset.taskId, ""),
+      };
+    };
+
+    const reorderCuratedTasksByPlacement = (fromIndex, targetGlobalIndex, side) => {
+      if (fromIndex < 0) {
+        return false;
+      }
+
+      const next = [...state.curatedTasks];
+      const [moved] = next.splice(fromIndex, 1);
+
+      let insertIndex;
+      if (targetGlobalIndex == null) {
+        insertIndex = side === "left" ? 0 : Math.min(4, next.length);
+      } else {
+        insertIndex = targetGlobalIndex;
+        if (targetGlobalIndex > fromIndex) {
+          insertIndex -= 1;
+        }
+      }
+
+      if (side === "left") {
+        insertIndex = Math.min(insertIndex, Math.min(4, next.length));
+      } else if (side === "middle") {
+        insertIndex = Math.max(insertIndex, Math.min(4, next.length));
+      }
+
+      insertIndex = Math.max(0, Math.min(insertIndex, next.length));
+      next.splice(insertIndex, 0, moved);
+      state.curatedTasks = next;
+      saveCuratedTasks();
+      renderTaskPool();
+      return true;
     };
 
     const onCuratedDragStart = (event) => {
@@ -1257,9 +1586,11 @@ function initPlannerScreen() {
       const payload = {
         kind: "curated-reorder",
         taskId: cleanText(card.dataset.taskId, ""),
+        index: parseNumber(card.dataset.curatedGlobalIndex, -1),
       };
 
       state.activeCuratedDragTaskId = payload.taskId;
+      state.activeCuratedDragIndex = payload.index;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", JSON.stringify(payload));
       card.classList.add("is-dragging");
@@ -1277,59 +1608,158 @@ function initPlannerScreen() {
         card.classList.remove("is-dragging");
       }
       state.activeCuratedDragTaskId = "";
+      state.activeCuratedDragIndex = -1;
       clearCuratedDropTargets();
     };
 
-    const onCuratedDragOver = (event, side) => {
+    const onCuratedDragOver = (event) => {
       if (!cleanText(state.activeCuratedDragTaskId, "")) {
+        return;
+      }
+
+      const columnEl = resolveCuratedColumn(event.target, event.currentTarget);
+      if (!columnEl) {
         return;
       }
 
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
 
-      const card = event.target.closest(".pool-task-card");
+      elements.curatedLeftColumn.classList.toggle("drag-over", columnEl === elements.curatedLeftColumn);
+      elements.curatedMiddleColumn.classList.toggle("drag-over", columnEl === elements.curatedMiddleColumn);
+
+      const placement = getCuratedDropPlacement(columnEl, event.clientY);
       clearCuratedDropTargets();
+      elements.curatedLeftColumn.classList.toggle("drag-over", columnEl === elements.curatedLeftColumn);
+      elements.curatedMiddleColumn.classList.toggle("drag-over", columnEl === elements.curatedMiddleColumn);
+
+      const highlightTaskId = placement.highlightTaskId;
+      const card = highlightTaskId
+        ? columnEl.querySelector(`.pool-task-card[data-task-id="${highlightTaskId}"]`)
+        : null;
+
       if (card) {
         card.classList.add("is-drop-target");
       }
     };
 
-    const onCuratedDrop = (event, side) => {
+    const onCuratedDragLeave = (event) => {
+      const columnEl = resolveCuratedColumn(event.target, event.currentTarget);
+      if (!columnEl) {
+        return;
+      }
+
+      if (event.relatedTarget && columnEl.contains(event.relatedTarget)) {
+        return;
+      }
+
+      columnEl.classList.remove("drag-over");
+      clearCuratedDropTargets();
+    };
+
+    const onCuratedDrop = (event) => {
       const fromTaskId = cleanText(state.activeCuratedDragTaskId, "");
       if (!fromTaskId) {
         return;
       }
 
+      const columnEl = resolveCuratedColumn(event.target, event.currentTarget);
+      const side = getCuratedColumnSide(columnEl);
+      if (!columnEl || !side) {
+        return;
+      }
+
       event.preventDefault();
 
-      const targetCard = event.target.closest(".pool-task-card");
-      const toTaskId = targetCard ? cleanText(targetCard.dataset.taskId, "") : "";
-      reorderCuratedTasks(fromTaskId, toTaskId, side);
+      let transferPayload = null;
+      try {
+        transferPayload = JSON.parse(event.dataTransfer.getData("text/plain") || "null");
+      } catch (error) {
+        transferPayload = null;
+      }
+
+      const draggedTaskId = cleanText(transferPayload && transferPayload.taskId, fromTaskId);
+      const draggedIndexFromPayload = parseNumber(transferPayload && transferPayload.index, state.activeCuratedDragIndex);
+      const resolvedFromIndex = Number.isInteger(draggedIndexFromPayload)
+        && draggedIndexFromPayload >= 0
+        && draggedIndexFromPayload < state.curatedTasks.length
+        ? draggedIndexFromPayload
+        : state.curatedTasks.findIndex((task) => cleanText(task.taskId, "") === draggedTaskId);
+      const placement = getCuratedDropPlacement(columnEl, event.clientY);
+
+      reorderCuratedTasksByPlacement(resolvedFromIndex, placement.targetGlobalIndex, side);
       clearCuratedDropTargets();
       state.activeCuratedDragTaskId = "";
+      state.activeCuratedDragIndex = -1;
     };
 
-    elements.taskPoolLeft.addEventListener("dragstart", onCuratedDragStart, { signal: controller.signal });
-    elements.taskPoolMiddle.addEventListener("dragstart", onCuratedDragStart, { signal: controller.signal });
-    elements.taskPoolLeft.addEventListener("dragend", onCuratedDragEnd, { signal: controller.signal });
-    elements.taskPoolMiddle.addEventListener("dragend", onCuratedDragEnd, { signal: controller.signal });
+    elements.curatedLeftColumn.addEventListener("dragstart", onCuratedDragStart, { signal: controller.signal });
+    elements.curatedMiddleColumn.addEventListener("dragstart", onCuratedDragStart, { signal: controller.signal });
+    elements.curatedLeftColumn.addEventListener("dragend", onCuratedDragEnd, { signal: controller.signal });
+    elements.curatedMiddleColumn.addEventListener("dragend", onCuratedDragEnd, { signal: controller.signal });
 
-    elements.taskPoolLeft.addEventListener("dragover", (event) => onCuratedDragOver(event, "left"), { signal: controller.signal });
-    elements.taskPoolMiddle.addEventListener("dragover", (event) => onCuratedDragOver(event, "middle"), { signal: controller.signal });
-    elements.taskPoolLeft.addEventListener("drop", (event) => onCuratedDrop(event, "left"), { signal: controller.signal });
-    elements.taskPoolMiddle.addEventListener("drop", (event) => onCuratedDrop(event, "middle"), { signal: controller.signal });
+    elements.curatedLeftColumn.addEventListener("dragover", onCuratedDragOver, { signal: controller.signal });
+    elements.curatedMiddleColumn.addEventListener("dragover", onCuratedDragOver, { signal: controller.signal });
+    elements.curatedLeftColumn.addEventListener("dragleave", onCuratedDragLeave, { signal: controller.signal });
+    elements.curatedMiddleColumn.addEventListener("dragleave", onCuratedDragLeave, { signal: controller.signal });
+    elements.curatedLeftColumn.addEventListener("drop", onCuratedDrop, { signal: controller.signal });
+    elements.curatedMiddleColumn.addEventListener("drop", onCuratedDrop, { signal: controller.signal });
+    elements.taskPoolLeft.addEventListener("dragover", onCuratedDragOver, { signal: controller.signal });
+    elements.taskPoolMiddle.addEventListener("dragover", onCuratedDragOver, { signal: controller.signal });
+    elements.taskPoolLeft.addEventListener("dragleave", onCuratedDragLeave, { signal: controller.signal });
+    elements.taskPoolMiddle.addEventListener("dragleave", onCuratedDragLeave, { signal: controller.signal });
+    elements.taskPoolLeft.addEventListener("drop", onCuratedDrop, { signal: controller.signal });
+    elements.taskPoolMiddle.addEventListener("drop", onCuratedDrop, { signal: controller.signal });
+
+    elements.weekPrev.addEventListener("click", () => {
+      shiftPlannerWeek(-7);
+    }, { signal: controller.signal });
+
+    elements.weekNext.addEventListener("click", () => {
+      shiftPlannerWeek(7);
+    }, { signal: controller.signal });
+
+    document.addEventListener("click", (event) => {
+      closeWeekMenus(event.target.closest(".slot-task-week-picker"));
+    }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("click", (event) => {
-      const slotTask = event.target.closest(".slot-task[data-day][data-slot][data-task-id]");
+      const slotTask = event.target.closest(".slot-task[data-date][data-slot][data-task-id]");
       const actionButton = event.target.closest("button[data-action]");
 
       if (slotTask && actionButton) {
         const taskId = cleanText(slotTask.dataset.taskId, "");
-        const day = cleanText(slotTask.dataset.day, "");
+        const daySlot = slotTask.closest(".day-slot[data-day][data-date][data-slot]");
+        const day = cleanText(daySlot && daySlot.dataset.day, "");
         const slot = cleanText(slotTask.dataset.slot, "");
         const checklistId = cleanText(actionButton.dataset.checklistId, "");
         const action = cleanText(actionButton.dataset.action, "");
+
+        if (action === "task-week-picker") {
+          const picker = actionButton.closest(".slot-task-week-picker");
+          const menu = picker && picker.querySelector("[data-role='task-week-menu']");
+          if (!picker || !menu) {
+            return;
+          }
+
+          const nextOpen = !picker.classList.contains("is-open");
+          closeWeekMenus(nextOpen ? picker : null);
+          picker.classList.toggle("is-open", nextOpen);
+          menu.hidden = !nextOpen;
+          return;
+        }
+
+        if (action === "task-week-shift") {
+          closeWeekMenus();
+          shiftTaskWeek(taskId, parseNumber(actionButton.dataset.weekOffset, 0));
+          return;
+        }
+
+        if (action === "remove") {
+          closeWeekMenus();
+          removeTask(taskId);
+          return;
+        }
 
         if (action === "checklist-toggle") {
           toggleChecklistOpen(taskId, day, slot);
@@ -1354,34 +1784,21 @@ function initPlannerScreen() {
           return;
         }
       }
-
-      const removeButton = event.target.closest("button[data-action='remove']");
-      if (!removeButton) {
-        return;
-      }
-
-      const taskEl = removeButton.closest(".slot-task");
-      if (!taskEl) {
-        return;
-      }
-
-      const taskId = taskEl.dataset.taskId;
-      const day = taskEl.dataset.day;
-      const slot = taskEl.dataset.slot;
-      removeTask(taskId, day, slot);
     }, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("change", (event) => {
       const taskCompleteCheckbox = event.target.closest("input[data-action='task-complete-toggle']");
       if (taskCompleteCheckbox) {
-        const slotTask = taskCompleteCheckbox.closest(".slot-task[data-day][data-slot][data-task-id]");
+        const slotTask = taskCompleteCheckbox.closest(".slot-task[data-date][data-slot][data-task-id]");
         if (!slotTask) {
           return;
         }
 
+        const daySlot = slotTask.closest(".day-slot[data-day][data-date][data-slot]");
+
         setTaskCompleted(
           cleanText(slotTask.dataset.taskId, ""),
-          cleanText(slotTask.dataset.day, ""),
+          cleanText(daySlot && daySlot.dataset.day, ""),
           cleanText(slotTask.dataset.slot, ""),
           taskCompleteCheckbox.checked
         );
@@ -1393,14 +1810,16 @@ function initPlannerScreen() {
         return;
       }
 
-      const slotTask = checkbox.closest(".slot-task[data-day][data-slot][data-task-id]");
+      const slotTask = checkbox.closest(".slot-task[data-date][data-slot][data-task-id]");
       if (!slotTask) {
         return;
       }
 
+      const daySlot = slotTask.closest(".day-slot[data-day][data-date][data-slot]");
+
       toggleChecklistItem(
         cleanText(slotTask.dataset.taskId, ""),
-        cleanText(slotTask.dataset.day, ""),
+        cleanText(daySlot && daySlot.dataset.day, ""),
         cleanText(slotTask.dataset.slot, ""),
         cleanText(checkbox.dataset.checklistId, ""),
         checkbox.checked
@@ -1415,14 +1834,16 @@ function initPlannerScreen() {
 
       event.preventDefault();
 
-      const slotTask = input.closest(".slot-task[data-day][data-slot][data-task-id]");
+      const slotTask = input.closest(".slot-task[data-date][data-slot][data-task-id]");
       if (!slotTask) {
         return;
       }
 
+      const daySlot = slotTask.closest(".day-slot[data-day][data-date][data-slot]");
+
       addChecklistItem(
         cleanText(slotTask.dataset.taskId, ""),
-        cleanText(slotTask.dataset.day, ""),
+        cleanText(daySlot && daySlot.dataset.day, ""),
         cleanText(slotTask.dataset.slot, ""),
         input.value
       );
@@ -1434,16 +1855,18 @@ function initPlannerScreen() {
         return;
       }
 
-      const slotTask = handle.closest(".slot-task[data-day][data-slot][data-task-id]");
+      const slotTask = handle.closest(".slot-task[data-date][data-slot][data-task-id]");
       const checklistItem = handle.closest(".slot-checklist-item[data-checklist-id]");
       if (!slotTask || !checklistItem) {
         return;
       }
 
+      const daySlot = slotTask.closest(".day-slot[data-day][data-date][data-slot]");
+
       const payload = {
         kind: "checklist-reorder",
         taskId: cleanText(slotTask.dataset.taskId, ""),
-        day: cleanText(slotTask.dataset.day, ""),
+        day: cleanText(daySlot && daySlot.dataset.day, ""),
         slot: cleanText(slotTask.dataset.slot, ""),
         checklistId: cleanText(checklistItem.dataset.checklistId, ""),
       };
@@ -1466,14 +1889,19 @@ function initPlannerScreen() {
         return;
       }
 
-      const taskCard = handle.closest(".slot-task[data-day][data-slot][data-task-id]");
+      const taskCard = handle.closest(".slot-task[data-date][data-slot][data-task-id]");
       if (!taskCard) {
         return;
       }
 
+      const daySlot = taskCard.closest(".day-slot[data-day][data-date][data-slot]");
+
       const payload = {
         kind: "weekly-move",
         taskId: cleanText(taskCard.dataset.taskId, ""),
+        day: cleanText(daySlot && daySlot.dataset.day, ""),
+        date: cleanText(taskCard.dataset.date, ""),
+        slot: cleanText(taskCard.dataset.slot, ""),
       };
 
       state.activeWeeklyDrag = payload;
@@ -1503,13 +1931,15 @@ function initPlannerScreen() {
     elements.weekGrid.addEventListener("dragover", (event) => {
       const checklistTarget = event.target.closest(".slot-checklist-item[data-checklist-id]");
       if (checklistTarget && state.activeWeeklyDrag && state.activeWeeklyDrag.kind === "checklist-reorder") {
-        const slotTask = checklistTarget.closest(".slot-task[data-day][data-slot][data-task-id]");
+        const slotTask = checklistTarget.closest(".slot-task[data-date][data-slot][data-task-id]");
         if (!slotTask) {
           return;
         }
 
+        const daySlot = slotTask.closest(".day-slot[data-day][data-date][data-slot]");
+
         const sameTask = cleanText(slotTask.dataset.taskId, "") === cleanText(state.activeWeeklyDrag.taskId, "")
-          && cleanText(slotTask.dataset.day, "") === cleanText(state.activeWeeklyDrag.day, "")
+          && cleanText(daySlot && daySlot.dataset.day, "") === cleanText(state.activeWeeklyDrag.day, "")
           && cleanText(slotTask.dataset.slot, "") === cleanText(state.activeWeeklyDrag.slot, "");
 
         if (!sameTask) {
@@ -1523,7 +1953,7 @@ function initPlannerScreen() {
         return;
       }
 
-      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
+      const slotEl = event.target.closest(".day-slot[data-day][data-date][data-slot]");
       if (!slotEl || !state.activeWeeklyDrag) {
         return;
       }
@@ -1548,7 +1978,7 @@ function initPlannerScreen() {
         return;
       }
 
-      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
+      const slotEl = event.target.closest(".day-slot[data-day][data-date][data-slot]");
       if (!slotEl) {
         return;
       }
@@ -1563,13 +1993,15 @@ function initPlannerScreen() {
     elements.weekGrid.addEventListener("drop", (event) => {
       const checklistTarget = event.target.closest(".slot-checklist-item[data-checklist-id]");
       if (checklistTarget && state.activeWeeklyDrag && state.activeWeeklyDrag.kind === "checklist-reorder") {
-        const slotTask = checklistTarget.closest(".slot-task[data-day][data-slot][data-task-id]");
+        const slotTask = checklistTarget.closest(".slot-task[data-date][data-slot][data-task-id]");
         if (!slotTask) {
           return;
         }
 
+        const daySlot = slotTask.closest(".day-slot[data-day][data-date][data-slot]");
+
         const sameTask = cleanText(slotTask.dataset.taskId, "") === cleanText(state.activeWeeklyDrag.taskId, "")
-          && cleanText(slotTask.dataset.day, "") === cleanText(state.activeWeeklyDrag.day, "")
+          && cleanText(daySlot && daySlot.dataset.day, "") === cleanText(state.activeWeeklyDrag.day, "")
           && cleanText(slotTask.dataset.slot, "") === cleanText(state.activeWeeklyDrag.slot, "");
 
         if (!sameTask) {
@@ -1585,7 +2017,7 @@ function initPlannerScreen() {
         return;
       }
 
-      const slotEl = event.target.closest(".day-slot[data-day][data-slot]");
+      const slotEl = event.target.closest(".day-slot[data-day][data-date][data-slot]");
       if (!slotEl || !state.activeWeeklyDrag) {
         return;
       }
@@ -1598,20 +2030,21 @@ function initPlannerScreen() {
       slotEl.classList.remove("is-drop-target");
 
       const day = cleanText(slotEl.dataset.day, "");
+      const date = cleanText(slotEl.dataset.date, "");
       const slot = cleanText(slotEl.dataset.slot, "");
       const payload = state.activeWeeklyDrag;
 
       if (payload.kind === "repeatable-copy") {
         const masterTask = state.repeatableTasks.find((task) => cleanText(task.projectId, "") === cleanText(payload.projectId, ""));
         if (masterTask) {
-          createWeeklyRepeatableCopy(masterTask, day, slot);
+          createWeeklyRepeatableCopy(masterTask, date, slot);
         }
         state.activeWeeklyDrag = null;
         return;
       }
 
       if (payload.kind === "weekly-move") {
-        moveTask(payload.taskId, day, slot);
+        moveTask(payload.taskId, cleanText(slotEl.dataset.date, ""), slot);
       }
 
       state.activeWeeklyDrag = null;
@@ -1634,13 +2067,14 @@ function initPlannerScreen() {
     renderTaskPool();
     renderWeekGrid();
     consumeStagedQueue();
-    elements.status.textContent = `Planning week of ${state.planner.weekStart}.`;
+    elements.status.textContent = `Planning week of ${state.planner.weekStartDate}.`;
   }
 
   window.loadPlanner = loadPlanner;
   window.savePlanner = savePlanner;
   window.assignTask = assignTask;
   window.removeTask = removeTask;
+  window.shiftPlannerWeek = shiftPlannerWeek;
 
   attachEvents();
   initialize().catch((error) => {
