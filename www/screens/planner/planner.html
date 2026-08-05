@@ -10,13 +10,13 @@
 
   <section class="planner-top-panels" aria-label="Task assignment panels">
     <div id="planner-top-columns">
-      <section id="curated-left" class="planner-pool" aria-label="Curated tasks left column">
+      <section id="curated-left" class="planner-pool curated-drop-zone" aria-label="Curated tasks left column">
         <h2>Curated Tasks</h2>
         <div id="curated-warning"></div>
         <div id="plannerTaskPoolLeft" class="planner-task-pool" data-curated-column="left" aria-live="polite"></div>
       </section>
 
-      <section id="curated-middle" class="planner-pool" aria-label="Curated tasks middle column">
+      <section id="curated-middle" class="planner-pool curated-drop-zone" aria-label="Curated tasks middle column">
         <h2>Curated Tasks</h2>
         <div id="plannerTaskPoolMiddle" class="planner-task-pool" data-curated-column="middle" aria-live="polite"></div>
       </section>
@@ -61,8 +61,16 @@
   </section>
 
   <section class="planner-week" aria-label="Weekly planner grid">
-    <h2>Weekly Schedule</h2>
-    <div id="plannerWeekGrid" class="planner-week-grid" aria-live="polite"></div>
+    <div class="weekly-week-nav" aria-label="Weekly navigation">
+        <button type="button" id="week-prev" aria-label="Previous week">◀</button>
+      <h2 id="weekly-week-label">Weekly Schedule</h2>
+        <button type="button" id="week-next" aria-label="Next week">▶</button>
+    </div>
+    <div id="weekly-scroll-container">
+      <div class="weekly-week-block">
+        <div id="plannerWeekGrid" class="planner-week-grid weekly-week-grid" aria-live="polite"></div>
+      </div>
+    </div>
   </section>
 
 </section>
