@@ -528,6 +528,16 @@
   flex: 0 0 auto;
 }
 
+.weekly-week-nav .weekly-week-today {
+  width: auto;
+  min-width: 4.25rem;
+  height: 2rem;
+  padding: 0 0.75rem;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
 #weekly-scroll-container {
   width: 100%;
   overflow-x: auto;
@@ -789,6 +799,29 @@
   align-items: center;
   gap: 0.3rem;
   flex: 0 0 auto;
+}
+
+.slot-task-links-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.78rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.slot-task-links-button:hover,
+.slot-task-links-button:focus-visible {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  outline: none;
 }
 
 .slot-task-week-picker {

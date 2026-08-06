@@ -1,4 +1,4 @@
-const BUILD_VERSION = "20260805-16";
+const BUILD_VERSION = "20260805-22";
 
 const routes = {
   dashboard: {
