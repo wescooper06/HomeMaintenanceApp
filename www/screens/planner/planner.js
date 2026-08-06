@@ -43,6 +43,7 @@ function initPlannerScreen() {
     miniCalendar: document.getElementById("mini-calendar"),
     curatedWarning: document.getElementById("curated-warning"),
     weekPrev: document.getElementById("week-prev"),
+    weekToday: document.getElementById("week-today"),
     weekNext: document.getElementById("week-next"),
     weekRangeLabel: document.getElementById("weekly-week-label"),
     weekScrollContainer: document.getElementById("weekly-scroll-container"),
@@ -54,7 +55,7 @@ function initPlannerScreen() {
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -75,6 +76,7 @@ function initPlannerScreen() {
     weatherLastFetchedAt: 0,
     weatherFetchPromise: null,
     weatherModalOpenDate: "",
+    linksModalRequestId: 0,
     weekScrollLocked: false,
   };
 
@@ -100,6 +102,27 @@ function initPlannerScreen() {
     return true;
   }
 
+  function goToCurrentWeek() {
+    if (!state.planner) {
+      return false;
+    }
+
+    const todayKey = toDateKey(new Date());
+    const currentWeekStart = getWeekStartISO(todayKey);
+    if (!currentWeekStart) {
+      return false;
+    }
+
+    state.planner.weekStartDate = currentWeekStart;
+    state.selectedCalendarDate = todayKey;
+    state.calendarMonthDate = toMonthStartDateKey(todayKey);
+    savePlanner();
+    renderTaskPool();
+    renderWeekGrid();
+    elements.status.textContent = `Planning week of ${state.planner.weekStartDate}.`;
+    return true;
+  }
+
   function cleanText(value, fallback) {
     const text = value == null ? "" : String(value).trim();
     return text || fallback;
@@ -117,6 +140,67 @@ function initPlannerScreen() {
 
     const num = Number(String(text).replace(/[$,]/g, ""));
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function parseResourceLinks(value) {
+    return parseResourceLinkEntries(value).map((entry) => entry.url);
+  }
+
+  function parseResourceLinkEntries(value) {
+    const toUrlString = (entry) => {
+      if (entry && typeof entry === "object") {
+        return cleanText(entry.url || entry.href || entry.link, "");
+      }
+
+      return cleanText(entry, "");
+    };
+
+    const toTitleString = (entry) => {
+      if (!entry || typeof entry !== "object") {
+        return "";
+      }
+
+      return cleanText(entry.title || entry.name || entry.label, "");
+    };
+
+    const toEntry = (entry) => {
+      const url = toUrlString(entry);
+      if (!url) {
+        return null;
+      }
+
+      return {
+        url,
+        title: toTitleString(entry),
+      };
+    };
+
+    if (Array.isArray(value)) {
+      return value.map((entry) => toEntry(entry)).filter(Boolean);
+    }
+
+    const text = cleanText(value, "");
+    if (!text) {
+      return [];
+    }
+
+    if (text.startsWith("[") || text.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(text);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        const parsedLinks = list.map((entry) => toEntry(entry)).filter(Boolean);
+        if (parsedLinks.length) {
+          return parsedLinks;
+        }
+      } catch (error) {
+        // Fall through to comma-separated parsing.
+      }
+    }
+
+    return text
+      .split(",")
+      .map((entry) => toEntry(entry.trim()))
+      .filter(Boolean);
   }
 
   function toDateKey(dateValue) {
@@ -434,6 +518,7 @@ function initPlannerScreen() {
 
   function closeWeatherModal() {
     state.weatherModalOpenDate = "";
+    state.linksModalRequestId = 0;
     elements.weatherModal.hidden = true;
     elements.weatherModal.innerHTML = "";
   }
@@ -483,6 +568,186 @@ function initPlannerScreen() {
 
     state.weatherModalOpenDate = targetDate;
     renderWeatherModal(targetDate);
+  }
+
+  async function resolveLinkTitle(url) {
+    const safeUrl = cleanText(url, "");
+    if (!safeUrl) {
+      return "";
+    }
+
+    try {
+      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(safeUrl)}&format=json`;
+      const oembedResponse = await fetch(oembedUrl, { method: "GET" });
+      if (oembedResponse.ok) {
+        const payload = await oembedResponse.json();
+        const oembedTitle = cleanText(payload && payload.title, "");
+        if (oembedTitle) {
+          return oembedTitle;
+        }
+      }
+    } catch (error) {
+      // Fall through to direct page title fetch.
+    }
+
+    try {
+      const response = await fetch(safeUrl, { method: "GET" });
+      if (!response.ok) {
+        return safeUrl;
+      }
+
+      const html = await response.text();
+      const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      const resolved = cleanText(match && match[1], "");
+      return resolved || safeUrl;
+    } catch (error) {
+      return safeUrl;
+    }
+  }
+
+  function getProjectById(projectId) {
+    const targetId = cleanText(projectId, "");
+    if (!targetId) {
+      return null;
+    }
+
+    return state.allProjects.find((project) => cleanText(project.projectId, "") === targetId) || null;
+  }
+
+  function getProjectByTitle(title, sourceHint) {
+    const targetTitle = cleanText(title, "").toLowerCase();
+    if (!targetTitle) {
+      return null;
+    }
+
+    const normalizedSourceHint = cleanText(sourceHint, "");
+    const titleMatches = state.allProjects.filter((project) => cleanText(project.title, "").toLowerCase() === targetTitle);
+    if (!titleMatches.length) {
+      return null;
+    }
+
+    if (!normalizedSourceHint) {
+      return titleMatches[0] || null;
+    }
+
+    return titleMatches.find((project) => cleanText(project.source, "") === normalizedSourceHint) || titleMatches[0] || null;
+  }
+
+  function getTaskProject(task) {
+    const sourceId = parseWeeklySourceId(task)
+      || cleanText(task && task.projectId, "")
+      || cleanText(task && task.taskId, "");
+    const byId = getProjectById(sourceId);
+    if (byId) {
+      return byId;
+    }
+
+    const title = cleanText(task && task.title, "");
+    const sourceHint = normalizeSource(cleanText(task && task.source, ""));
+    return getProjectByTitle(title, sourceHint);
+  }
+
+  function getProjectFromTaskId(taskId, fallbackTitle, fallbackSource) {
+    const normalizedTaskId = cleanText(taskId, "");
+    if (!normalizedTaskId) {
+      return getProjectByTitle(fallbackTitle, normalizeSource(cleanText(fallbackSource, "")));
+    }
+
+    const scheduledTask = state.planner.tasks.find((item) => getSlotItemId(item) === normalizedTaskId);
+    if (scheduledTask) {
+      const projectFromSchedule = getTaskProject(scheduledTask);
+      if (projectFromSchedule) {
+        return projectFromSchedule;
+      }
+    }
+
+    const curatedTask = state.curatedTasks.find((item) => cleanText(item.taskId, "") === normalizedTaskId);
+    if (curatedTask) {
+      const curatedProjectId = cleanText(curatedTask.projectId, "");
+      if (curatedProjectId) {
+        const byCuratedId = getProjectById(curatedProjectId);
+        if (byCuratedId) {
+          return byCuratedId;
+        }
+      }
+
+      const byCuratedTitle = getProjectByTitle(curatedTask.title, normalizeSource(cleanText(curatedTask.source, "")));
+      if (byCuratedTitle) {
+        return byCuratedTitle;
+      }
+    }
+
+    return getProjectByTitle(fallbackTitle, normalizeSource(cleanText(fallbackSource, "")));
+  }
+
+  async function openResourceLinksModal(project) {
+    const resourceLinkEntries = parseResourceLinkEntries((project && project.resourceLinkEntries) || (project && project.resourceLinks));
+    if (!resourceLinkEntries.length) {
+      elements.status.textContent = "No resource links available for this project.";
+      return;
+    }
+
+    state.weatherModalOpenDate = "";
+    const requestId = Date.now();
+    state.linksModalRequestId = requestId;
+
+    elements.weatherModal.innerHTML = `
+      <div class="weather-modal-card" role="dialog" aria-modal="true" aria-label="Resource Links">
+        <header class="weather-modal-header">
+          <div>
+            <h3 class="weather-modal-title">Resource Links</h3>
+            <p class="weather-modal-location">${escapeHtml(cleanText(project && project.title, "Project"))}</p>
+          </div>
+          <button type="button" class="weather-modal-close" data-action="links-close" aria-label="Close resource links modal">X</button>
+        </header>
+        <div class="weather-modal-body">
+          <div class="weather-modal-item">Loading links...</div>
+          <div class="weather-modal-actions">
+            <button type="button" data-action="links-close">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+    elements.weatherModal.hidden = false;
+
+    const resolvedTitles = await Promise.all(resourceLinkEntries.map((entry) => {
+      const staticTitle = cleanText(entry && entry.title, "");
+      if (staticTitle) {
+        return Promise.resolve(staticTitle);
+      }
+
+      return resolveLinkTitle(entry.url);
+    }));
+    if (state.linksModalRequestId !== requestId) {
+      return;
+    }
+
+    const linksHtml = resourceLinkEntries
+      .map((entry, index) => {
+        const link = cleanText(entry && entry.url, "");
+        const title = cleanText(resolvedTitles[index], link);
+        return `<div class="weather-modal-item"><a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a></div>`;
+      })
+      .join("");
+
+    elements.weatherModal.innerHTML = `
+      <div class="weather-modal-card" role="dialog" aria-modal="true" aria-label="Resource Links">
+        <header class="weather-modal-header">
+          <div>
+            <h3 class="weather-modal-title">Resource Links</h3>
+            <p class="weather-modal-location">${escapeHtml(cleanText(project && project.title, "Project"))}</p>
+          </div>
+          <button type="button" class="weather-modal-close" data-action="links-close" aria-label="Close resource links modal">X</button>
+        </header>
+        <div class="weather-modal-body">
+          ${linksHtml}
+          <div class="weather-modal-actions">
+            <button type="button" data-action="links-close">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+    elements.weatherModal.hidden = false;
   }
 
   function buildWeeklyTaskId(taskType, sourceId, dateKey) {
@@ -610,6 +875,7 @@ function initPlannerScreen() {
 
   function toProjectView(project) {
     const metadata = project.metadata || {};
+    const resourceLinkEntries = parseResourceLinkEntries(project.resourceLinks || metadata.resourceLinks);
     return {
       projectId: cleanText(project.id, "unknown"),
       title: cleanText(project.title, "Untitled Project"),
@@ -621,6 +887,8 @@ function initPlannerScreen() {
       recurrence: cleanText(firstDefined(metadata, ["recurrence", "frequency", "interval"]), ""),
       asset: cleanText(firstDefined(metadata, ["asset", "vehicle", "equipment", "assetname"]), ""),
       mileage: cleanText(firstDefined(metadata, ["mileage", "odometer"]), ""),
+      resourceLinks: resourceLinkEntries.map((entry) => entry.url),
+      resourceLinkEntries,
     };
   }
 
@@ -1354,11 +1622,29 @@ function initPlannerScreen() {
     return cleanText(task && (task.taskType || task.type), "curated");
   }
 
-  function renderWeeklyTaskCard(task, dateKey, slot) {
+  function renderWeeklyTaskCard(task, dateKey, slot, project) {
     const taskType = getWeeklyTaskType(task);
     const taskId = getSlotItemId(task);
     const taskCompleted = Boolean(task.completed);
     const title = cleanText(task.title, "Untitled Task");
+    const projectLinkEntries = parseResourceLinkEntries(project && (project.resourceLinkEntries || project.resourceLinks));
+    const hasResourceLinks = projectLinkEntries.length > 0;
+    const resourceProjectId = cleanText(project && project.projectId, "")
+      || cleanText(task && task.projectId, "")
+      || cleanText(parseWeeklySourceId(task), "");
+    const resourceLinksButton = taskType !== "adhoc" && hasResourceLinks
+      ? `
+      <button
+        type="button"
+        class="slot-task-links-button"
+        data-action="open-resource-links"
+        data-task-id="${escapeHtml(taskId)}"
+        data-project-id="${escapeHtml(resourceProjectId)}"
+        aria-label="Open resource links"
+        title="Resource Links"
+      >🔗</button>
+    `
+      : "";
     const weekPickerMenu = `
       <div class="slot-task-week-picker">
         <button type="button" class="slot-task-week-button" data-action="task-week-picker" aria-label="Move task to week" title="Move task to week">
@@ -1386,6 +1672,7 @@ function initPlannerScreen() {
               <div class="slot-task-header">
                 <div class="slot-task-title">${title}</div>
                 <div class="slot-task-header-actions">
+                  ${resourceLinksButton}
                   ${weekPickerMenu}
                   <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
                   <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
@@ -1436,6 +1723,7 @@ function initPlannerScreen() {
             <div class="slot-task-header">
               <div class="slot-task-title">${title}</div>
               <div class="slot-task-header-actions">
+                ${resourceLinksButton}
                 ${weekPickerMenu}
                 <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
                 <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
@@ -1584,7 +1872,7 @@ function initPlannerScreen() {
             const tasks = state.planner.tasks.filter((item) => cleanText(item.date, "") === day.date && cleanText(item.timeSlot, "") === slot);
             const taskHtml = tasks.length
               ? tasks
-                  .map((task) => renderWeeklyTaskCard(task, day.date, slot))
+                  .map((task) => renderWeeklyTaskCard(task, day.date, slot, getTaskProject(task)))
                   .join("")
               : '<div class="slot-empty">No tasks assigned</div>';
             const slotLabel = `${slot.charAt(0).toUpperCase()}${slot.slice(1)}`;
@@ -2110,6 +2398,10 @@ function initPlannerScreen() {
       shiftPlannerWeek(-7);
     }, { signal: controller.signal });
 
+    elements.weekToday.addEventListener("click", () => {
+      goToCurrentWeek();
+    }, { signal: controller.signal });
+
     elements.weekNext.addEventListener("click", () => {
       shiftPlannerWeek(7);
     }, { signal: controller.signal });
@@ -2131,7 +2423,7 @@ function initPlannerScreen() {
     }, { passive: false, signal: controller.signal });
 
     elements.weatherModal.addEventListener("click", (event) => {
-      const closeButton = event.target.closest("button[data-action='weather-close']");
+      const closeButton = event.target.closest("button[data-action='weather-close'], button[data-action='links-close']");
       if (closeButton || event.target === elements.weatherModal) {
         closeWeatherModal();
       }
@@ -2182,6 +2474,20 @@ function initPlannerScreen() {
         if (action === "task-week-shift") {
           closeWeekMenus();
           shiftTaskWeek(taskId, parseNumber(actionButton.dataset.weekOffset, 0));
+          return;
+        }
+
+        if (action === "open-resource-links") {
+          closeWeekMenus();
+          const projectId = cleanText(actionButton.dataset.projectId, "");
+          const taskIdForLinks = cleanText(actionButton.dataset.taskId, "") || taskId;
+          const project = getProjectById(projectId)
+            || getProjectFromTaskId(taskIdForLinks, cleanText(slotTask.querySelector(".slot-task-title") && slotTask.querySelector(".slot-task-title").textContent, ""), cleanText(slotTask.dataset.taskType, ""));
+          if (project) {
+            openResourceLinksModal(project);
+          } else {
+            elements.status.textContent = "Unable to locate project resource links.";
+          }
           return;
         }
 

@@ -158,8 +158,22 @@
   }
 
   function toLinks(value) {
+    const toLinkEntry = (entry) => {
+      if (entry && typeof entry === "object") {
+        const url = cleanString(entry.url || entry.href || entry.link);
+        if (!url) {
+          return "";
+        }
+
+        const title = cleanString(entry.title || entry.name || entry.label);
+        return title ? { url, title } : { url };
+      }
+
+      return cleanString(entry);
+    };
+
     if (Array.isArray(value)) {
-      return value.map((item) => cleanString(item)).filter(Boolean);
+      return value.map((item) => toLinkEntry(item)).filter(Boolean);
     }
 
     const text = cleanString(value);
@@ -167,10 +181,23 @@
       return [];
     }
 
+    if (text.startsWith("[") || text.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(text);
+        const list = Array.isArray(parsed) ? parsed : [parsed];
+        const parsedLinks = list.map((item) => toLinkEntry(item)).filter(Boolean);
+        if (parsedLinks.length) {
+          return parsedLinks;
+        }
+      } catch (error) {
+        // Fall through to comma-separated parsing.
+      }
+    }
+
     return text
-      .split(/[\n,;|]+/g)
+      .split(",")
       .map((item) => item.trim())
-      .filter(Boolean);
+      .filter((item) => item.length > 0);
   }
 
   function buildNormalizedRowMap(row) {
@@ -324,6 +351,7 @@
       title,
       category: cleanString(categorySelected.value) || "uncategorized",
       state: cleanString(stateSelected.value) || "unknown",
+      resourceLinks: toLinks(metadata.resourceLinks),
       metadata,
     };
   }

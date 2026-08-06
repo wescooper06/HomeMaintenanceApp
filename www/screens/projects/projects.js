@@ -523,6 +523,40 @@ function initProjectsScreen() {
     }
 
     const value = (project.metadata || {})[field.key];
+    if (field.key === "resourceLinks") {
+      const toUrlString = (entry) => {
+        if (entry && typeof entry === "object") {
+          return cleanText(entry.url || entry.href || entry.link, "");
+        }
+
+        return cleanText(entry, "");
+      };
+
+      if (Array.isArray(value)) {
+        return value.map((item) => toUrlString(item)).filter(Boolean).join("\n");
+      }
+
+      const textValue = cleanText(value, "");
+      if (textValue.startsWith("[") || textValue.startsWith("{")) {
+        try {
+          const parsed = JSON.parse(textValue);
+          const list = Array.isArray(parsed) ? parsed : [parsed];
+          const parsedLinks = list.map((item) => toUrlString(item)).filter(Boolean);
+          if (parsedLinks.length) {
+            return parsedLinks.join("\n");
+          }
+        } catch (error) {
+          // Fall through to comma-separated parsing.
+        }
+      }
+
+      return textValue
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+        .join("\n");
+    }
+
     if (Array.isArray(value)) {
       return value.join("\n");
     }
@@ -1385,10 +1419,11 @@ function initProjectsScreen() {
       }
 
       if (key === "resourceLinks") {
-        parsed = raw
-          .split(/[\n,;|]+/g)
+        const lines = raw
+          .split("\n")
           .map((item) => item.trim())
-          .filter(Boolean);
+          .filter((item) => item.length > 0);
+        parsed = lines.join(", ");
       }
 
       if (target === "core") {
