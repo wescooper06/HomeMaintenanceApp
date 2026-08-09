@@ -49,13 +49,14 @@ function initPlannerScreen() {
     weekScrollContainer: document.getElementById("weekly-scroll-container"),
     weekGrid: document.getElementById("plannerWeekGrid"),
     weatherModal: document.getElementById("weather-modal"),
+    reminderModal: document.getElementById("reminder-modal"),
     adhocTitle: document.getElementById("adhocTaskTitle"),
     adhocDay: document.getElementById("adhocTaskDay"),
     adhocSlot: document.getElementById("adhocTaskSlot"),
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -198,7 +199,7 @@ function initPlannerScreen() {
     }
 
     return text
-      .split(",")
+      .split(/[\n,]+/g)
       .map((entry) => toEntry(entry.trim()))
       .filter(Boolean);
   }
@@ -570,37 +571,210 @@ function initPlannerScreen() {
     renderWeatherModal(targetDate);
   }
 
-  async function resolveLinkTitle(url) {
+  function getYouTubeVideoId(url) {
     const safeUrl = cleanText(url, "");
     if (!safeUrl) {
       return "";
     }
 
     try {
-      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(safeUrl)}&format=json`;
-      const oembedResponse = await fetch(oembedUrl, { method: "GET" });
-      if (oembedResponse.ok) {
-        const payload = await oembedResponse.json();
-        const oembedTitle = cleanText(payload && payload.title, "");
-        if (oembedTitle) {
-          return oembedTitle;
+      const parsed = new URL(safeUrl);
+      const host = cleanText(parsed.hostname, "").toLowerCase();
+      const pathname = cleanText(parsed.pathname, "");
+
+      if (host.includes("youtu.be")) {
+        const firstSegment = pathname.split("/").filter(Boolean)[0] || "";
+        return cleanText(firstSegment, "");
+      }
+
+      if (host.includes("youtube.com")) {
+        const fromQuery = cleanText(parsed.searchParams.get("v"), "");
+        if (fromQuery) {
+          return fromQuery;
+        }
+
+        const segments = pathname.split("/").filter(Boolean);
+        const shortsIndex = segments.findIndex((segment) => segment === "shorts");
+        if (shortsIndex >= 0 && segments[shortsIndex + 1]) {
+          return cleanText(segments[shortsIndex + 1], "");
+        }
+
+        const embedIndex = segments.findIndex((segment) => segment === "embed");
+        if (embedIndex >= 0 && segments[embedIndex + 1]) {
+          return cleanText(segments[embedIndex + 1], "");
         }
       }
     } catch (error) {
-      // Fall through to direct page title fetch.
+      return "";
+    }
+
+    return "";
+  }
+
+  function getYouTubeCanonicalUrl(url) {
+    const safeUrl = cleanText(url, "");
+    const videoId = getYouTubeVideoId(safeUrl);
+    if (!videoId) {
+      return safeUrl;
+    }
+
+    return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  }
+
+  function fetchJsonp(url, timeoutMs) {
+    const timeout = parseNumber(timeoutMs, 5000);
+    return new Promise((resolve, reject) => {
+      const callbackName = `hmJsonp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+      const script = document.createElement("script");
+      const separator = url.includes("?") ? "&" : "?";
+      let timeoutHandle = null;
+
+      const cleanup = () => {
+        if (timeoutHandle) {
+          window.clearTimeout(timeoutHandle);
+          timeoutHandle = null;
+        }
+
+        if (script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+
+        try {
+          delete window[callbackName];
+        } catch (error) {
+          window[callbackName] = undefined;
+        }
+      };
+
+      window[callbackName] = (payload) => {
+        cleanup();
+        resolve(payload || {});
+      };
+
+      script.onerror = () => {
+        cleanup();
+        reject(new Error("JSONP request failed"));
+      };
+
+      timeoutHandle = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("JSONP request timed out"));
+      }, timeout);
+
+      script.src = `${url}${separator}callback=${encodeURIComponent(callbackName)}`;
+      document.body.appendChild(script);
+    });
+  }
+
+  async function fetchTitleFromOembed(oembedEndpoint, targetUrl) {
+    const endpoint = `${oembedEndpoint}?url=${encodeURIComponent(targetUrl)}&format=json`;
+    const response = await fetch(endpoint, { method: "GET" });
+    if (!response.ok) {
+      return "";
+    }
+
+    const payload = await response.json();
+    return cleanText(payload && payload.title, "");
+  }
+
+  async function fetchTitleFromNoembed(targetUrl) {
+    const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(targetUrl)}`;
+    const response = await fetch(endpoint, { method: "GET" });
+    if (!response.ok) {
+      return "";
+    }
+
+    const payload = await response.json();
+    return cleanText(payload && payload.title, "");
+  }
+
+  async function fetchTitleFromOembedViaProxy(targetUrl) {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(targetUrl)}&format=json`;
+    const proxyUrl = `https://r.jina.ai/http://${oembedUrl.replace(/^https?:\/\//i, "")}`;
+    const response = await fetch(proxyUrl, { method: "GET" });
+    if (!response.ok) {
+      return "";
+    }
+
+    const payloadText = await response.text();
+    const match = payloadText.match(/"title"\s*:\s*"([^"]+)"/i);
+    return cleanText(match && match[1], "");
+  }
+
+  async function resolveLinkTitle(url) {
+    const safeUrl = cleanText(url, "");
+    if (!safeUrl) {
+      return "";
+    }
+
+    const canonicalUrl = getYouTubeCanonicalUrl(safeUrl);
+    const isYouTube = Boolean(getYouTubeVideoId(canonicalUrl));
+
+    if (isYouTube) {
+      try {
+        const noembedTitle = await fetchTitleFromNoembed(canonicalUrl);
+        if (noembedTitle) {
+          return noembedTitle;
+        }
+      } catch (error) {
+        // Continue to other resolvers.
+      }
+
+      try {
+        const payload = await fetchJsonp(`https://noembed.com/embed?url=${encodeURIComponent(canonicalUrl)}`, 6000);
+        const jsonpTitle = cleanText(payload && payload.title, "");
+        if (jsonpTitle) {
+          return jsonpTitle;
+        }
+      } catch (error) {
+        // Continue to other resolvers.
+      }
+    }
+
+    const oembedEndpoints = [
+      "https://www.youtube.com/oembed",
+      "https://www.youtube-nocookie.com/oembed",
+      "https://noembed.com/embed",
+    ];
+
+    for (let i = 0; i < oembedEndpoints.length; i += 1) {
+      try {
+        const title = await fetchTitleFromOembed(oembedEndpoints[i], canonicalUrl);
+        if (title) {
+          return title;
+        }
+      } catch (error) {
+        // Try next endpoint.
+      }
+    }
+
+    if (isYouTube) {
+      try {
+        const proxyTitle = await fetchTitleFromOembedViaProxy(canonicalUrl);
+        if (proxyTitle) {
+          return proxyTitle;
+        }
+      } catch (error) {
+        // Continue to direct fetch.
+      }
     }
 
     try {
-      const response = await fetch(safeUrl, { method: "GET" });
+      const response = await fetch(canonicalUrl, { method: "GET" });
       if (!response.ok) {
         return safeUrl;
       }
 
       const html = await response.text();
       const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-      const resolved = cleanText(match && match[1], "");
+      const resolved = cleanText(match && match[1], "").replace(/\s*-\s*YouTube\s*$/i, "");
       return resolved || safeUrl;
     } catch (error) {
+      const youtubeId = getYouTubeVideoId(canonicalUrl);
+      if (youtubeId) {
+        return `YouTube Video ${youtubeId}`;
+      }
+
       return safeUrl;
     }
   }
@@ -802,6 +976,8 @@ function initPlannerScreen() {
       return null;
     }
 
+    const reminderSendAt = cleanText(task.reminder && task.reminder.sendAt, "");
+
     return {
       id,
       taskId: id,
@@ -817,6 +993,10 @@ function initPlannerScreen() {
       recurrence: cleanText(task.recurrence, ""),
       projectId: cleanText(task.projectId, ""),
       priority: parseNumber(task.priority, null),
+      reminder: {
+        active: Boolean(task.reminder && task.reminder.active && reminderSendAt),
+        ...(reminderSendAt ? { sendAt: reminderSendAt } : {}),
+      },
     };
   }
 
@@ -1622,6 +1802,210 @@ function initPlannerScreen() {
     return cleanText(task && (task.taskType || task.type), "curated");
   }
 
+  function formatReminderTime(sendAt) {
+    const date = sendAt instanceof Date ? sendAt : new Date(sendAt);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+
+    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+
+  function showReminderConfirmation(taskId, message) {
+    const card = Array.from(elements.weekGrid.querySelectorAll(".slot-task[data-task-id]"))
+      .find((item) => cleanText(item.dataset.taskId, "") === cleanText(taskId, ""));
+    const confirmation = card && card.querySelector("[data-role='reminder-confirmation']");
+    if (!confirmation) {
+      return;
+    }
+
+    confirmation.textContent = cleanText(message, "");
+    confirmation.hidden = false;
+    window.setTimeout(() => {
+      if (confirmation.isConnected) {
+        confirmation.hidden = true;
+        confirmation.textContent = "";
+      }
+    }, 3000);
+  }
+
+  function getReminderEndpoint(action) {
+    const baseUrl = cleanText(window.APP_CONFIG && window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL, "");
+    if (!baseUrl) {
+      throw new Error("Google Apps Script reminder endpoint is not configured.");
+    }
+
+    const separator = baseUrl.includes("?") ? "&" : "?";
+    return `${baseUrl}${separator}action=${encodeURIComponent(action)}`;
+  }
+
+  async function postReminderAction(action, payload) {
+    const response = await fetch(getReminderEndpoint(action), {
+      method: "POST",
+      body: JSON.stringify({ action, ...payload }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Reminder request failed (${response.status}).`);
+    }
+
+    const result = await response.json().catch(() => ({ ok: true }));
+    if (result.ok === false) {
+      throw new Error(cleanText(result.error, "Reminder request failed."));
+    }
+
+    return result;
+  }
+
+  async function sendReminder(task, sendAt) {
+    const config = window.APP_CONFIG || {};
+    const phoneNumber = cleanText(config.USER_PHONE_NUMBER, "");
+    const smsGateway = cleanText(config.USER_SMS_GATEWAY, "");
+    if (!phoneNumber || !smsGateway) {
+      throw new Error("Set USER_PHONE_NUMBER and USER_SMS_GATEWAY in app-config.js first.");
+    }
+
+    const payload = {
+      phoneNumber,
+      smsGateway,
+      message: `Reminder: ${task.title}`,
+      sendAt: sendAt.toISOString(),
+      taskId: task.id,
+    };
+
+    await postReminderAction("sendReminder", payload);
+    task.reminder = { active: true, sendAt: payload.sendAt };
+    savePlanner();
+    renderWeekGrid();
+    showReminderConfirmation(task.id, `Reminder set for ${formatReminderTime(sendAt)}`);
+  }
+
+  async function resetReminder(task, newSendAt) {
+    const config = window.APP_CONFIG || {};
+    const payload = {
+      phoneNumber: cleanText(config.USER_PHONE_NUMBER, ""),
+      smsGateway: cleanText(config.USER_SMS_GATEWAY, ""),
+      message: `Reminder: ${task.title}`,
+      taskId: task.id,
+      newSendAt: newSendAt.toISOString(),
+    };
+
+    await postReminderAction("resetReminder", payload);
+    task.reminder = { active: true, sendAt: payload.newSendAt };
+    savePlanner();
+    renderWeekGrid();
+    showReminderConfirmation(task.id, `Reminder updated to ${formatReminderTime(newSendAt)}`);
+  }
+
+  async function deleteReminder(task) {
+    await postReminderAction("deleteReminder", { taskId: task.id });
+    task.reminder = { active: false };
+    savePlanner();
+    renderWeekGrid();
+    showReminderConfirmation(task.id, "Reminder deleted");
+  }
+
+  function closeReminderModal() {
+    elements.reminderModal.hidden = true;
+    elements.reminderModal.innerHTML = "";
+  }
+
+  function openReminderModal(task) {
+    const match = findWeeklyTaskById(task && task.id);
+    const currentTask = match && match.item;
+    if (!currentTask) {
+      elements.status.textContent = "Unable to locate that Planner task.";
+      return;
+    }
+
+    const hasReminder = Boolean(currentTask.reminder && currentTask.reminder.active && currentTask.reminder.sendAt);
+    const currentTime = hasReminder ? new Date(currentTask.reminder.sendAt) : null;
+    const defaultCustomTime = currentTime && !Number.isNaN(currentTime.getTime())
+      ? `${String(currentTime.getHours()).padStart(2, "0")}:${String(currentTime.getMinutes()).padStart(2, "0")}`
+      : "09:00";
+
+    elements.reminderModal.innerHTML = `
+      <div class="reminder-modal-card" role="dialog" aria-modal="true" aria-labelledby="reminder-modal-title">
+        <div class="reminder-modal-header">
+          <div>
+            <h2 id="reminder-modal-title">Send Reminder</h2>
+            <p>${escapeHtml(currentTask.title)} - ${escapeHtml(formatDateLabel(currentTask.date))}</p>
+          </div>
+          <button type="button" data-action="reminder-cancel" aria-label="Close reminder dialog" title="Close">X</button>
+        </div>
+        <form class="reminder-form">
+          <label><input type="radio" name="reminder-time" value="10" checked /> 10 minutes before bucket time</label>
+          <label><input type="radio" name="reminder-time" value="30" /> 30 minutes before bucket time</label>
+          <label><input type="radio" name="reminder-time" value="60" /> 1 hour before bucket time</label>
+          <label class="reminder-custom-option">
+            <input type="radio" name="reminder-time" value="custom" />
+            <span>Custom time:</span>
+            <input type="time" name="custom-time" value="${defaultCustomTime}" />
+          </label>
+          <div class="reminder-error" role="alert" hidden></div>
+          <div class="reminder-modal-actions">
+            <button type="submit" class="primary" data-action="reminder-send">Send Reminder</button>
+            ${hasReminder ? '<button type="button" data-action="reminder-reset">Reset Reminder</button><button type="button" class="danger" data-action="reminder-delete">Delete Reminder</button>' : ""}
+            <button type="button" data-action="reminder-cancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+    `;
+    elements.reminderModal.hidden = false;
+
+    const form = elements.reminderModal.querySelector(".reminder-form");
+    const errorElement = elements.reminderModal.querySelector(".reminder-error");
+    const customTimeInput = form.querySelector("input[name='custom-time']");
+    const getSendAt = () => {
+      const selected = form.querySelector("input[name='reminder-time']:checked");
+      if (!selected) {
+        throw new Error("Choose a reminder time.");
+      }
+
+      if (selected.value === "custom") {
+        if (!customTimeInput.value) {
+          throw new Error("Choose a custom time.");
+        }
+        return new Date(`${currentTask.date}T${customTimeInput.value}:00`);
+      }
+
+      const bucketTimes = { morning: "08:00", afternoon: "13:00", evening: "18:00", "all day": "09:00", allday: "09:00" };
+      const bucketTime = bucketTimes[cleanText(currentTask.timeSlot, "morning").toLowerCase()] || "09:00";
+      const sendAt = new Date(`${currentTask.date}T${bucketTime}:00`);
+      sendAt.setMinutes(sendAt.getMinutes() - Number(selected.value));
+      return sendAt;
+    };
+    const runAction = async (action) => {
+      errorElement.hidden = true;
+      form.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+      try {
+        await action();
+        closeReminderModal();
+      } catch (error) {
+        errorElement.textContent = cleanText(error && error.message, "Unable to update reminder.");
+        errorElement.hidden = false;
+        form.querySelectorAll("button").forEach((button) => { button.disabled = false; });
+      }
+    };
+
+    customTimeInput.addEventListener("focus", () => {
+      form.querySelector("input[name='reminder-time'][value='custom']").checked = true;
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      runAction(() => sendReminder(currentTask, getSendAt()));
+    });
+    elements.reminderModal.querySelector("[data-action='reminder-reset']")?.addEventListener("click", () => {
+      runAction(() => resetReminder(currentTask, getSendAt()));
+    });
+    elements.reminderModal.querySelector("[data-action='reminder-delete']")?.addEventListener("click", () => {
+      runAction(() => deleteReminder(currentTask));
+    });
+    elements.reminderModal.querySelectorAll("[data-action='reminder-cancel']").forEach((button) => {
+      button.addEventListener("click", closeReminderModal);
+    });
+  }
+
   function renderWeeklyTaskCard(task, dateKey, slot, project) {
     const taskType = getWeeklyTaskType(task);
     const taskId = getSlotItemId(task);
@@ -1645,6 +2029,11 @@ function initPlannerScreen() {
       >🔗</button>
     `
       : "";
+    const reminderActive = Boolean(task.reminder && task.reminder.active && task.reminder.sendAt);
+    const reminderButton = `
+      <button type="button" class="slot-task-reminder-button ${reminderActive ? "is-active" : ""}" data-action="reminder-open" aria-label="${reminderActive ? "Edit active reminder" : "Set reminder"}" title="${reminderActive ? "Reminder active" : "Send Reminder"}">${reminderActive ? "&#128276;" : "&#128277;"}</button>
+    `;
+    const reminderConfirmation = '<div class="slot-task-reminder-confirmation" data-role="reminder-confirmation" aria-live="polite" hidden></div>';
     const weekPickerMenu = `
       <div class="slot-task-week-picker">
         <button type="button" class="slot-task-week-button" data-action="task-week-picker" aria-label="Move task to week" title="Move task to week">
@@ -1673,11 +2062,13 @@ function initPlannerScreen() {
                 <div class="slot-task-title">${title}</div>
                 <div class="slot-task-header-actions">
                   ${resourceLinksButton}
+                  ${reminderButton}
                   ${weekPickerMenu}
                   <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
                   <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
                 </div>
               </div>
+              ${reminderConfirmation}
             </div>
           </div>
         </div>
@@ -1724,11 +2115,13 @@ function initPlannerScreen() {
               <div class="slot-task-title">${title}</div>
               <div class="slot-task-header-actions">
                 ${resourceLinksButton}
+                ${reminderButton}
                 ${weekPickerMenu}
                 <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
                 <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
               </div>
             </div>
+            ${reminderConfirmation}
             ${checklistHtml}
           </div>
         </div>
@@ -2429,9 +2822,18 @@ function initPlannerScreen() {
       }
     }, { signal: controller.signal });
 
+    elements.reminderModal.addEventListener("click", (event) => {
+      if (event.target === elements.reminderModal) {
+        closeReminderModal();
+      }
+    }, { signal: controller.signal });
+
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !elements.weatherModal.hidden) {
         closeWeatherModal();
+      }
+      if (event.key === "Escape" && !elements.reminderModal.hidden) {
+        closeReminderModal();
       }
     }, { signal: controller.signal });
 
@@ -2456,6 +2858,15 @@ function initPlannerScreen() {
         const slot = cleanText(slotTask.dataset.slot, "");
         const checklistId = cleanText(actionButton.dataset.checklistId, "");
         const action = cleanText(actionButton.dataset.action, "");
+
+        if (action === "reminder-open") {
+          closeWeekMenus();
+          const match = findWeeklyTaskById(taskId);
+          if (match) {
+            openReminderModal(match.item);
+          }
+          return;
+        }
 
         if (action === "task-week-picker") {
           const picker = actionButton.closest(".slot-task-week-picker");
@@ -2813,6 +3224,10 @@ function initPlannerScreen() {
   window.assignTask = assignTask;
   window.removeTask = removeTask;
   window.shiftPlannerWeek = shiftPlannerWeek;
+  window.openReminderModal = openReminderModal;
+  window.sendReminder = sendReminder;
+  window.resetReminder = resetReminder;
+  window.deleteReminder = deleteReminder;
 
   attachEvents();
   initialize().catch((error) => {

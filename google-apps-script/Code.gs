@@ -582,7 +582,19 @@ function doPost(e) {
   try {
     const bodyText = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     const body = JSON.parse(bodyText);
-    const action = text(body.action || 'updateProject');
+    const action = text(body.action || (e && e.parameter && e.parameter.action) || 'updateProject');
+
+    if (action === 'sendReminder' || action === 'resetReminder' || action === 'deleteReminder') {
+      const reminderResult = handleReminderAction(action, body);
+      return jsonResponse({
+        ok: true,
+        requestId: requestId,
+        version: SCRIPT_VERSION,
+        action: action,
+        taskId: reminderResult.taskId,
+        sendAt: reminderResult.sendAt || '',
+      });
+    }
 
     const spreadsheetId = text(body.spreadsheetId);
     const tabName = text(body.tabName);
@@ -700,6 +712,128 @@ function doPost(e) {
     });
     return jsonResponse({ ok: false, requestId: requestId, version: SCRIPT_VERSION, error: String(error && error.message ? error.message : error) });
   }
+}
+
+function reminderPropertyKey(taskId, suffix) {
+  return 'reminder_' + text(taskId) + '_' + suffix;
+}
+
+function clearReminderMetadata(taskId) {
+  const props = PropertiesService.getScriptProperties();
+  ['phone', 'gateway', 'message', 'sendAt', 'triggerId'].forEach(function (suffix) {
+    props.deleteProperty(reminderPropertyKey(taskId, suffix));
+  });
+}
+
+function handleReminderAction(action, body) {
+  const taskId = text(body && body.taskId);
+  if (!taskId) {
+    throw new Error('Missing taskId for ' + action + ' action.');
+  }
+
+  if (action === 'deleteReminder') {
+    deleteReminderTriggerForTask(taskId);
+    clearReminderMetadata(taskId);
+    return { taskId: taskId };
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const sendAt = text(action === 'resetReminder' ? (body.newSendAt || body.sendAt) : body.sendAt);
+  const phoneNumber = text(body.phoneNumber || props.getProperty(reminderPropertyKey(taskId, 'phone')));
+  const smsGateway = text(body.smsGateway || props.getProperty(reminderPropertyKey(taskId, 'gateway')));
+  const message = text(body.message || props.getProperty(reminderPropertyKey(taskId, 'message')));
+  const sendDate = new Date(sendAt);
+
+  if (!phoneNumber || !smsGateway || !message || !sendAt) {
+    throw new Error('Reminder requires phoneNumber, smsGateway, message, and sendAt.');
+  }
+
+  if (isNaN(sendDate.getTime())) {
+    throw new Error('Invalid reminder sendAt timestamp.');
+  }
+
+  deleteReminderTriggerForTask(taskId);
+  props.setProperty(reminderPropertyKey(taskId, 'phone'), phoneNumber);
+  props.setProperty(reminderPropertyKey(taskId, 'gateway'), smsGateway);
+  props.setProperty(reminderPropertyKey(taskId, 'message'), message);
+  props.setProperty(reminderPropertyKey(taskId, 'sendAt'), sendAt);
+  createReminderTrigger(taskId, sendAt);
+
+  return { taskId: taskId, sendAt: sendAt };
+}
+
+function createReminderTrigger(taskId, sendAt) {
+  const trigger = ScriptApp.newTrigger('sendSms')
+    .timeBased()
+    .at(new Date(sendAt))
+    .create();
+  const props = PropertiesService.getScriptProperties();
+  const triggerId = trigger.getUniqueId();
+  props.setProperty(reminderPropertyKey(taskId, 'triggerId'), triggerId);
+  props.setProperty('reminder_trigger_' + triggerId, text(taskId));
+  return trigger;
+}
+
+function deleteReminderTriggerForTask(taskId) {
+  const props = PropertiesService.getScriptProperties();
+  const triggerId = text(props.getProperty(reminderPropertyKey(taskId, 'triggerId')));
+  if (triggerId) {
+    ScriptApp.getProjectTriggers().forEach(function (trigger) {
+      if (trigger.getHandlerFunction() === 'sendSms' && trigger.getUniqueId() === triggerId) {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    });
+    props.deleteProperty('reminder_trigger_' + triggerId);
+    props.deleteProperty(reminderPropertyKey(taskId, 'triggerId'));
+  }
+}
+
+function deleteReminderTrigger() {
+  const props = PropertiesService.getScriptProperties();
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === 'sendSms') {
+      props.deleteProperty('reminder_trigger_' + trigger.getUniqueId());
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+function authorizeReminderServices() {
+  return {
+    triggerCount: ScriptApp.getProjectTriggers().length,
+    remainingMailQuota: MailApp.getRemainingDailyQuota(),
+  };
+}
+
+function sendSms(e) {
+  const props = PropertiesService.getScriptProperties();
+  const triggerId = text(e && e.triggerUid);
+  let taskId = triggerId ? text(props.getProperty('reminder_trigger_' + triggerId)) : '';
+
+  if (!taskId) {
+    const phoneKey = props.getKeys().find(function (key) {
+      return key.indexOf('reminder_') === 0 && /_phone$/.test(key);
+    });
+    taskId = phoneKey ? phoneKey.substring('reminder_'.length, phoneKey.length - '_phone'.length) : '';
+  }
+
+  if (!taskId) {
+    return;
+  }
+
+  const phone = text(props.getProperty(reminderPropertyKey(taskId, 'phone')));
+  const gateway = text(props.getProperty(reminderPropertyKey(taskId, 'gateway')));
+  const message = text(props.getProperty(reminderPropertyKey(taskId, 'message')));
+  if (!phone || !gateway || !message) {
+    clearReminderMetadata(taskId);
+    return;
+  }
+
+  MailApp.sendEmail(phone + gateway, '', message);
+  if (triggerId) {
+    props.deleteProperty('reminder_trigger_' + triggerId);
+  }
+  clearReminderMetadata(taskId);
 }
 
 function createProject(spreadsheet, body) {

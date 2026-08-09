@@ -195,7 +195,7 @@
     }
 
     return text
-      .split(",")
+      .split(/[\n,]+/g)
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
   }
