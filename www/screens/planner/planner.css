@@ -1005,6 +1005,161 @@
   font: inherit;
 }
 
+.slot-task .slot-task-reminder-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.slot-task .slot-task-reminder-button.is-active {
+  border-color: #d97706;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.slot-task-reminder-confirmation {
+  color: #166534;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.slot-task-reminder-confirmation[hidden] {
+  display: none;
+}
+
+.reminder-modal-host {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.reminder-modal-host[hidden] {
+  display: none;
+}
+
+.reminder-modal-card {
+  width: min(470px, 96vw);
+  overflow: hidden;
+  border: 1px solid #c7d4e2;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.28);
+}
+
+.reminder-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 0.95rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fbff;
+}
+
+.reminder-modal-header h2,
+.reminder-modal-header p {
+  margin: 0;
+}
+
+.reminder-modal-header h2 {
+  font-size: 1.05rem;
+  color: #1e3a5f;
+}
+
+.reminder-modal-header p {
+  margin-top: 0.2rem;
+  color: #5b6b81;
+  font-size: 0.85rem;
+}
+
+.reminder-modal-header button {
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.reminder-form {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.95rem;
+}
+
+.reminder-form > label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #243b5c;
+  font-size: 0.9rem;
+}
+
+.reminder-custom-option input[type="time"] {
+  width: 8rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.reminder-error {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.82rem;
+}
+
+.reminder-error[hidden] {
+  display: none;
+}
+
+.reminder-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding-top: 0.2rem;
+}
+
+.reminder-modal-actions button {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #243b5c;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.reminder-modal-actions button.primary {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.reminder-modal-actions button.danger {
+  border-color: #dc2626;
+  color: #b91c1c;
+}
+
+.reminder-modal-actions button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .slot-checklist {
   margin-top: 0.35rem;
   border-top: 1px solid #dbe3ec;
