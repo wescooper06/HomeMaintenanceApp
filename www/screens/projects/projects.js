@@ -1890,6 +1890,8 @@ function initProjectsScreen() {
         asset: cleanText(project.asset, ""),
         mileage: cleanText(project.mileage, ""),
         removed: false,
+        removedFromTaskManager: false,
+        removedFromPlanner: false,
       };
       if (repeatableIndex >= 0) {
         repeatableOverrides[repeatableIndex] = {

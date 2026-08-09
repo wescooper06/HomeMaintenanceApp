@@ -1016,6 +1016,23 @@
   line-height: 1;
 }
 
+.slot-task .slot-task-series-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  color: #1d4ed8;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.slot-task.is-overridden {
+  border-style: dashed;
+  box-shadow: inset 3px 0 0 #d97706;
+}
+
 .slot-task .slot-task-reminder-button.is-active {
   border-color: #d97706;
   background: #fffbeb;
@@ -1158,6 +1175,146 @@
 .reminder-modal-actions button:disabled {
   cursor: wait;
   opacity: 0.6;
+}
+
+.series-modal-host {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.series-modal-host[hidden] {
+  display: none;
+}
+
+.series-modal-card {
+  width: min(500px, 96vw);
+  overflow: hidden;
+  border: 1px solid #c7d4e2;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.28);
+}
+
+.series-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 0.95rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fbff;
+}
+
+.series-modal-header h2,
+.series-modal-header p {
+  margin: 0;
+}
+
+.series-modal-header h2 {
+  font-size: 1.05rem;
+  color: #1e3a5f;
+}
+
+.series-modal-header p {
+  margin-top: 0.2rem;
+  color: #5b6b81;
+  font-size: 0.85rem;
+}
+
+.series-modal-header button {
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.series-form {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.95rem;
+}
+
+.series-form > label {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  align-items: center;
+  gap: 0.6rem;
+  color: #243b5c;
+  font-size: 0.9rem;
+}
+
+.series-form select {
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+}
+
+.series-form fieldset {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+}
+
+.series-form legend {
+  padding: 0 0.25rem;
+  color: #334155;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.series-form fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.86rem;
+}
+
+.series-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.series-modal-actions button {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #c7d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #243b5c;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.series-modal-actions button.primary {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.series-modal-actions button.danger {
+  border-color: #dc2626;
+  color: #b91c1c;
+}
+
+@media (max-width: 520px) {
+  .series-form > label {
+    grid-template-columns: 1fr;
+  }
 }
 
 .slot-checklist {

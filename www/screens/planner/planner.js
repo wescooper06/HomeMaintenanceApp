@@ -23,6 +23,9 @@ function initPlannerScreen() {
   ];
 
   const SLOT_ORDER = ["morning", "afternoon", "evening"];
+  const RECURRENCE_TYPES = ["weekly", "biweekly", "monthly", "quarterly", "yearly"];
+  const FULL_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const MONTH_WEEK_OPTIONS = ["1", "2", "3", "4", "last"];
 
   const WEATHER_LOCATION = {
     name: "Mirrormont, WA",
@@ -50,13 +53,14 @@ function initPlannerScreen() {
     weekGrid: document.getElementById("plannerWeekGrid"),
     weatherModal: document.getElementById("weather-modal"),
     reminderModal: document.getElementById("reminder-modal"),
+    seriesModal: document.getElementById("series-modal"),
     adhocTitle: document.getElementById("adhocTaskTitle"),
     adhocDay: document.getElementById("adhocTaskDay"),
     adhocSlot: document.getElementById("adhocTaskSlot"),
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.seriesModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -96,6 +100,7 @@ function initPlannerScreen() {
     state.planner.weekStartDate = addDaysToDateKey(state.planner.weekStartDate, days);
   state.selectedCalendarDate = state.planner.weekStartDate;
   state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
+  generateVisibleRecurringInstances();
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
@@ -117,6 +122,7 @@ function initPlannerScreen() {
     state.planner.weekStartDate = currentWeekStart;
     state.selectedCalendarDate = todayKey;
     state.calendarMonthDate = toMonthStartDateKey(todayKey);
+    generateVisibleRecurringInstances();
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
@@ -290,6 +296,7 @@ function initPlannerScreen() {
     state.planner.weekStartDate = weekStartDate;
     state.selectedCalendarDate = cleanText(selectedDateKey, clickedDate);
     state.calendarMonthDate = toMonthStartDateKey(clickedDate);
+    generateVisibleRecurringInstances();
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
@@ -971,6 +978,9 @@ function initPlannerScreen() {
     const date = cleanText(task.date, fallbackDate);
     const timeSlot = cleanText(task.timeSlot || task.slot, fallbackTimeSlot);
     const id = cleanText(task.id || task.taskId, buildWeeklyTaskId(taskType, task.projectId || task.taskId || task.id || "task", date));
+    const parentRepeatableId = taskType === "repeatable"
+      ? cleanText(task.parentRepeatableId || task.projectId || parseWeeklySourceId(task), "")
+      : cleanText(task.parentRepeatableId, "");
 
     if (!date || !SLOT_ORDER.includes(timeSlot) || !id) {
       return null;
@@ -983,6 +993,7 @@ function initPlannerScreen() {
       taskId: id,
       date,
       timeSlot,
+      bucket: timeSlot,
       taskType,
       type: taskType,
       title: cleanText(task.title, "Untitled Task"),
@@ -993,6 +1004,11 @@ function initPlannerScreen() {
       recurrence: cleanText(task.recurrence, ""),
       projectId: cleanText(task.projectId, ""),
       priority: parseNumber(task.priority, null),
+      parentRepeatableId,
+      occurrenceDate: cleanText(task.occurrenceDate, date),
+      overridden: Boolean(task.overridden),
+      deletedInstance: Boolean(task.deletedInstance),
+      metadata: task.metadata && typeof task.metadata === "object" ? { ...task.metadata } : {},
       reminder: {
         active: Boolean(task.reminder && task.reminder.active && reminderSendAt),
         ...(reminderSendAt ? { sendAt: reminderSendAt } : {}),
@@ -1087,6 +1103,217 @@ function initPlannerScreen() {
     localStorage.setItem(STORAGE_KEYS.repeatable, JSON.stringify(items));
   }
 
+  function normalizeRecurrence(value) {
+    const normalized = cleanText(value, "weekly").toLowerCase().replace(/[\s_-]+/g, "");
+    if (normalized === "biweekly" || normalized === "every2weeks" || normalized === "everyotherweek") return "biweekly";
+    if (normalized === "monthly" || normalized === "month") return "monthly";
+    if (normalized === "quarterly" || normalized === "quarter" || normalized === "every3months") return "quarterly";
+    if (normalized === "yearly" || normalized === "annual" || normalized === "annually") return "yearly";
+    return "weekly";
+  }
+
+  function getDayName(dateKey) {
+    const date = parseDateKey(dateKey);
+    return date ? FULL_DAY_NAMES[date.getDay()] : "Monday";
+  }
+
+  function getMonthWeekValue(dateKey) {
+    const date = parseDateKey(dateKey);
+    if (!date) {
+      return "1";
+    }
+
+    const dayOfMonth = date.getDate();
+    const occurrence = Math.floor((dayOfMonth - 1) / 7) + 1;
+    const nextSameWeekday = new Date(date.getFullYear(), date.getMonth(), dayOfMonth + 7);
+    if (nextSameWeekday.getMonth() !== date.getMonth()) {
+      return occurrence >= 5 ? "last" : String(occurrence);
+    }
+
+    return String(occurrence);
+  }
+
+  function normalizeMonthWeek(value, fallbackDate) {
+    const normalized = cleanText(value, "").toLowerCase();
+    if (normalized === "last") {
+      return "last";
+    }
+    if (["1", "2", "3", "4"].includes(normalized)) {
+      return normalized;
+    }
+    return getMonthWeekValue(fallbackDate);
+  }
+
+  function getMonthWeekLabel(value) {
+    const normalized = normalizeMonthWeek(value);
+    if (normalized === "1") return "1st";
+    if (normalized === "2") return "2nd";
+    if (normalized === "3") return "3rd";
+    if (normalized === "4") return "4th";
+    return "Last";
+  }
+
+  function getNthWeekdayOfMonth(year, monthIndex, weekdayIndex, monthWeek) {
+    const normalizedWeek = normalizeMonthWeek(monthWeek);
+    const firstOfMonth = new Date(year, monthIndex, 1);
+    const firstWeekdayOffset = (weekdayIndex - firstOfMonth.getDay() + 7) % 7;
+    const firstOccurrence = 1 + firstWeekdayOffset;
+
+    if (normalizedWeek === "last") {
+      const lastOfMonth = new Date(year, monthIndex + 1, 0);
+      const lastWeekdayOffset = (lastOfMonth.getDay() - weekdayIndex + 7) % 7;
+      return toDateKey(new Date(year, monthIndex, lastOfMonth.getDate() - lastWeekdayOffset));
+    }
+
+    const weekIndex = Math.max(1, parseInt(normalizedWeek, 10) || 1);
+    const dayOfMonth = firstOccurrence + ((weekIndex - 1) * 7);
+    const candidate = new Date(year, monthIndex, dayOfMonth);
+    if (candidate.getMonth() !== monthIndex) {
+      return "";
+    }
+
+    return toDateKey(candidate);
+  }
+
+  function alignDateToSeriesPattern(dateKey, recurrence, baseDay, monthWeek) {
+    const normalizedRecurrence = normalizeRecurrence(recurrence);
+    if (normalizedRecurrence === "weekly" || normalizedRecurrence === "biweekly") {
+      return alignDateToSeriesDay(dateKey, baseDay);
+    }
+
+    const date = parseDateKey(dateKey);
+    const weekdayIndex = FULL_DAY_NAMES.findIndex((day) => day.toLowerCase() === cleanText(baseDay, "Monday").toLowerCase());
+    if (!date || weekdayIndex < 0) {
+      return cleanText(dateKey, "");
+    }
+
+    return getNthWeekdayOfMonth(date.getFullYear(), date.getMonth(), weekdayIndex, monthWeek);
+  }
+
+  function alignDateToSeriesDay(dateKey, dayName) {
+    const weekStart = getWeekStartISO(parseDateKey(dateKey) || dateKey);
+    const targetIndex = Math.max(0, DAY_ORDER.findIndex((day) => day.label.toLowerCase() === cleanText(dayName, "Monday").slice(0, 3).toLowerCase()));
+    return addDaysToDateKey(weekStart, targetIndex);
+  }
+
+  function addRecurrenceInterval(startDateKey, recurrence, count, seriesRule) {
+    const start = parseDateKey(startDateKey);
+    if (!start) {
+      return "";
+    }
+
+    if (recurrence === "weekly" || recurrence === "biweekly") {
+      return addDaysToDateKey(startDateKey, count * (recurrence === "biweekly" ? 14 : 7));
+    }
+
+    const monthStep = recurrence === "monthly" ? 1 : recurrence === "quarterly" ? 3 : 12;
+    const target = new Date(start.getFullYear(), start.getMonth() + (count * monthStep), 1);
+    const weekdayIndex = FULL_DAY_NAMES.findIndex((day) => day.toLowerCase() === cleanText(seriesRule && seriesRule.baseDay, getDayName(startDateKey)).toLowerCase());
+    if (weekdayIndex < 0) {
+      return "";
+    }
+
+    return getNthWeekdayOfMonth(target.getFullYear(), target.getMonth(), weekdayIndex, seriesRule && seriesRule.monthWeek);
+  }
+
+  function getOccurrenceDatesInRange(master, rangeStart, rangeEnd) {
+    const startDate = cleanText(master && master.startDate, "");
+    if (!startDate || !parseDateKey(startDate)) {
+      return [];
+    }
+
+    const recurrence = normalizeRecurrence(master.recurrence);
+    const occurrences = [];
+    for (let index = 0; index < 10000; index += 1) {
+      const occurrenceDate = addRecurrenceInterval(startDate, recurrence, index, master);
+      if (!occurrenceDate || occurrenceDate > rangeEnd) {
+        break;
+      }
+      if (occurrenceDate >= rangeStart) {
+        occurrences.push(occurrenceDate);
+      }
+    }
+    return occurrences;
+  }
+
+  function persistRepeatableMaster(master) {
+    const projectId = cleanText(master && (master.id || master.projectId), "");
+    if (!projectId) {
+      return;
+    }
+
+    const existing = state.repeatableOverrideMap.get(projectId) || {};
+    const record = {
+      ...existing,
+      projectId,
+      id: projectId,
+      title: cleanText(master.title, existing.title || "Untitled Task"),
+      recurrence: normalizeRecurrence(master.recurrence),
+      baseDay: cleanText(master.baseDay, existing.baseDay || "Monday"),
+      monthWeek: normalizeMonthWeek(master.monthWeek, master.startDate || existing.startDate || existing.originalStartDate || ""),
+      baseBucket: cleanText(master.baseBucket, existing.baseBucket || "Morning"),
+      startDate: cleanText(master.startDate, existing.startDate || ""),
+      originalStartDate: cleanText(master.originalStartDate, existing.originalStartDate || master.startDate || ""),
+      active: master.active !== false,
+      removedFromPlanner: master.active === false,
+    };
+    state.repeatableOverrideMap.set(projectId, record);
+    saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+  }
+
+  function makeRecurringInstance(master, occurrenceDate) {
+    const parentRepeatableId = cleanText(master.id || master.projectId, "");
+    const id = `repeatable-${parentRepeatableId}-${occurrenceDate}`;
+    return toPlannerSlotItem({
+      id,
+      taskId: id,
+      parentRepeatableId,
+      occurrenceDate,
+      date: occurrenceDate,
+      timeSlot: cleanText(master.baseBucket, "Morning").toLowerCase(),
+      bucket: cleanText(master.baseBucket, "Morning").toLowerCase(),
+      projectId: parentRepeatableId,
+      title: cleanText(master.title, "Untitled Task"),
+      type: "repeatable",
+      taskType: "repeatable",
+      source: "repeating",
+      recurrence: normalizeRecurrence(master.recurrence),
+      overridden: false,
+      deletedInstance: false,
+      metadata: { generated: true },
+    });
+  }
+
+  function generateVisibleRecurringInstances() {
+    if (!state.planner || !Array.isArray(state.planner.tasks)) {
+      return false;
+    }
+
+    const visible = getVisibleWeekDateRange(state.planner.weekStartDate);
+    const rangeStart = visible[0] && visible[0].date;
+    const rangeEnd = visible[6] && visible[6].date;
+    if (!rangeStart || !rangeEnd) {
+      return false;
+    }
+
+    let changed = false;
+    state.repeatableTasks.filter((master) => master.active !== false && master.startDate).forEach((master) => {
+      getOccurrenceDatesInRange(master, rangeStart, rangeEnd).forEach((occurrenceDate) => {
+        const parentId = cleanText(master.id || master.projectId, "");
+        const existing = state.planner.tasks.find((item) => cleanText(item.parentRepeatableId, "") === parentId && cleanText(item.occurrenceDate, item.date) === occurrenceDate);
+        if (!existing) {
+          state.planner.tasks.push(makeRecurringInstance(master, occurrenceDate));
+          changed = true;
+        }
+      });
+    });
+
+    if (changed) {
+      savePlanner();
+    }
+    return changed;
+  }
+
   function normalizeChecklist(items) {
     if (!Array.isArray(items)) {
       return [];
@@ -1117,12 +1344,17 @@ function initPlannerScreen() {
   }
 
   function getWeekStartISO(dateValue) {
-    const d = new Date(dateValue);
+    const d = dateValue instanceof Date
+      ? new Date(dateValue.getTime())
+      : parseDateKey(dateValue);
+    if (!d) {
+      return toDateKey(new Date());
+    }
     d.setHours(0, 0, 0, 0);
     const day = d.getDay();
     const diff = day === 0 ? -6 : 1 - day;
     d.setDate(d.getDate() + diff);
-    return d.toISOString().slice(0, 10);
+    return toDateKey(d);
   }
 
   function loadCuratedTasks() {
@@ -1328,12 +1560,17 @@ function initPlannerScreen() {
       return false;
     }
 
-    const taskType = cleanText(existing.item.taskType || existing.item.type, "curated");
-    const sourceId = parseWeeklySourceId(existing.item) || cleanText(existing.item.projectId, "") || cleanText(existing.item.taskId, "");
     existing.item.date = targetDate;
     existing.item.timeSlot = toSlot;
-    existing.item.id = buildWeeklyTaskId(taskType, sourceId, targetDate);
-    existing.item.taskId = existing.item.id;
+    existing.item.bucket = toSlot;
+    if (cleanText(existing.item.parentRepeatableId, "")) {
+      existing.item.overridden = true;
+    } else {
+      const taskType = cleanText(existing.item.taskType || existing.item.type, "curated");
+      const sourceId = parseWeeklySourceId(existing.item) || cleanText(existing.item.projectId, "") || cleanText(existing.item.taskId, "");
+      existing.item.id = buildWeeklyTaskId(taskType, sourceId, targetDate);
+      existing.item.taskId = existing.item.id;
+    }
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
@@ -1353,14 +1590,18 @@ function initPlannerScreen() {
       return true;
     }
 
-    const taskType = cleanText(existing.item.taskType || existing.item.type, "curated");
-    const sourceId = parseWeeklySourceId(existing.item) || cleanText(existing.item.projectId, "") || cleanText(existing.item.taskId, "");
     const newDate = addDaysToDateKey(existing.item.date, weekOffset * 7);
     const newWeekStartDate = getWeekStartISO(parseDateKey(newDate) || newDate);
 
     existing.item.date = newDate;
-    existing.item.id = buildWeeklyTaskId(taskType, sourceId, newDate);
-    existing.item.taskId = existing.item.id;
+    if (cleanText(existing.item.parentRepeatableId, "")) {
+      existing.item.overridden = true;
+    } else {
+      const taskType = cleanText(existing.item.taskType || existing.item.type, "curated");
+      const sourceId = parseWeeklySourceId(existing.item) || cleanText(existing.item.projectId, "") || cleanText(existing.item.taskId, "");
+      existing.item.id = buildWeeklyTaskId(taskType, sourceId, newDate);
+      existing.item.taskId = existing.item.id;
+    }
     state.planner.weekStartDate = newWeekStartDate;
     state.selectedCalendarDate = newDate;
     state.calendarMonthDate = toMonthStartDateKey(newDate);
@@ -1392,7 +1633,11 @@ function initPlannerScreen() {
       return false;
     }
 
-    state.planner.tasks.splice(existing.index, 1);
+    if (cleanText(existing.item.parentRepeatableId, "")) {
+      existing.item.deletedInstance = true;
+    } else {
+      state.planner.tasks.splice(existing.index, 1);
+    }
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
@@ -1438,7 +1683,13 @@ function initPlannerScreen() {
 
   function removeWeeklyCopiesForRepeatable(projectId) {
     const before = state.planner.tasks.length;
-    state.planner.tasks = state.planner.tasks.filter((item) => cleanText(item.taskType || item.type, "curated") !== "repeatable" || parseWeeklySourceId(item) !== cleanText(projectId, ""));
+    state.planner.tasks = state.planner.tasks.filter((item) => {
+      if (cleanText(item.taskType || item.type, "curated") !== "repeatable") {
+        return true;
+      }
+      return cleanText(item.parentRepeatableId, "") !== cleanText(projectId, "")
+        && parseWeeklySourceId(item) !== cleanText(projectId, "");
+    });
     return state.planner.tasks.length !== before;
   }
 
@@ -1469,29 +1720,20 @@ function initPlannerScreen() {
       return false;
     }
 
-    const uniqueId = buildWeeklyTaskId("repeatable", masterTask.projectId, date);
+    masterTask.id = cleanText(masterTask.id || masterTask.projectId, "");
+    masterTask.recurrence = normalizeRecurrence(masterTask.recurrence);
+    masterTask.baseDay = getDayName(date);
+    masterTask.monthWeek = getMonthWeekValue(date);
+    masterTask.baseBucket = slot.charAt(0).toUpperCase() + slot.slice(1);
+    masterTask.startDate = date;
+    masterTask.originalStartDate = cleanText(masterTask.originalStartDate, date);
+    masterTask.active = true;
+    persistRepeatableMaster(masterTask);
 
-    const weeklyTask = toPlannerSlotItem({
-      id: uniqueId,
-      taskId: uniqueId,
-      date,
-      timeSlot: slot,
-      projectId: masterTask.projectId,
-      title: cleanText(masterTask.title, "Untitled Task"),
-      type: "repeatable",
-      taskType: "repeatable",
-      source: "repeating",
-      category: cleanText(masterTask.category, "uncategorized"),
-      state: cleanText(masterTask.state, "unknown"),
-      priority: null,
-      recurrence: "",
-      order: null,
-      checklist: [],
-      checklistOpen: false,
-      completed: false,
-    });
-
-    state.planner.tasks.push(weeklyTask);
+    const existing = state.planner.tasks.find((item) => cleanText(item.parentRepeatableId, "") === masterTask.id && cleanText(item.occurrenceDate, item.date) === date);
+    if (!existing) {
+      state.planner.tasks.push(makeRecurringInstance(masterTask, date));
+    }
     savePlanner();
     renderWeekGrid();
     elements.status.textContent = `Added repeatable task "${masterTask.title}" to ${date}.`;
@@ -1618,12 +1860,19 @@ function initPlannerScreen() {
           }
 
           return {
+            id: project.projectId,
             taskId: `repeatable-${project.projectId}`,
             projectId: project.projectId,
             title: project.title,
             source: "repeating",
             state: cleanText(project.state, "unknown"),
-            recurrence: cleanText(project.recurrence, "none").toLowerCase(),
+            recurrence: normalizeRecurrence(override.recurrence || project.recurrence),
+            baseDay: cleanText(override.baseDay, ""),
+            monthWeek: normalizeMonthWeek(override.monthWeek, override.startDate || override.originalStartDate || ""),
+            baseBucket: cleanText(override.baseBucket, ""),
+            startDate: cleanText(override.startDate, ""),
+            originalStartDate: cleanText(override.originalStartDate, override.startDate || ""),
+            active: override.active !== false && override.removedFromPlanner !== true,
             priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
             order: parseNumber(override.order, parseNumber(project.order, index + 1)),
             category: project.category,
@@ -2006,6 +2255,191 @@ function initPlannerScreen() {
     });
   }
 
+  function closeSeriesEditModal() {
+    elements.seriesModal.hidden = true;
+    elements.seriesModal.innerHTML = "";
+  }
+
+  function findRepeatableMaster(parentRepeatableId) {
+    const parentId = cleanText(parentRepeatableId, "");
+    return state.repeatableTasks.find((master) => cleanText(master.id || master.projectId, "") === parentId) || null;
+  }
+
+  function removeGeneratedSeriesInstances(parentRepeatableId, fromDate) {
+    const parentId = cleanText(parentRepeatableId, "");
+    const threshold = cleanText(fromDate, "");
+    state.planner.tasks = state.planner.tasks.filter((item) => {
+      if (cleanText(item.parentRepeatableId, "") !== parentId || item.overridden) {
+        return true;
+      }
+      return threshold && cleanText(item.occurrenceDate, item.date) < threshold;
+    });
+  }
+
+  function saveSeriesChanges(master, currentInstance, values) {
+    const parentId = cleanText(master.id || master.projectId, "");
+    const today = toDateKey(new Date());
+    const currentDate = cleanText(currentInstance.date, currentInstance.occurrenceDate);
+    let threshold = today;
+
+    master.recurrence = normalizeRecurrence(values.recurrence);
+    master.baseDay = cleanText(values.baseDay, master.baseDay || "Monday");
+    master.monthWeek = normalizeMonthWeek(values.monthWeek, currentDate);
+    master.baseBucket = cleanText(values.baseBucket, master.baseBucket || "Morning");
+    master.active = true;
+
+    if (values.applyScope === "this-future") {
+      master.startDate = alignDateToSeriesPattern(currentDate, master.recurrence, master.baseDay, master.monthWeek);
+      threshold = master.startDate;
+      removeGeneratedSeriesInstances(parentId, threshold);
+      currentInstance.occurrenceDate = master.startDate;
+      currentInstance.date = master.startDate;
+      currentInstance.timeSlot = master.baseBucket.toLowerCase();
+      currentInstance.bucket = currentInstance.timeSlot;
+      currentInstance.recurrence = master.recurrence;
+      currentInstance.overridden = false;
+      currentInstance.deletedInstance = false;
+      if (!state.planner.tasks.includes(currentInstance)) {
+        state.planner.tasks.push(currentInstance);
+      }
+    } else if (values.applyScope === "entire") {
+      threshold = "";
+      const originalStart = cleanText(master.originalStartDate, master.startDate || currentDate);
+      master.startDate = alignDateToSeriesPattern(originalStart, master.recurrence, master.baseDay, master.monthWeek);
+      master.originalStartDate = master.startDate;
+    } else {
+      const currentAnchor = alignDateToSeriesPattern(currentDate, master.recurrence, master.baseDay, master.monthWeek);
+      master.startDate = addRecurrenceInterval(currentAnchor, master.recurrence, 1, master);
+      threshold = master.startDate;
+    }
+
+    if (values.applyScope !== "this-future") {
+      removeGeneratedSeriesInstances(parentId, threshold);
+    }
+    persistRepeatableMaster(master);
+    generateVisibleRecurringInstances();
+    savePlanner();
+    renderRepeatablePanel();
+    renderWeekGrid();
+    elements.status.textContent = `Updated recurrence series for "${master.title}".`;
+  }
+
+  function deleteRepeatableSeries(master) {
+    const parentId = cleanText(master.id || master.projectId, "");
+    const override = state.repeatableOverrideMap.get(parentId) || {};
+    state.repeatableOverrideMap.set(parentId, {
+      ...override,
+      projectId: parentId,
+      id: parentId,
+      title: cleanText(master.title, "Untitled Task"),
+      recurrence: normalizeRecurrence(master.recurrence || override.recurrence),
+      baseDay: "",
+      monthWeek: "",
+      baseBucket: cleanText(master.baseBucket, override.baseBucket || "Morning"),
+      startDate: "",
+      originalStartDate: "",
+      active: false,
+      removedFromPlanner: false,
+    });
+    const masterIndex = state.repeatableTasks.findIndex((item) => cleanText(item.id || item.projectId, "") === parentId);
+    if (masterIndex >= 0) {
+      state.repeatableTasks[masterIndex] = {
+        ...state.repeatableTasks[masterIndex],
+        recurrence: normalizeRecurrence(master.recurrence || state.repeatableTasks[masterIndex].recurrence),
+        baseDay: "",
+        monthWeek: "",
+        startDate: "",
+        originalStartDate: "",
+        active: false,
+      };
+    }
+    state.planner.tasks = state.planner.tasks.filter((item) => cleanText(item.parentRepeatableId, "") !== parentId);
+    saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+    savePlanner();
+    renderRepeatablePanel();
+    renderWeekGrid();
+    elements.status.textContent = `Deleted recurrence series "${master.title}" and kept it in Repeatable Tasks.`;
+  }
+
+  function openSeriesEditModal(repeatableTask, currentInstance) {
+    const master = findRepeatableMaster(repeatableTask && (repeatableTask.id || repeatableTask.projectId)) || repeatableTask;
+    if (!master || !currentInstance) {
+      elements.status.textContent = "Unable to locate that recurrence series.";
+      return;
+    }
+
+    const recurrenceOptions = [
+      ["weekly", "Weekly"],
+      ["biweekly", "Bi-weekly"],
+      ["monthly", "Monthly"],
+      ["quarterly", "Quarterly"],
+      ["yearly", "Yearly"],
+    ].map(([value, label]) => `<option value="${value}" ${normalizeRecurrence(master.recurrence) === value ? "selected" : ""}>${label}</option>`).join("");
+    const dayOptions = FULL_DAY_NAMES.slice(1).concat(FULL_DAY_NAMES[0])
+      .map((day) => `<option value="${day}" ${cleanText(master.baseDay, getDayName(currentInstance.occurrenceDate || currentInstance.date)) === day ? "selected" : ""}>${day}</option>`)
+      .join("");
+    const monthWeekOptions = MONTH_WEEK_OPTIONS
+      .map((value) => `<option value="${value}" ${normalizeMonthWeek(master.monthWeek, currentInstance.date || currentInstance.occurrenceDate) === value ? "selected" : ""}>${getMonthWeekLabel(value)}</option>`)
+      .join("");
+    const selectedBucket = cleanText(master.baseBucket, currentInstance.timeSlot || "Morning").toLowerCase();
+    const bucketOptions = SLOT_ORDER.map((slot) => {
+      const label = slot.charAt(0).toUpperCase() + slot.slice(1);
+      return `<option value="${label}" ${selectedBucket === slot ? "selected" : ""}>${label}</option>`;
+    }).join("");
+
+    elements.seriesModal.innerHTML = `
+      <div class="series-modal-card" role="dialog" aria-modal="true" aria-labelledby="series-modal-title">
+        <div class="series-modal-header">
+          <div>
+            <h2 id="series-modal-title">Edit Recurrence Series</h2>
+            <p>${escapeHtml(master.title)}</p>
+          </div>
+          <button type="button" data-action="series-cancel" aria-label="Close series editor" title="Close">X</button>
+        </div>
+        <form class="series-form">
+          <label>Recurrence type<select name="recurrence">${recurrenceOptions}</select></label>
+          <label>Week of month<select name="month-week">${monthWeekOptions}</select></label>
+          <label>Series day<select name="base-day">${dayOptions}</select></label>
+          <label>Series bucket<select name="base-bucket">${bucketOptions}</select></label>
+          <fieldset>
+            <legend>Apply changes</legend>
+            <label><input type="radio" name="apply-scope" value="future" checked /> Apply to all future occurrences</label>
+            <label><input type="radio" name="apply-scope" value="this-future" /> Apply to this and future occurrences</label>
+            <label><input type="radio" name="apply-scope" value="entire" /> Apply to entire series (including past)</label>
+          </fieldset>
+          <div class="series-modal-actions">
+            <button type="submit" class="primary">Save Series Changes</button>
+            <button type="button" class="danger" data-action="series-delete">Delete Series</button>
+            <button type="button" data-action="series-cancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+    `;
+    elements.seriesModal.hidden = false;
+
+    const form = elements.seriesModal.querySelector(".series-form");
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveSeriesChanges(master, currentInstance, {
+        recurrence: form.elements.recurrence.value,
+        monthWeek: form.elements["month-week"].value,
+        baseDay: form.elements["base-day"].value,
+        baseBucket: form.elements["base-bucket"].value,
+        applyScope: form.elements["apply-scope"].value,
+      });
+      closeSeriesEditModal();
+    });
+    elements.seriesModal.querySelector("[data-action='series-delete']").addEventListener("click", () => {
+      if (window.confirm(`Delete the entire recurrence series "${master.title}"?`)) {
+        deleteRepeatableSeries(master);
+        closeSeriesEditModal();
+      }
+    });
+    elements.seriesModal.querySelectorAll("[data-action='series-cancel']").forEach((button) => {
+      button.addEventListener("click", closeSeriesEditModal);
+    });
+  }
+
   function renderWeeklyTaskCard(task, dateKey, slot, project) {
     const taskType = getWeeklyTaskType(task);
     const taskId = getSlotItemId(task);
@@ -2034,6 +2468,9 @@ function initPlannerScreen() {
       <button type="button" class="slot-task-reminder-button ${reminderActive ? "is-active" : ""}" data-action="reminder-open" aria-label="${reminderActive ? "Edit active reminder" : "Set reminder"}" title="${reminderActive ? "Reminder active" : "Send Reminder"}">${reminderActive ? "&#128276;" : "&#128277;"}</button>
     `;
     const reminderConfirmation = '<div class="slot-task-reminder-confirmation" data-role="reminder-confirmation" aria-live="polite" hidden></div>';
+    const seriesButton = cleanText(task.parentRepeatableId, "")
+      ? '<button type="button" class="slot-task-series-button" data-action="series-edit" aria-label="Edit recurrence series" title="Edit Series">&#8635;</button>'
+      : "";
     const weekPickerMenu = `
       <div class="slot-task-week-picker">
         <button type="button" class="slot-task-week-button" data-action="task-week-picker" aria-label="Move task to week" title="Move task to week">
@@ -2054,7 +2491,7 @@ function initPlannerScreen() {
 
     if (taskType === "repeatable") {
       return `
-        <div class="${cardClass} ${taskCompleted ? "is-complete" : ""}" data-date="${dateKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
+        <div class="${cardClass} ${taskCompleted ? "is-complete" : ""} ${task.overridden ? "is-overridden" : ""}" data-date="${dateKey}" data-slot="${slot}" data-task-id="${taskId}" data-task-type="${taskType}">
           <div class="slot-task-layout">
             <span class="slot-task-handle" data-action="weekly-drag-handle" draggable="true" title="Drag to move" aria-label="Drag to move">⋮⋮</span>
             <div class="slot-task-main">
@@ -2063,6 +2500,7 @@ function initPlannerScreen() {
                 <div class="slot-task-header-actions">
                   ${resourceLinksButton}
                   ${reminderButton}
+                  ${seriesButton}
                   ${weekPickerMenu}
                   <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
                   <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
@@ -2262,7 +2700,7 @@ function initPlannerScreen() {
         const weatherSummary = cleanText(weather.condition, "Unavailable");
         const slotHtml = SLOT_ORDER
           .map((slot) => {
-            const tasks = state.planner.tasks.filter((item) => cleanText(item.date, "") === day.date && cleanText(item.timeSlot, "") === slot);
+            const tasks = state.planner.tasks.filter((item) => !item.deletedInstance && cleanText(item.date, "") === day.date && cleanText(item.timeSlot, "") === slot);
             const taskHtml = tasks.length
               ? tasks
                   .map((task) => renderWeeklyTaskCard(task, day.date, slot, getTaskProject(task)))
@@ -2828,12 +3266,21 @@ function initPlannerScreen() {
       }
     }, { signal: controller.signal });
 
+    elements.seriesModal.addEventListener("click", (event) => {
+      if (event.target === elements.seriesModal) {
+        closeSeriesEditModal();
+      }
+    }, { signal: controller.signal });
+
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !elements.weatherModal.hidden) {
         closeWeatherModal();
       }
       if (event.key === "Escape" && !elements.reminderModal.hidden) {
         closeReminderModal();
+      }
+      if (event.key === "Escape" && !elements.seriesModal.hidden) {
+        closeSeriesEditModal();
       }
     }, { signal: controller.signal });
 
@@ -2864,6 +3311,16 @@ function initPlannerScreen() {
           const match = findWeeklyTaskById(taskId);
           if (match) {
             openReminderModal(match.item);
+          }
+          return;
+        }
+
+        if (action === "series-edit") {
+          closeWeekMenus();
+          const match = findWeeklyTaskById(taskId);
+          const master = match && findRepeatableMaster(match.item.parentRepeatableId);
+          if (match && master) {
+            openSeriesEditModal(master, match.item);
           }
           return;
         }
@@ -3213,6 +3670,7 @@ function initPlannerScreen() {
     state.selectedCalendarDate = state.planner.weekStartDate;
     state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
     await loadRepeatableTasks();
+    generateVisibleRecurringInstances();
     renderTaskPool();
     renderWeekGrid();
     consumeStagedQueue();
@@ -3228,6 +3686,7 @@ function initPlannerScreen() {
   window.sendReminder = sendReminder;
   window.resetReminder = resetReminder;
   window.deleteReminder = deleteReminder;
+  window.openSeriesEditModal = openSeriesEditModal;
 
   attachEvents();
   initialize().catch((error) => {
