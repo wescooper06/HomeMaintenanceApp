@@ -20,16 +20,62 @@
   color: #5b4b17;
 }
 
+.parking-lot-header-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.parking-lot-title-row-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .parking-lot-header h2 {
   margin: 0;
   font-size: 1.05rem;
   color: #8a5a00;
 }
 
-.parking-lot-subtitle {
-  margin: 0.15rem 0 0;
-  font-size: 0.82rem;
-  color: #6b7280;
+.parking-lot-help {
+  position: relative;
+  width: 1.3rem;
+  height: 1.3rem;
+  border: 1px solid #c7d4e2;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #1f3557;
+  font-weight: 700;
+  font-size: 0.8rem;
+  cursor: help;
+  flex: 0 0 auto;
+}
+
+.parking-lot-help::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 1.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 220px;
+  max-width: 260px;
+  padding: 0.45rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #ffffff;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  white-space: normal;
+  z-index: 20;
+}
+
+.parking-lot-help:hover::after,
+.parking-lot-help:focus-visible::after {
+  opacity: 1;
 }
 
 .parking-lot-add-button {

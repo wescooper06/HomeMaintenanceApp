@@ -20,6 +20,16 @@
   flex-wrap: wrap;
 }
 
+.projects-search-input {
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f2937;
+  padding: 0.5rem 0.7rem;
+  min-width: min(240px, 45vw);
+  font: inherit;
+}
+
 .projects-header-actions > button {
   border: 1px solid #0f766e;
   background: #0f766e;

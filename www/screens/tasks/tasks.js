@@ -282,24 +282,33 @@ function initTasksScreen() {
 
   function buildRepeatableTasks(projects) {
     const overrides = loadRepeatableOverrides();
-    const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
+    const overrideMap = new Map(overrides.map((item) => [cleanText(item && item.projectId, ""), item]).filter((entry) => Boolean(entry[0])));
     state.repeatableOverrideMap = overrideMap;
 
-    const projectMapById = new Map((projects || []).map((project) => [cleanText(project.projectId, ""), project]));
+    const projectMapById = new Map((projects || []).map((project) => [cleanText(project.projectId, ""), project]).filter((entry) => Boolean(entry[0])));
+
+    const seenRepeatableIds = new Set();
 
     state.repeatableTasks = [...(projects || [])]
-      .filter((project) => project.source === "repeating")
+      .filter((project) => normalizeSource(cleanText(project && project.source, "")) === "repeating")
       .map((project, index) => {
-        const override = overrideMap.get(project.projectId) || {};
+        const projectId = cleanText(project.projectId, "");
+        if (!projectId) {
+          return null;
+        }
+
+        seenRepeatableIds.add(projectId);
+
+        const override = overrideMap.get(projectId) || {};
         if (override.removedFromTaskManager === true || override.removed === true) {
           return null;
         }
 
         return {
-          taskId: `repeatable-${project.projectId}`,
-          projectId: project.projectId,
+          taskId: `repeatable-${projectId}`,
+          projectId,
           title: project.title,
-          source: "repeating",
+          source: normalizeSource(project.source) || "repeating",
           state: cleanText(project.state, "unknown"),
           recurrence: cleanText(project.recurrence, "none").toLowerCase(),
           priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
@@ -317,7 +326,7 @@ function initTasksScreen() {
       }
 
       const projectId = cleanText(override.projectId, "");
-      if (!projectId || projectMapById.has(projectId)) {
+      if (!projectId || seenRepeatableIds.has(projectId)) {
         return;
       }
 
@@ -326,6 +335,13 @@ function initTasksScreen() {
         return;
       }
 
+      const overrideSource = cleanText(override.source, "");
+      const isRepeatableFromOverride = normalizeSource(overrideSource) === "repeating" || overrideSource.toLowerCase().includes("repeating") || overrideSource.toLowerCase().includes("list_c") || overrideSource === "repeating";
+      if (!isRepeatableFromOverride) {
+        return;
+      }
+
+      seenRepeatableIds.add(projectId);
       state.repeatableTasks.push({
         taskId: `repeatable-${projectId}`,
         projectId,
@@ -490,7 +506,7 @@ function initTasksScreen() {
     const saved = addTask({
       projectId: cleanText(task.projectId, ""),
       title: cleanText(task.title, "Untitled Task"),
-      source: cleanText(task.source, "repeating"),
+      source: normalizeSource(task.source) || "repeating",
       category: cleanText(task.category, "uncategorized"),
       state: cleanText(task.state, "unknown"),
       priority: parseNumber(task.priority, 3),
@@ -606,8 +622,8 @@ function initTasksScreen() {
     }
 
     if (action === "send-weekly") {
-      addRepeatableToCuratedTasks(list[index]);
-      elements.status.textContent = `Added "${list[index].title}" to Curated Tasks for Planner assignment.`;
+      sendToWeeklyPlanner(list[index], "repeating");
+      elements.status.textContent = `Added "${list[index].title}" to Weekly Planner.`;
       return;
     }
 

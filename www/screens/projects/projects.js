@@ -14,6 +14,7 @@ function initProjectsScreen() {
       projectState: [],
     },
     sortBy: "order",
+    searchTerm: "",
     retryQueue: [],
     retryInProgress: false,
     sheetCounts: { home: 0, vehicle: 0, repeating: 0 },
@@ -46,6 +47,7 @@ function initProjectsScreen() {
     projectState: document.getElementById("projectsFilterState"),
     projectStateSummary: document.getElementById("projectsFilterStateSummary"),
     sortBy: document.getElementById("projectsSortBy"),
+    searchInput: document.getElementById("projectsSearchInput"),
     list: document.getElementById("projectsList"),
     summary: document.getElementById("projectsSummary"),
     syncStatus: document.getElementById("projectsSyncStatus"),
@@ -80,7 +82,7 @@ function initProjectsScreen() {
     addResultMessage: document.getElementById("projectAddResultMessage"),
   };
 
-  if (!elements.source || !elements.sourceSummary || !elements.category || !elements.categorySummary || !elements.projectState || !elements.projectStateSummary || !elements.sortBy || !elements.list || !elements.summary || !elements.syncStatus || !elements.duplicateBanner
+  if (!elements.source || !elements.sourceSummary || !elements.category || !elements.categorySummary || !elements.projectState || !elements.projectStateSummary || !elements.sortBy || !elements.searchInput || !elements.list || !elements.summary || !elements.syncStatus || !elements.duplicateBanner
     || !elements.modal || !elements.modalForm || !elements.modalFields || !elements.modalMessage
     || !elements.modalClose || !elements.modalCancel || !elements.modalSave
     || !elements.deleteModal || !elements.deleteMessage || !elements.deleteStatus
@@ -1772,6 +1774,7 @@ function initProjectsScreen() {
     const sourceSet = new Set(source || []);
     const categorySet = new Set(category || []);
     const stateSet = new Set(projectState || []);
+    const searchTerm = cleanText(state.searchTerm, "").toLowerCase();
 
     const filtered = state.allProjects.filter((project) => {
       if (sourceSet.size && !sourceSet.has(project.source)) {
@@ -1784,6 +1787,23 @@ function initProjectsScreen() {
 
       if (stateSet.size && !stateSet.has(project.state)) {
         return false;
+      }
+
+      if (searchTerm) {
+        const searchableText = [
+          project.title,
+          project.category,
+          project.source,
+          project.state,
+          project.asset || "",
+          project.mileage || "",
+          project.id || "",
+          project.recurrence || "",
+        ].join(" ").toLowerCase();
+
+        if (!searchableText.includes(searchTerm)) {
+          return false;
+        }
       }
 
       return true;
@@ -1865,7 +1885,7 @@ function initProjectsScreen() {
   }
 
   function addToTaskManager(project) {
-    if (project.source === "repeating") {
+    if (sourceTag(project.source) === "repeating") {
       const repeatableKey = "hm_repeatable_tasks";
       let repeatableOverrides = [];
 
@@ -2021,6 +2041,11 @@ function initProjectsScreen() {
 
     elements.sortBy.addEventListener("change", () => {
       state.sortBy = elements.sortBy.value;
+      applyFiltersAndSort();
+    }, { signal: controller.signal });
+
+    elements.searchInput.addEventListener("input", (event) => {
+      state.searchTerm = cleanText(event.target.value, "");
       applyFiltersAndSort();
     }, { signal: controller.signal });
 

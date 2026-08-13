@@ -4,7 +4,7 @@
   const TEMPLATE_VERSION = "20260809-1";
   const DEFAULT_COLORS = {
     parking: "#d1d5db",
-    project: "#2563eb",
+    project: "#7c3aed",
     adHoc: "#0f766e",
     repeatable: "#7c3aed",
   };
