@@ -3,7 +3,7 @@ function initPlannerScreen() {
     return;
   }
 
-  const SERVICE_VERSION = "20260802-8";
+  const SERVICE_VERSION = "20260811-7";
 
   const STORAGE_KEYS = {
     curatedTasks: "hm_planner_curated_tasks",
@@ -43,6 +43,7 @@ function initPlannerScreen() {
     taskPoolLeft: document.getElementById("plannerTaskPoolLeft"),
     taskPoolMiddle: document.getElementById("plannerTaskPoolMiddle"),
     repeatablePanel: document.getElementById("repeatable-tasks-panel"),
+    parkingLotHost: document.getElementById("parking-lot-host"),
     miniCalendar: document.getElementById("mini-calendar"),
     curatedWarning: document.getElementById("curated-warning"),
     weekPrev: document.getElementById("week-prev"),
@@ -60,7 +61,7 @@ function initPlannerScreen() {
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.seriesModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.parkingLotHost || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.seriesModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -83,6 +84,8 @@ function initPlannerScreen() {
     weatherModalOpenDate: "",
     linksModalRequestId: 0,
     weekScrollLocked: false,
+    parkingLotController: null,
+    parkingStorageUnsubscribe: null,
   };
 
   const CURATED_TASK_LIMIT = 8;
@@ -1051,6 +1054,13 @@ function initPlannerScreen() {
       .then(() => loadScriptFresh("js/services/projects.service.js"));
   }
 
+  function ensurePlannerStorageLoaded() {
+    return loadScriptFresh("js/utils/uuid.js")
+      .then(() => loadScriptFresh("js/services/planner-storage.service.js"))
+      .then(() => loadStyleFresh("components/parking-lot/parking-lot.css"))
+      .then(() => loadScriptFresh("components/parking-lot/parking-lot.js"));
+  }
+
   function loadScriptFresh(src) {
     const versionedSrc = `${src}?v=${SERVICE_VERSION}`;
 
@@ -1067,6 +1077,58 @@ function initPlannerScreen() {
       script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
       document.body.appendChild(script);
     });
+  }
+
+  function loadStyleFresh(href) {
+    const versionedHref = `${href}?v=${SERVICE_VERSION}`;
+
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`link[data-module-href="${href}"]`);
+      if (existing) {
+        existing.remove();
+      }
+
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = versionedHref;
+      link.dataset.moduleHref = href;
+      link.onload = () => resolve();
+      link.onerror = () => reject(new Error(`Failed to load stylesheet: ${href}`));
+      document.head.appendChild(link);
+    });
+  }
+
+  async function mountParkingLotPanel() {
+    if (!window.ParkingLotComponent || !elements.parkingLotHost) {
+      return null;
+    }
+
+    const template = await window.ParkingLotComponent.loadTemplate();
+    elements.parkingLotHost.innerHTML = template;
+    const parkingRoot = elements.parkingLotHost.querySelector(".parking-lot-panel");
+    if (!parkingRoot) {
+      return null;
+    }
+
+    if (state.parkingLotController && typeof state.parkingLotController.destroy === "function") {
+      state.parkingLotController.destroy();
+    }
+
+    state.parkingLotController = window.ParkingLotComponent.mount(parkingRoot, {
+      storage: window.PlannerStorage,
+      onParkingRefresh: () => {
+        renderTaskPool();
+        renderWeekGrid();
+      },
+      onParkingDragStart: (payload) => {
+        state.activeWeeklyDrag = payload || null;
+      },
+      onParkingDragEnd: () => {
+        state.activeWeeklyDrag = null;
+      },
+    });
+
+    return state.parkingLotController;
   }
 
   function toProjectView(project) {
@@ -1806,7 +1868,7 @@ function initPlannerScreen() {
       checklist: taskType === "curated" ? normalizeChecklist(taskLike.checklist) : [],
       checklistOpen: Boolean(taskLike.checklistOpen),
       completed: Boolean(taskLike.completed),
-      source: cleanText(taskLike.source, taskType === "adhoc" ? "adhoc" : "unknown"),
+      source: cleanText(taskLike.source, taskType === "adhoc" ? "adhoc" : taskType === "repeatable" ? "repeating" : taskType === "project" ? "home" : "unknown"),
       recurrence: cleanText(taskLike.recurrence, ""),
       projectId: cleanText(taskLike.projectId, ""),
       priority: parseNumber(taskLike.priority, null),
@@ -1910,7 +1972,8 @@ function initPlannerScreen() {
 
   function toggleChecklistOpen(taskId, day, slot) {
     const match = findSlotTask(day, slot, taskId);
-    if (!match || cleanText(match.item.type, "curated") !== "curated") {
+    const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
+    if (!match || (taskType !== "curated" && taskType !== "project")) {
       return false;
     }
 
@@ -1923,7 +1986,8 @@ function initPlannerScreen() {
 
   function toggleChecklistItem(taskId, day, slot, checklistId, completed) {
     const match = findSlotTask(day, slot, taskId);
-    if (!match || cleanText(match.item.type, "curated") !== "curated") {
+    const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
+    if (!match || (taskType !== "curated" && taskType !== "project")) {
       return false;
     }
 
@@ -1943,7 +2007,8 @@ function initPlannerScreen() {
 
   function addChecklistItem(taskId, day, slot, text) {
     const match = findSlotTask(day, slot, taskId);
-    if (!match || cleanText(match.item.type, "curated") !== "curated") {
+    const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
+    if (!match || (taskType !== "curated" && taskType !== "project")) {
       return false;
     }
 
@@ -1970,7 +2035,8 @@ function initPlannerScreen() {
 
   function removeChecklistItem(taskId, day, slot, checklistId) {
     const match = findSlotTask(day, slot, taskId);
-    if (!match || cleanText(match.item.type, "curated") !== "curated") {
+    const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
+    if (!match || (taskType !== "curated" && taskType !== "project")) {
       return false;
     }
 
@@ -2516,7 +2582,7 @@ function initPlannerScreen() {
     const checklist = normalizeChecklist(task.checklist);
     const checklistOpen = Boolean(task.checklistOpen);
     const checklistToggleLabel = `Checklist ${checklistOpen ? "▲" : "▼"}`;
-    const checklistHtml = taskType === "curated"
+    const checklistHtml = taskType === "curated" || taskType === "project"
       ? `
         <div class="slot-checklist">
           <button type="button" class="slot-checklist-toggle" data-action="checklist-toggle">${checklistToggleLabel}</button>
@@ -3499,6 +3565,7 @@ function initPlannerScreen() {
       }
 
       const daySlot = taskCard.closest(".day-slot[data-day][data-date][data-slot]");
+      const match = findWeeklyTaskById(cleanText(taskCard.dataset.taskId, ""));
 
       const payload = {
         kind: "weekly-move",
@@ -3506,6 +3573,12 @@ function initPlannerScreen() {
         day: cleanText(daySlot && daySlot.dataset.day, ""),
         date: cleanText(taskCard.dataset.date, ""),
         slot: cleanText(taskCard.dataset.slot, ""),
+        weeklyTask: match ? {
+          ...match.item,
+          checklist: Array.isArray(match.item.checklist) ? match.item.checklist.map((entry) => ({ ...entry })) : [],
+          reminder: match.item.reminder && typeof match.item.reminder === "object" ? { ...match.item.reminder } : {},
+          metadata: match.item.metadata && typeof match.item.metadata === "object" ? { ...match.item.metadata } : {},
+        } : null,
       };
 
       state.activeWeeklyDrag = payload;
@@ -3567,7 +3640,7 @@ function initPlannerScreen() {
       }
 
       event.preventDefault();
-      event.dataTransfer.dropEffect = state.activeWeeklyDrag.kind === "repeatable-copy" ? "copy" : "move";
+      event.dataTransfer.dropEffect = state.activeWeeklyDrag.kind === "repeatable-copy" || state.activeWeeklyDrag.kind === "parking-item" ? "copy" : "move";
       slotEl.classList.add("is-drop-target");
     }, { signal: controller.signal });
 
@@ -3647,6 +3720,49 @@ function initPlannerScreen() {
         return;
       }
 
+      if (payload.kind === "parking-item") {
+        const parkingItem = payload.item || null;
+        if (parkingItem) {
+          const convertedType = cleanText(parkingItem.convertedTo && parkingItem.convertedTo.type, "project");
+          const weeklyTaskType = convertedType === "task-manager"
+            ? "adhoc"
+            : convertedType === "repeatable"
+              ? "repeatable"
+              : "project";
+          const weeklySource = weeklyTaskType === "adhoc"
+            ? "adhoc"
+            : weeklyTaskType === "repeatable"
+              ? "repeating"
+              : "home";
+          const convertedProjectId = cleanText(parkingItem.convertedTo && parkingItem.convertedTo.id, cleanText(parkingItem.id, ""));
+          const task = toPlannerSlotItem({
+            id: buildWeeklyTaskId(weeklyTaskType, convertedProjectId, date),
+            taskId: buildWeeklyTaskId(weeklyTaskType, convertedProjectId, date),
+            date,
+            timeSlot: slot,
+            taskType: weeklyTaskType,
+            type: weeklyTaskType,
+            title: cleanText(parkingItem.title, "Untitled Task"),
+            source: weeklySource,
+            recurrence: "",
+            projectId: convertedProjectId,
+            priority: 3,
+            checklist: [],
+            checklistOpen: false,
+            completed: false,
+            metadata: { parkingLotSourceId: cleanText(parkingItem.id, ""), parkingLotConvertedType: convertedType },
+          });
+
+          state.planner.tasks.push(task);
+          savePlanner();
+          renderTaskPool();
+          renderWeekGrid();
+          elements.status.textContent = `Placed parking item "${task.title}" on ${date} ${slot}.`;
+        }
+        state.activeWeeklyDrag = null;
+        return;
+      }
+
       if (payload.kind === "weekly-move") {
         moveTask(payload.taskId, cleanText(slotEl.dataset.date, ""), slot);
       }
@@ -3656,6 +3772,14 @@ function initPlannerScreen() {
 
     const teardownIfRouteChanges = () => {
       if (window.location.hash.replace("#", "") !== "planner") {
+        if (state.parkingLotController && typeof state.parkingLotController.destroy === "function") {
+          state.parkingLotController.destroy();
+          state.parkingLotController = null;
+        }
+        if (typeof state.parkingStorageUnsubscribe === "function") {
+          state.parkingStorageUnsubscribe();
+          state.parkingStorageUnsubscribe = null;
+        }
         controller.abort();
         window.removeEventListener("hashchange", teardownIfRouteChanges);
       }
@@ -3665,11 +3789,25 @@ function initPlannerScreen() {
   }
 
   async function initialize() {
+    await ensurePlannerStorageLoaded();
     state.curatedTasks = loadCuratedTasks();
     state.planner = loadPlanner();
     state.selectedCalendarDate = state.planner.weekStartDate;
     state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
     await loadRepeatableTasks();
+    await mountParkingLotPanel();
+    if (window.PlannerStorage && typeof window.PlannerStorage.onChange === "function") {
+      state.parkingStorageUnsubscribe = window.PlannerStorage.onChange(() => {
+        if (!state.planner) {
+          return;
+        }
+
+        state.planner = loadPlanner();
+        renderTaskPool();
+        renderRepeatablePanel();
+        renderWeekGrid();
+      });
+    }
     generateVisibleRecurringInstances();
     renderTaskPool();
     renderWeekGrid();

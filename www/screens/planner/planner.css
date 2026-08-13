@@ -48,6 +48,11 @@
   min-width: 250px;
 }
 
+.planner-parking-column {
+  flex: 0 0 clamp(280px, 24vw, 360px);
+  min-width: 280px;
+}
+
 .planner-calendar-column {
   flex: 0 0 clamp(230px, 18vw, 270px);
   min-width: 230px;
@@ -111,6 +116,12 @@
   background: #fff1f2;
   border-color: #f2b8bd;
   color: #8a1c27;
+}
+
+#parking-lot-column h2 {
+  background: #fffaf0;
+  border-color: #f0d8aa;
+  color: #8a5a00;
 }
 
 #mini-calendar-column h2 {
@@ -1453,6 +1464,7 @@
   #curated-middle,
   #adhoc-right,
   #repeatable-right,
+  #parking-lot-column,
   #mini-calendar-column {
     width: 100%;
     flex: 1 1 auto;
