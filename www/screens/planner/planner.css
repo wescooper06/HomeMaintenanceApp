@@ -362,17 +362,35 @@
 }
 
 .pool-task-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
 }
 
 .pool-task-title {
+  grid-column: 1;
+  order: 1;
   font-weight: 600;
+  min-width: 0;
+  word-break: break-word;
+  text-align: left;
+  justify-self: start;
+}
+
+.pool-task-head-actions {
+  grid-column: 2;
+  order: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  justify-self: end;
 }
 
 .pool-order-pill {
+  grid-column: 3;
+  order: 3;
   background-color: #e0e0e0;
   padding: 4px 8px;
   border-radius: 12px;
@@ -380,6 +398,7 @@
   font-weight: bold;
   color: #1f2937;
   white-space: nowrap;
+  justify-self: end;
 }
 
 .pool-task-meta {
@@ -592,14 +611,19 @@
   min-height: 1.7rem;
 }
 
+.weekly-day-label.is-today {
+  color: #c62828;
+  font-weight: 800;
+}
+
 .weekly-day-label-text {
   display: inline-block;
 }
 
 .weekly-weather-icon {
-  border: 1px solid #c7d4e2;
-  background: #f8fbff;
-  color: #1e3a5f;
+  border: 1px solid #f4c542;
+  background: #fff8d6;
+  color: #f4b400;
   border-radius: 999px;
   width: 1.55rem;
   height: 1.55rem;

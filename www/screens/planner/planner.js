@@ -1763,18 +1763,13 @@ function initPlannerScreen() {
       removedFromPlanner: true,
     });
 
-    const removedCopies = removeWeeklyCopiesForRepeatable(projectId);
     state.repeatableTasks = state.repeatableTasks.filter((task) => task.projectId !== projectId);
 
     saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
     savePlanner();
     renderRepeatablePanel();
     renderWeekGrid();
-    if (removedCopies) {
-      elements.status.textContent = "Repeatable task removed and all weekly copies cleared.";
-    } else {
-      elements.status.textContent = "Repeatable task removed from master list.";
-    }
+    elements.status.textContent = "Repeatable task removed from the task container. Weekly planner entries remain scheduled.";
   }
 
   function createWeeklyRepeatableCopy(masterTask, date, slot) {
@@ -1914,7 +1909,7 @@ function initPlannerScreen() {
       state.repeatableOverrideMap = overrideMap;
 
       state.repeatableTasks = [...state.allProjects]
-        .filter((project) => project.source === "repeating")
+        .filter((project) => normalizeSource(project.source) === "repeating")
         .map((project, index) => {
           const override = overrideMap.get(project.projectId) || {};
           if (override.removedFromPlanner === true) {
@@ -2636,12 +2631,6 @@ function initPlannerScreen() {
   function renderTaskPool() {
     const renderPoolCards = (tasks, startIndex) => tasks
       .map((task, index) => {
-        const assignment = assignmentMap.get(task.taskId);
-        const dayOptions = DAY_ORDER.map((day) => `<option value="${day.key}">${day.label}</option>`).join("");
-        const slotOptions = SLOT_ORDER.map((slot) => `<option value="${slot}">${slot[0].toUpperCase()}${slot.slice(1)}</option>`).join("");
-
-        const daySelectOptions = `<option value="">Day</option>${dayOptions}`;
-        const slotSelectOptions = `<option value="">Time</option>${slotOptions}`;
         const orderValue = task.order == null || String(task.order).trim() === "" ? "-" : String(task.order);
 
         return `
@@ -2651,19 +2640,13 @@ function initPlannerScreen() {
               <div class="pool-task-main">
                 <div class="pool-task-head">
                   <div class="pool-task-title">${task.title}</div>
+                  <div class="pool-task-head-actions">
+                    <button type="button" class="pool-icon-btn curated-only" data-action="remove-curated" title="Remove from Projects" aria-label="Remove from Projects">🗂️</button>
+                    <button type="button" class="pool-icon-btn danger" data-action="remove-planner" title="Remove from Planner" aria-label="Remove from Planner">🗑️</button>
+                  </div>
                   <span class="pool-order-pill">Order: ${orderValue}</span>
                 </div>
                 <div class="pool-task-meta">ID: ${task.projectId || "-"} | Source: ${task.source}</div>
-                <div class="pool-task-controls">
-                  <label class="pool-control-label">Day
-                    <select class="planner-control-field" data-role="day">${daySelectOptions}</select>
-                  </label>
-                  <label class="pool-control-label">Time
-                    <select class="planner-control-field" data-role="slot">${slotSelectOptions}</select>
-                  </label>
-                  <button type="button" class="pool-icon-btn curated-only" data-action="remove-curated" title="Remove from Curated Tasks" aria-label="Remove from Curated Tasks">🗂️</button>
-                  <button type="button" class="pool-icon-btn danger" data-action="remove-planner" title="Remove from Planner" aria-label="Remove from Planner">🗑️</button>
-                </div>
               </div>
             </div>
           </article>
@@ -2764,6 +2747,7 @@ function initPlannerScreen() {
         const dayHeading = formatWeekDayLabel(day.date);
         const weather = getWeatherForDate(day.date);
         const weatherSummary = cleanText(weather.condition, "Unavailable");
+        const isToday = cleanText(day.date, "") === toDateKey(new Date());
         const slotHtml = SLOT_ORDER
           .map((slot) => {
             const tasks = state.planner.tasks.filter((item) => !item.deletedInstance && cleanText(item.date, "") === day.date && cleanText(item.timeSlot, "") === slot);
@@ -2785,7 +2769,7 @@ function initPlannerScreen() {
 
         return `
           <article class="weekly-day-column" data-day="${day.key}" data-date="${day.date}">
-            <h3 class="weekly-day-label">
+            <h3 class="weekly-day-label${isToday ? " is-today" : ""}">
               <span class="weekly-day-label-text">${dayHeading}</span>
               <button
                 type="button"
@@ -2885,12 +2869,98 @@ function initPlannerScreen() {
     }
 
     staged.forEach((entry) => {
+      const normalizedSource = normalizeSource(cleanText(entry.source, "unknown"));
       const normalizedTaskId = cleanText(entry.taskId, "") || cleanText(entry.projectId, "") || cleanText(entry.id, "");
       if (!normalizedTaskId) {
         return;
       }
 
       const normalizedProjectId = cleanText(entry.projectId, normalizedTaskId);
+
+      if (normalizedSource === "repeating") {
+        const repeatableIndex = state.repeatableTasks.findIndex((item) => cleanText(item.projectId, "") === normalizedProjectId || cleanText(item.id, "") === normalizedProjectId || cleanText(item.taskId, "") === normalizedTaskId);
+        const repeatableRecord = {
+          id: normalizedProjectId,
+          taskId: normalizedTaskId.startsWith("repeatable-") ? normalizedTaskId : `repeatable-${normalizedProjectId}`,
+          projectId: normalizedProjectId,
+          title: cleanText(entry.title, "Untitled Repeatable Task"),
+          source: "repeating",
+          state: cleanText(entry.state, "unknown"),
+          recurrence: normalizeRecurrence(cleanText(entry.recurrence, "")),
+          baseDay: cleanText(entry.baseDay, ""),
+          monthWeek: normalizeMonthWeek(cleanText(entry.monthWeek, ""), cleanText(entry.startDate || entry.originalStartDate, "")),
+          active: true,
+          priority: parseNumber(entry.priority, 3),
+          order: parseNumber(entry.order, state.repeatableTasks.length + 1),
+          category: cleanText(entry.category, "uncategorized"),
+          asset: cleanText(entry.asset, ""),
+          mileage: cleanText(entry.mileage, ""),
+        };
+
+        if (repeatableIndex >= 0) {
+          state.repeatableTasks[repeatableIndex] = {
+            ...state.repeatableTasks[repeatableIndex],
+            ...repeatableRecord,
+          };
+        } else {
+          state.repeatableTasks.push(repeatableRecord);
+        }
+
+        const override = state.repeatableOverrideMap.get(normalizedProjectId) || {};
+        state.repeatableOverrideMap.set(normalizedProjectId, {
+          ...override,
+          projectId: normalizedProjectId,
+          id: normalizedProjectId,
+          title: repeatableRecord.title,
+          state: repeatableRecord.state,
+          category: repeatableRecord.category,
+          recurrence: repeatableRecord.recurrence,
+          baseDay: cleanText(repeatableRecord.baseDay, override.baseDay || "Monday"),
+          monthWeek: normalizeMonthWeek(cleanText(repeatableRecord.monthWeek, ""), cleanText(entry.startDate || entry.originalStartDate, "")),
+          baseBucket: cleanText(entry.baseBucket, override.baseBucket || "Morning"),
+          startDate: cleanText(entry.startDate, override.startDate || ""),
+          originalStartDate: cleanText(entry.originalStartDate, override.originalStartDate || entry.startDate || ""),
+          active: true,
+          removedFromPlanner: false,
+          priority: repeatableRecord.priority,
+          order: repeatableRecord.order,
+          asset: repeatableRecord.asset,
+          mileage: repeatableRecord.mileage,
+        });
+
+        saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+
+        if (state.planner && Array.isArray(state.planner.tasks)) {
+          const weekStart = cleanText(state.planner.weekStartDate, getWeekStartISO(new Date()));
+          const currentWeekDate = cleanText(weekStart, "");
+          const isAlreadyScheduled = state.planner.tasks.some((item) => {
+            const parentId = cleanText(item.parentRepeatableId, "") || cleanText(item.projectId, "");
+            return cleanText(parentId, "") === normalizedProjectId && cleanText(item.date, "") === currentWeekDate;
+          });
+
+          if (!isAlreadyScheduled) {
+            const newMaster = {
+              ...repeatableRecord,
+              id: normalizedProjectId,
+              projectId: normalizedProjectId,
+              baseDay: cleanText(repeatableRecord.baseDay, getDayName(currentWeekDate)),
+              monthWeek: normalizeMonthWeek(cleanText(repeatableRecord.monthWeek, ""), currentWeekDate),
+              baseBucket: cleanText(entry.baseBucket, "Morning"),
+              startDate: cleanText(entry.startDate, currentWeekDate),
+              originalStartDate: cleanText(entry.originalStartDate, entry.startDate || currentWeekDate),
+              active: true,
+            };
+
+            const scheduled = makeRecurringInstance(newMaster, currentWeekDate);
+            state.planner.tasks.push(scheduled);
+            savePlanner();
+          }
+        }
+
+        changed = true;
+        return;
+      }
+
       const existingIndex = state.curatedTasks.findIndex((item) => item.taskId === normalizedTaskId || item.projectId === normalizedProjectId);
 
       const upsertRecord = {
@@ -2926,9 +2996,10 @@ function initPlannerScreen() {
     if (changed) {
       saveCuratedTasks();
       hideCuratedWarning();
+      renderRepeatablePanel();
       renderTaskPool();
       renderWeekGrid();
-      elements.status.textContent = "Staged tasks were added to Curated Tasks. Select Day and Time to assign.";
+      elements.status.textContent = "Staged tasks were added to the planner queue. Review the list and schedule them as needed.";
     }
   }
 
@@ -3171,6 +3242,7 @@ function initPlannerScreen() {
 
       state.activeCuratedDragTaskId = payload.taskId;
       state.activeCuratedDragIndex = payload.index;
+      state.activeWeeklyDrag = payload;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", JSON.stringify(payload));
       card.classList.add("is-dragging");
@@ -3189,6 +3261,7 @@ function initPlannerScreen() {
       }
       state.activeCuratedDragTaskId = "";
       state.activeCuratedDragIndex = -1;
+      state.activeWeeklyDrag = null;
       clearCuratedDropTargets();
     };
 
@@ -3639,6 +3712,13 @@ function initPlannerScreen() {
         return;
       }
 
+      if (state.activeWeeklyDrag.kind === "curated-reorder") {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        slotEl.classList.add("is-drop-target");
+        return;
+      }
+
       event.preventDefault();
       event.dataTransfer.dropEffect = state.activeWeeklyDrag.kind === "repeatable-copy" || state.activeWeeklyDrag.kind === "parking-item" ? "copy" : "move";
       slotEl.classList.add("is-drop-target");
@@ -3710,6 +3790,12 @@ function initPlannerScreen() {
       const date = cleanText(slotEl.dataset.date, "");
       const slot = cleanText(slotEl.dataset.slot, "");
       const payload = state.activeWeeklyDrag;
+
+      if (payload.kind === "curated-reorder") {
+        assignTask(payload.taskId, day, slot);
+        state.activeWeeklyDrag = null;
+        return;
+      }
 
       if (payload.kind === "repeatable-copy") {
         const masterTask = state.repeatableTasks.find((task) => cleanText(task.projectId, "") === cleanText(payload.projectId, ""));
