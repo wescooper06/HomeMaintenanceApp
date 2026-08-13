@@ -584,6 +584,136 @@
     return { ok: false, rowNumber: null };
   }
 
+  function getRowTitleValue(row, source) {
+    const sourceText = cleanCell(source).toLowerCase();
+    if (sourceText.includes("list_b") || sourceText.includes("vehicle")) {
+      return cleanCell((row && row["Service Description"]) || (row && row.serviceDescription) || (row && row["Task Description"]) || (row && row.title));
+    }
+
+    return cleanCell((row && row["Task Description"]) || (row && row.taskDescription) || (row && row["Service Description"]) || (row && row.title));
+  }
+
+  function isPlaceholderToken(value) {
+    const normalized = cleanCell(value).toLowerCase();
+    if (!normalized) {
+      return true;
+    }
+
+    return normalized === "unknown"
+      || normalized === "uncategorized"
+      || normalized === "none"
+      || normalized === "n/a"
+      || normalized === "na"
+      || normalized === "null"
+      || normalized === "undefined";
+  }
+
+  function sanitizeProjectForWrite(project) {
+    const cloned = project && typeof project === "object"
+      ? JSON.parse(JSON.stringify(project))
+      : {};
+
+    const sourceText = cleanCell(cloned.source).toLowerCase();
+    const isFixedSchema = sourceText.includes("list_a")
+      || sourceText.includes("list_c")
+      || sourceText.includes("home")
+      || sourceText.includes("repeating");
+
+    if (!isFixedSchema) {
+      return cloned;
+    }
+
+    if (isPlaceholderToken(cloned.category)) {
+      cloned.category = "";
+    }
+
+    if (isPlaceholderToken(cloned.state)) {
+      cloned.state = "";
+    }
+
+    if (cloned.metadata && typeof cloned.metadata === "object" && isPlaceholderToken(cloned.metadata.priority)) {
+      cloned.metadata.priority = "";
+    }
+
+    return cloned;
+  }
+
+  async function verifyUpdatedRow(project) {
+    const tabName = sourceToTabName(project && project.source);
+    const expectedTitle = cleanCell(project && project.title);
+    const expectedRowNumber = Number(project && project.metadata && (project.metadata.sheetRowNumber || project.metadata.rownumber || project.metadata._rownumber) || 0);
+    const expectedId = cleanCell(project && project.id);
+    const metadata = project && project.metadata && typeof project.metadata === "object" ? project.metadata : null;
+    const hasPropertyIntent = Boolean(metadata && Object.prototype.hasOwnProperty.call(metadata, "property"));
+    const expectedProperty = hasPropertyIntent
+      ? (Boolean(metadata._clearProperty || metadata.clearProperty) ? "" : cleanCell(metadata.property))
+      : "";
+
+    if (!tabName) {
+      return { ok: false, error: "Unable to resolve sheet tab for update verification." };
+    }
+
+    const attempts = 6;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const tab = await fetchTab(tabName);
+        const rows = tab && Array.isArray(tab.rows) ? tab.rows : [];
+
+        let row = null;
+        if (expectedRowNumber > 0) {
+          row = rows.find((entry) => Number(entry && entry._rowNumber || 0) === expectedRowNumber) || null;
+        }
+
+        if (!row && expectedId) {
+          row = findRowById(rows, expectedId);
+        }
+
+        if (row) {
+          const actualTitle = getRowTitleValue(row, project && project.source);
+          if (expectedTitle && actualTitle !== expectedTitle) {
+            if (attempt < attempts - 1) {
+              await delay(500);
+              continue;
+            }
+
+            return {
+              ok: false,
+              error: `Sheet did not persist title update. Expected \"${expectedTitle}\" in Task Description, got \"${actualTitle || ""}\".`,
+            };
+          }
+
+          if (hasPropertyIntent) {
+            const actualProperty = cleanCell((row && row.Property) || (row && row.property));
+            if (actualProperty !== expectedProperty) {
+              if (attempt < attempts - 1) {
+                await delay(500);
+                continue;
+              }
+
+              return {
+                ok: false,
+                error: `Sheet did not persist Property update. Expected \"${expectedProperty}\", got \"${actualProperty || ""}\".`,
+              };
+            }
+          }
+
+          return {
+            ok: true,
+            rowNumber: Number(row && row._rowNumber || 0) || null,
+          };
+        }
+      } catch (error) {
+        // Fall through and retry.
+      }
+
+      if (attempt < attempts - 1) {
+        await delay(500);
+      }
+    }
+
+    return { ok: false, error: "Unable to verify updated row in Google Sheets." };
+  }
+
   async function getNextProjectId(tabName) {
     const resolvedTab = cleanCell(tabName);
     if (!resolvedTab) {
@@ -659,6 +789,7 @@
 
   async function updateProjectInSheet(project) {
     const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+    const writeProject = sanitizeProjectForWrite(project);
 
     if (!googleSheetsWriteUrl) {
       throw new Error(
@@ -668,8 +799,8 @@
 
     const payload = {
       spreadsheetId: SPREADSHEET_ID,
-      tabName: sourceToTabName(project && project.source),
-      project,
+      tabName: sourceToTabName(writeProject && writeProject.source),
+      project: writeProject,
     };
 
     // Apps Script web apps do not expose CORS response headers for browser fetch reads.
@@ -680,20 +811,94 @@
       body: JSON.stringify(payload),
     });
 
-    if (response.type === "opaque") {
-      return { ok: true, transport: "no-cors" };
-    }
-
-    if (!response.ok) {
+    if (response.type !== "opaque" && !response.ok) {
       const reason = await response.text().catch(() => "");
       throw new Error(`Failed to write to Google Sheets (${response.status}). ${cleanCell(reason)}`);
     }
 
-    try {
-      return await response.json();
-    } catch (error) {
-      return { ok: true };
+    let parsed = null;
+    if (response.type !== "opaque") {
+      try {
+        parsed = await response.json();
+      } catch (error) {
+        parsed = null;
+      }
+
+      if (parsed && parsed.ok === false) {
+        throw new Error(cleanCell(parsed.error) || "Write request was rejected by Google Sheets endpoint.");
+      }
     }
+
+    const verification = await verifyUpdatedRow(writeProject);
+    if (!verification.ok) {
+      throw new Error(cleanCell(verification.error) || "Unable to verify project update in Google Sheets.");
+    }
+
+    return {
+      ok: true,
+      rowNumber: verification.rowNumber,
+      transport: response.type === "opaque" ? "no-cors" : "cors",
+      response: parsed,
+    };
+  }
+
+  async function repairProjectTitle(project, options) {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+    const writeProject = sanitizeProjectForWrite(project);
+
+    if (!googleSheetsWriteUrl) {
+      throw new Error(
+        "Sheet write endpoint is not configured. Set window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL (or GOOGLE_APPS_SCRIPT_WEB_APP_URL)."
+      );
+    }
+
+    const payload = {
+      action: "repairProjectTitle",
+      spreadsheetId: SPREADSHEET_ID,
+      tabName: sourceToTabName(writeProject && writeProject.source),
+      id: writeProject && writeProject.id ? cleanCell(writeProject.id) : cleanCell(options && options.id),
+      title: cleanCell(writeProject && writeProject.title) || cleanCell(options && options.title),
+      sheetRowNumber: Number(options && options.sheetRowNumber || writeProject && writeProject.metadata && writeProject.metadata.sheetRowNumber || writeProject && writeProject.metadata && writeProject.metadata.rownumber || 0),
+      clearProperty: Boolean(options && options.clearProperty),
+      forceTitle: Boolean(options && options.forceTitle),
+      project: writeProject || {},
+    };
+
+    const response = await fetch(googleSheetsWriteUrl, {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify(payload),
+    });
+
+    if (response.type !== "opaque" && !response.ok) {
+      const reason = await response.text().catch(() => "");
+      throw new Error(`Failed to repair project in Google Sheets (${response.status}). ${cleanCell(reason)}`);
+    }
+
+    let parsed = null;
+    if (response.type !== "opaque") {
+      try {
+        parsed = await response.json();
+      } catch (error) {
+        parsed = null;
+      }
+
+      if (parsed && parsed.ok === false) {
+        throw new Error(cleanCell(parsed.error) || "Repair request was rejected by Google Sheets endpoint.");
+      }
+    }
+
+    const verification = await verifyUpdatedRow(writeProject);
+    if (!verification.ok) {
+      throw new Error(cleanCell(verification.error) || "Unable to verify project repair in Google Sheets.");
+    }
+
+    return {
+      ok: true,
+      rowNumber: verification.rowNumber,
+      transport: response.type === "opaque" ? "no-cors" : "cors",
+      response: parsed,
+    };
   }
 
   async function deleteProject(projectOrId) {
@@ -818,6 +1023,7 @@
     fetchProjectDropdownOptions,
     createProject,
     updateProjectInSheet,
+    repairProjectTitle,
     deleteProject,
   };
 })();

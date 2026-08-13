@@ -644,14 +644,36 @@
       throw new Error("SheetsService.createProject is unavailable.");
     }
 
+    const explicitSource = cleanString(payload && payload.source).toLowerCase();
+    const explicitSourceKey = explicitSource ? sourceKey(explicitSource) : "";
     const isVehicle = cleanString(payload.vehicle) !== "";
     const isProperty = cleanString(payload.property) !== "";
-    if (!isVehicle && !isProperty) {
+    const hasExplicitSupportedSource = explicitSourceKey === "home" || explicitSourceKey === "vehicle" || explicitSourceKey === "repeating";
+
+    if (!isVehicle && !isProperty && !hasExplicitSupportedSource) {
       throw new Error("Select Property or Vehicle/Engine before creating a project.");
     }
 
     let destination = null;
     if (payload.addToRepeating) {
+      destination = {
+        source: SOURCE.repeating,
+        tabName: sheets.TABS.repeating,
+        fields: buildRepeatingCreateFields(payload),
+      };
+    } else if (explicitSourceKey === "home") {
+      destination = {
+        source: SOURCE.home,
+        tabName: sheets.TABS.home,
+        fields: buildHomeCreateFields(payload),
+      };
+    } else if (explicitSourceKey === "vehicle") {
+      destination = {
+        source: SOURCE.vehicle,
+        tabName: sheets.TABS.vehicle,
+        fields: buildVehicleCreateFields(payload),
+      };
+    } else if (explicitSourceKey === "repeating") {
       destination = {
         source: SOURCE.repeating,
         tabName: sheets.TABS.repeating,

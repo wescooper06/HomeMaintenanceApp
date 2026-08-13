@@ -1,0 +1,18 @@
+<section class="parking-lot-panel planner-pool" aria-label="Task parking lot panel">
+  <div class="parking-lot-shell">
+    <div class="parking-lot-header">
+      <div>
+        <h2>Task Parking Lot</h2>
+        <p class="parking-lot-subtitle">Ideas, notes, and next-step tasks before they become scheduled work.</p>
+      </div>
+      <button type="button" class="parking-lot-add-button" data-action="parking-add" aria-label="Add parking lot item" title="Add parking lot item">+</button>
+    </div>
+
+    <div class="parking-lot-dropzone" data-role="parking-dropzone" aria-label="Parking lot drop zone">
+      <div class="parking-lot-empty" data-role="parking-empty">No parking lot items yet.</div>
+      <div class="parking-lot-list" data-role="parking-list" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="parking-lot-modal-host" data-role="parking-modal-host" hidden></div>
+</section>

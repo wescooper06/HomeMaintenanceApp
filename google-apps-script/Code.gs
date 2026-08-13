@@ -5,7 +5,7 @@
 const TAB_HOME = 'Project List_A (Home Maintenance)';
 const TAB_VEHICLE = 'Project List_B (Vehicle/Small Engine)';
 const TAB_REPEATING = 'Project List_C (Repeating Household)';
-const SCRIPT_VERSION = '20260802-8';
+const SCRIPT_VERSION = '20260811-2';
 
 const FIXED_HOME_HEADERS = [
   'ID',
@@ -119,7 +119,7 @@ function doGet(e) {
       service: 'home-maintenance-sheet-writer',
       version: SCRIPT_VERSION,
       methods: ['GET', 'POST'],
-      actions: ['projectDropdownOptions', 'createProject', 'projectExists'],
+      actions: ['projectDropdownOptions', 'createProject', 'projectExists', 'repairProjectTitle'],
     };
 
     return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
@@ -665,6 +665,28 @@ function doPost(e) {
         id: createResult.id,
         tabName: createResult.tabName,
         rowNumber: createResult.rowNumber,
+      });
+    }
+
+    if (action === 'repairProjectTitle') {
+      const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      const repairResult = repairProjectTitle(spreadsheet, body);
+
+      logEvent('info', 'repair_request_success', {
+        requestId: requestId,
+        id: repairResult.id,
+        tabName: repairResult.tabName,
+        rowNumber: repairResult.rowNumber,
+      });
+
+      return jsonResponse({
+        ok: true,
+        requestId: requestId,
+        version: SCRIPT_VERSION,
+        action: 'repairProjectTitle',
+        id: repairResult.id,
+        tabName: repairResult.tabName,
+        rowNumber: repairResult.rowNumber,
       });
     }
 
@@ -1378,7 +1400,7 @@ function updateFixedSchemaRow(sheet, project) {
     throw new Error('Missing or invalid metadata.sheetRowNumber for fixed-schema tab update.');
   }
 
-  const originalTitle = text(metadata._originalTitle || project.title);
+  const originalTitle = text(metadata._originalTitle);
   const originalId = text(metadata._originalId || project.id);
 
   var existingValues = sheet.getRange(rowNumber, 1, 1, FIXED_HOME_HEADERS.length).getValues()[0] || [];
@@ -1400,7 +1422,10 @@ function updateFixedSchemaRow(sheet, project) {
   }
 
   if (!text(existingRow['Task Description'])) {
-    throw new Error('Refusing to overwrite an empty row. Refresh Projects and retry.');
+    const existingRowId = text(existingRow['ID']);
+    if (!(originalId && existingRowId && existingRowId === originalId)) {
+      throw new Error('Refusing to overwrite an empty row without ID confirmation. Refresh Projects and retry.');
+    }
   }
 
   logEvent('info', 'fixed_row_resolved', {
@@ -1419,6 +1444,92 @@ function updateFixedSchemaRow(sheet, project) {
   };
 }
 
+function repairProjectTitle(spreadsheet, body) {
+  const source = text(body && body.source);
+  const tabName = text(body && body.tabName) || sourceToTabName(source) || TAB_HOME;
+  const sheet = resolveSheetByTabName(spreadsheet, tabName);
+  if (!sheet) {
+    throw new Error('Tab not found for repairProjectTitle: ' + tabName);
+  }
+
+  const resolvedTabName = text(sheet.getName());
+  if (!(resolvedTabName === TAB_HOME || resolvedTabName === TAB_REPEATING || normalizeKey(resolvedTabName).indexOf('projectlista') >= 0 || normalizeKey(resolvedTabName).indexOf('projectlistc') >= 0)) {
+    throw new Error('repairProjectTitle only supports fixed-schema tabs.');
+  }
+
+  const project = body && body.project ? body.project : {};
+  const metadata = project.metadata || {};
+  var rowNumber = Number(body && body.sheetRowNumber);
+  if (!Number.isFinite(rowNumber) || rowNumber < 2) {
+    rowNumber = Number(metadata.sheetRowNumber || metadata.rownumber || metadata._rownumber || 0);
+  }
+
+  const fallbackId = text(body && body.id || project.id || metadata._originalId);
+  const fallbackTitle = text(body && body.title || project.title || metadata._originalTitle || metadata.property);
+  const forceTitle = Boolean(body && body.forceTitle);
+
+  if (!Number.isFinite(rowNumber) || rowNumber < 2) {
+    if (!fallbackId) {
+      throw new Error('repairProjectTitle requires sheetRowNumber or id.');
+    }
+
+    rowNumber = findProjectRowById(sheet, fallbackId);
+  }
+
+  if (!Number.isFinite(rowNumber) || rowNumber < 2) {
+    throw new Error('Unable to locate row for repairProjectTitle.');
+  }
+
+  const existingValues = sheet.getRange(rowNumber, 1, 1, FIXED_HOME_HEADERS.length).getValues()[0] || [];
+  const existingRow = rowValuesToObject(existingValues);
+  const rowId = text(existingRow['ID']);
+  if (fallbackId && rowId && rowId !== fallbackId) {
+    throw new Error('repairProjectTitle row identity mismatch.');
+  }
+
+  const existingTitle = text(existingRow['Task Description']);
+  if (existingTitle && existingTitle === fallbackTitle) {
+    return {
+      id: rowId || fallbackId,
+      tabName: resolvedTabName,
+      rowNumber: rowNumber,
+    };
+  }
+
+  if (existingTitle && !forceTitle) {
+    throw new Error('repairProjectTitle only repairs blank Task Description rows unless forceTitle=true.');
+  }
+
+  const updates = {
+    1: rowId || fallbackId,
+    2: text(body && body.clearProperty ? '' : chooseIncomingValue((project.property || metadata.property), existingRow['Property'])),
+    3: chooseIncomingValue((project.area || metadata.area), existingRow['Area']),
+    4: chooseValidatedValue(project.category, existingRow['Category']),
+    5: fallbackTitle,
+    6: chooseValidatedValue((project.priority || metadata.priority), existingRow['Priority']),
+    7: chooseIncomingValue((project.order || metadata.order), existingRow['Order']),
+    8: chooseIncomingValue((project.resourceLinks || metadata.resourceLinks), existingRow['ResourceLinks']),
+    9: chooseIncomingValue((project.cost || metadata.actualCost || metadata.estimatedCost), existingRow['Cost ($)']),
+    10: chooseValidatedValue(project.state, existingRow['State']),
+    11: chooseIncomingValue((project.dateCompleted || metadata.dateCompleted), existingRow['Date Completed']),
+  };
+
+  Object.keys(updates).forEach(function (key) {
+    const col = Number(key);
+    if (!Number.isFinite(col) || col < 1) {
+      return;
+    }
+
+    sheet.getRange(rowNumber, col).setValue(updates[key]);
+  });
+
+  return {
+    id: rowId || fallbackId,
+    tabName: resolvedTabName,
+    rowNumber: rowNumber,
+  };
+}
+
 function rowValuesToObject(values) {
   const row = {};
 
@@ -1427,6 +1538,38 @@ function rowValuesToObject(values) {
   }
 
   return row;
+}
+
+function isPlaceholderValue(value) {
+  const normalized = normalizeKey(value);
+  if (!normalized) {
+    return true;
+  }
+
+  return normalized === 'unknown'
+    || normalized === 'uncategorized'
+    || normalized === 'none'
+    || normalized === 'na'
+    || normalized === 'null'
+    || normalized === 'undefined';
+}
+
+function chooseIncomingValue(incomingValue, existingValue) {
+  const incoming = text(incomingValue);
+  if (!incoming) {
+    return text(existingValue);
+  }
+
+  return incoming;
+}
+
+function chooseValidatedValue(incomingValue, existingValue) {
+  const incoming = text(incomingValue);
+  if (!incoming || isPlaceholderValue(incoming)) {
+    return text(existingValue);
+  }
+
+  return incoming;
 }
 
 function isFixedRowMatch(existingRow, originalTitle, originalId) {
@@ -1525,6 +1668,7 @@ function findFixedSchemaRowNumber(sheet, project, originalTitle, originalId) {
 
 function mapProjectToFixedSchema(project, existingRow) {
   const metadata = project.metadata || {};
+  const shouldClearProperty = Boolean(metadata._clearProperty || metadata.clearProperty || project._clearProperty || project.clearProperty);
 
   const linksValue = Array.isArray(metadata.resourceLinks)
     ? JSON.stringify(metadata.resourceLinks)
@@ -1539,16 +1683,16 @@ function mapProjectToFixedSchema(project, existingRow) {
 
   const rowObject = {
     'ID': idValue,
-    'Property': text(metadata.property),
-    'Area': text(metadata.area),
-    'Category': text(project.category),
+    'Property': shouldClearProperty ? '' : chooseIncomingValue(metadata.property, existingRow && existingRow['Property']),
+    'Area': chooseIncomingValue(metadata.area, existingRow && existingRow['Area']),
+    'Category': chooseValidatedValue(project.category, existingRow && existingRow['Category']),
     'Task Description': text(project.title),
-    'Priority': text(metadata.priority),
-    'Order': text(metadata.order),
-    'ResourceLinks': linksValue,
-    'Cost ($)': costValue,
-    'State': text(project.state),
-    'Date Completed': text(metadata.dateCompleted || metadata.lastCompleted),
+    'Priority': chooseValidatedValue(metadata.priority, existingRow && existingRow['Priority']),
+    'Order': chooseIncomingValue(metadata.order, existingRow && existingRow['Order']),
+    'ResourceLinks': chooseIncomingValue(linksValue, existingRow && existingRow['ResourceLinks']),
+    'Cost ($)': chooseIncomingValue(costValue, existingRow && existingRow['Cost ($)']),
+    'State': chooseValidatedValue(project.state, existingRow && existingRow['State']),
+    'Date Completed': chooseIncomingValue((metadata.dateCompleted || metadata.lastCompleted), existingRow && existingRow['Date Completed']),
   };
 
   return FIXED_HOME_HEADERS.map(function (header) {
