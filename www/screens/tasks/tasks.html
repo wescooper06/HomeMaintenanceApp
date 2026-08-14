@@ -6,8 +6,12 @@
       <h1>Task Manager</h1>
       <p class="hm-muted">Curate project tasks and repeating household tasks for weekly planning.</p>
     </div>
-    <div id="tasksStatus" class="tasks-status">Loading tasks...</div>
+    <div>
+      <div id="tasksMode" class="tasks-status" aria-live="polite">Local mode</div>
+      <div id="tasksStatus" class="tasks-status">Loading tasks...</div>
+    </div>
   </header>
+  <div id="tasksError" class="task-empty" role="alert" hidden></div>
 
   <section class="task-section" aria-label="Project-based tasks section">
     <div class="task-section-header">

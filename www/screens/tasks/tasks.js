@@ -3,14 +3,7 @@ function initTasksScreen() {
     return;
   }
 
-  const SERVICE_VERSION = "20260802-8";
-
-  const STORAGE_KEYS = {
-    curated: "hm_task_manager_tasks",
-    legacyQueue: "hm_task_manager_queue",
-    repeatable: "hm_repeatable_tasks",
-    weeklyPlanner: "hm_weekly_planner_queue",
-  };
+  const SERVICE_VERSION = "20260814-1";
 
   const state = {
     allProjects: [],
@@ -25,13 +18,15 @@ function initTasksScreen() {
 
   const elements = {
     status: document.getElementById("tasksStatus"),
+    mode: document.getElementById("tasksMode"),
+    error: document.getElementById("tasksError"),
     projectList: document.getElementById("projectTaskList"),
     repeatableList: document.getElementById("repeatableTaskList"),
     projectSortToggle: document.getElementById("projectTaskSortToggle"),
     repeatableSortToggle: document.getElementById("repeatableTaskSortToggle"),
   };
 
-  if (!elements.status || !elements.projectList || !elements.repeatableList || !elements.projectSortToggle || !elements.repeatableSortToggle) {
+  if (!elements.status || !elements.mode || !elements.error || !elements.projectList || !elements.repeatableList || !elements.projectSortToggle || !elements.repeatableSortToggle) {
     return;
   }
 
@@ -99,98 +94,51 @@ function initTasksScreen() {
     return `${normalizeSource(source)}::${cleanText(projectId, "")}`;
   }
 
-  function loadTasks() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.curated);
-      const parsed = JSON.parse(raw || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.warn("Failed to read curated tasks", error);
-      return [];
-    }
+  async function loadTasks() {
+    return window.PlannerStorage.getTaskManager();
   }
 
-  function saveTasks(tasks) {
-    localStorage.setItem(STORAGE_KEYS.curated, JSON.stringify(tasks));
-  }
-
-  function addTask(project) {
-    const tasks = loadTasks();
+  async function addTask(project) {
     const task = {
-      taskId: makeTaskId(project.projectId),
+      id: makeTaskId(project.projectId),
       projectId: project.projectId,
       title: project.title,
       source: project.source,
       category: project.category,
       state: project.state,
       priority: parseNumber(project.priority, 3),
-      order: parseNumber(project.order, tasks.length + 1),
+      order: parseNumber(project.order, 1),
       recurrence: cleanText(project.recurrence, ""),
       asset: cleanText(project.asset, ""),
       mileage: cleanText(project.mileage, ""),
-      updatedAt: new Date().toISOString(),
+      metadataJson: "{}",
     };
-
-    const existingIndex = tasks.findIndex((item) => item.taskId === task.taskId);
-    if (existingIndex >= 0) {
-      tasks[existingIndex] = { ...tasks[existingIndex], ...task };
-    } else {
-      tasks.push(task);
-    }
-
-    saveTasks(tasks);
-    return task;
+    return window.PlannerStorage.upsertTaskManagerTask(task);
   }
 
-  function updateTask(task) {
-    const tasks = loadTasks();
-    const index = tasks.findIndex((item) => item.taskId === task.taskId);
-    if (index < 0) {
-      return null;
-    }
-
-    tasks[index] = {
-      ...tasks[index],
-      ...task,
-      updatedAt: new Date().toISOString(),
-    };
-
-    saveTasks(tasks);
-    return tasks[index];
+  async function updateTask(task) {
+    return window.PlannerStorage.upsertTaskManagerTask(task);
   }
 
-  function removeTask(taskId) {
-    const tasks = loadTasks();
-    const nextTasks = tasks.filter((item) => item.taskId !== taskId);
-    saveTasks(nextTasks);
-    return nextTasks;
+  async function removeTask(taskId) {
+    return window.PlannerStorage.deleteTaskManagerTask(taskId);
   }
 
   window.TaskManagerStorage = {
     loadTasks,
-    saveTasks,
     addTask,
     updateTask,
     removeTask,
   };
 
-  function loadRepeatableOverrides() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.repeatable);
-      const parsed = JSON.parse(raw || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.warn("Failed to read repeatable task overrides", error);
-      return [];
-    }
-  }
-
-  function saveRepeatableOverrides(items) {
-    localStorage.setItem(STORAGE_KEYS.repeatable, JSON.stringify(items));
+  async function loadRepeatableOverrides() {
+    return window.PlannerStorage.getRepeatableOverrides();
   }
 
   function ensureProjectServicesLoaded() {
-    return loadScriptFresh("js/services/sheets.service.js")
+    return loadScriptFresh("js/utils/uuid.js")
+      .then(() => loadScriptFresh("js/services/planner-storage.service.js"))
+      .then(() => loadScriptFresh("js/services/sheets.service.js"))
       .then(() => loadScriptFresh("js/services/projects.service.js"));
   }
 
@@ -212,33 +160,8 @@ function initTasksScreen() {
     });
   }
 
-  function migrateLegacyQueue(projectMapByKey, projectMapById) {
-    let legacy;
-    try {
-      legacy = JSON.parse(localStorage.getItem(STORAGE_KEYS.legacyQueue) || "[]");
-    } catch (error) {
-      legacy = [];
-    }
-
-    if (!Array.isArray(legacy) || legacy.length === 0) {
-      return;
-    }
-
-    legacy.forEach((entry) => {
-      const projectId = cleanText(entry.projectId, "");
-      const byId = projectMapById.get(projectId) || [];
-      const preferred = byId.find((item) => normalizeSource(item.source) !== "repeating") || byId[0] || null;
-      const project = preferred || projectMapByKey.get(makeProjectKey("unknown", projectId));
-      if (project) {
-        addTask(project);
-      }
-    });
-
-    localStorage.removeItem(STORAGE_KEYS.legacyQueue);
-  }
-
-  function buildProjectTasks(projectMapByKey, projectMapById) {
-    const curated = loadTasks();
+  async function buildProjectTasks(projectMapByKey, projectMapById) {
+    const curated = await loadTasks();
 
     state.projectTasks = curated
       .map((item) => {
@@ -250,6 +173,7 @@ function initTasksScreen() {
         if (!enriched) {
           return {
             ...item,
+            taskId: cleanText(item.id || item.taskId, makeTaskId(itemProjectId)),
             title: cleanText(item.title, "Unknown Project"),
             source: normalizeSource(item.source),
             category: cleanText(item.category, "uncategorized"),
@@ -264,6 +188,7 @@ function initTasksScreen() {
 
         return {
           ...item,
+          taskId: cleanText(item.id || item.taskId, makeTaskId(itemProjectId)),
           title: enriched.title,
           source: enriched.source,
           category: enriched.category,
@@ -280,8 +205,8 @@ function initTasksScreen() {
     state.projectTasks = sortTaskList(state.projectTasks, "project");
   }
 
-  function buildRepeatableTasks(projects) {
-    const overrides = loadRepeatableOverrides();
+  async function buildRepeatableTasks(projects) {
+    const overrides = await loadRepeatableOverrides();
     const overrideMap = new Map(overrides.map((item) => [cleanText(item && item.projectId, ""), item]).filter((entry) => Boolean(entry[0])));
     state.repeatableOverrideMap = overrideMap;
 
@@ -457,32 +382,48 @@ function initTasksScreen() {
     refreshStatus();
   }
 
-  function sendToWeeklyPlanner(task, type) {
-    let plannerItems;
-    try {
-      plannerItems = JSON.parse(localStorage.getItem(STORAGE_KEYS.weeklyPlanner) || "[]");
-    } catch (error) {
-      plannerItems = [];
+  async function sendToWeeklyPlanner(task, type) {
+    const isRepeatable = type === "repeating";
+    if (isRepeatable) {
+      const taskManagerTasks = await window.PlannerStorage.getTaskManager();
+      const storedTask = taskManagerTasks.find((item) => cleanText(item.projectId, "") === cleanText(task.projectId, ""));
+      if (storedTask) {
+        let metadata = {};
+        try {
+          metadata = JSON.parse(cleanText(storedTask.metadataJson, "{}")) || {};
+        } catch (error) {
+          metadata = {};
+        }
+
+        await window.PlannerStorage.upsertTaskManagerTask({
+          ...storedTask,
+          metadataJson: JSON.stringify({ ...metadata, plannerRepeatable: true }),
+        });
+        const generatedDate = cleanText(task.startDate, new Date().toISOString().slice(0, 10));
+        await window.PlannerStorage.deleteWeeklyTask(`repeatable-${storedTask.projectId}-${generatedDate}`);
+      }
+      elements.status.textContent = `Added "${task.title}" to Repeatable Tasks.`;
+      return;
     }
 
-    plannerItems.push({
-      id: `${type}-${task.projectId}-${Date.now()}`,
+    const projectId = cleanText(task.projectId, "");
+    const generatedDate = cleanText(task.startDate, new Date().toISOString().slice(0, 10));
+    await window.PlannerStorage.deleteWeeklyTask(`curated-${projectId}-${generatedDate}`);
+    await window.PlannerStorage.upsertCuratedTask({
+      taskId: cleanText(task.id || task.taskId, ""),
       projectId: task.projectId,
       title: task.title,
       priority: task.priority,
       order: task.order,
       recurrence: cleanText(task.recurrence, ""),
       source: cleanText(task.source, type),
-      addedAt: new Date().toISOString(),
     });
-
-    localStorage.setItem(STORAGE_KEYS.weeklyPlanner, JSON.stringify(plannerItems));
-    elements.status.textContent = `Sent "${task.title}" to Weekly Planner.`;
+    elements.status.textContent = `Added "${task.title}" to Planner Projects.`;
   }
 
-  function updateProjectTaskList(nextList) {
+  async function updateProjectTaskList(nextList) {
     state.projectTasks = sortTaskList(nextList, "project");
-    saveTasks(state.projectTasks);
+    await Promise.all(state.projectTasks.map((task) => updateTask(task)));
     renderAll();
   }
 
@@ -502,8 +443,8 @@ function initTasksScreen() {
     };
   }
 
-  function addRepeatableToCuratedTasks(task) {
-    const saved = addTask({
+  async function addRepeatableToCuratedTasks(task) {
+    const saved = await addTask({
       projectId: cleanText(task.projectId, ""),
       title: cleanText(task.title, "Untitled Task"),
       source: normalizeSource(task.source) || "repeating",
@@ -532,13 +473,12 @@ function initTasksScreen() {
     renderAll();
   }
 
-  function saveRepeatableState() {
+  async function saveRepeatableState() {
     const overrides = Array.from(state.repeatableOverrideMap.values());
-
-    saveRepeatableOverrides(overrides);
+    await Promise.all(overrides.map((override) => window.PlannerStorage.upsertRepeatableOverride(override)));
   }
 
-  function updateRepeatableTaskList(nextList) {
+  async function updateRepeatableTaskList(nextList) {
     state.repeatableTasks = sortTaskList(nextList, "repeatable");
 
     state.repeatableTasks.forEach((task) => {
@@ -553,7 +493,7 @@ function initTasksScreen() {
       });
     });
 
-    saveRepeatableState();
+    await saveRepeatableState();
     renderAll();
   }
 
@@ -575,7 +515,7 @@ function initTasksScreen() {
     return cloned;
   }
 
-  function onProjectAction(action, taskId) {
+  async function onProjectAction(action, taskId) {
     const list = [...state.projectTasks];
     const index = list.findIndex((item) => item.taskId === taskId);
     if (index < 0) {
@@ -583,28 +523,28 @@ function initTasksScreen() {
     }
 
     if (action === "move-up") {
-      updateProjectTaskList(shiftOrder(list, taskId, -1));
+      await updateProjectTaskList(shiftOrder(list, taskId, -1));
       return;
     }
 
     if (action === "move-down") {
-      updateProjectTaskList(shiftOrder(list, taskId, 1));
+      await updateProjectTaskList(shiftOrder(list, taskId, 1));
       return;
     }
 
     if (action === "remove") {
-      removeTask(taskId);
+      await removeTask(taskId);
       state.projectTasks = state.projectTasks.filter((item) => item.taskId !== taskId);
       renderAll();
       return;
     }
 
     if (action === "send-weekly") {
-      sendToWeeklyPlanner(list[index], "project");
+      await sendToWeeklyPlanner(list[index], "project");
     }
   }
 
-  function onRepeatableAction(action, taskId) {
+  async function onRepeatableAction(action, taskId) {
     const list = [...state.repeatableTasks];
     const index = list.findIndex((item) => item.taskId === taskId);
     if (index < 0) {
@@ -612,18 +552,17 @@ function initTasksScreen() {
     }
 
     if (action === "move-up") {
-      updateRepeatableTaskList(shiftOrder(list, taskId, -1));
+      await updateRepeatableTaskList(shiftOrder(list, taskId, -1));
       return;
     }
 
     if (action === "move-down") {
-      updateRepeatableTaskList(shiftOrder(list, taskId, 1));
+      await updateRepeatableTaskList(shiftOrder(list, taskId, 1));
       return;
     }
 
     if (action === "send-weekly") {
-      sendToWeeklyPlanner(list[index], "repeating");
-      elements.status.textContent = `Added "${list[index].title}" to Weekly Planner.`;
+      await sendToWeeklyPlanner(list[index], "repeating");
       return;
     }
 
@@ -639,7 +578,7 @@ function initTasksScreen() {
       });
 
       state.repeatableTasks = state.repeatableTasks.filter((item) => item.taskId !== taskId);
-      saveRepeatableState();
+      await saveRepeatableState();
       renderAll();
     }
   }
@@ -697,7 +636,9 @@ function initTasksScreen() {
 
   async function loadTaskManager() {
     elements.status.textContent = "Loading tasks...";
+    elements.error.hidden = true;
     await ensureProjectServicesLoaded();
+    elements.mode.textContent = window.PlannerStorage.getUseSheets() ? "Sheets mode" : "Local mode";
     const projects = await window.loadAllProjects();
     state.allProjects = (projects || []).map(toProjectView);
 
@@ -711,16 +652,28 @@ function initTasksScreen() {
       projectMapById.get(key).push(project);
     });
 
-    migrateLegacyQueue(projectMapByKey, projectMapById);
-    buildProjectTasks(projectMapByKey, projectMapById);
-    buildRepeatableTasks(state.allProjects);
+    await buildProjectTasks(projectMapByKey, projectMapById);
+    await buildRepeatableTasks(state.allProjects);
     renderAll();
   }
+
+  window.PlannerStorage && window.PlannerStorage.onChange((detail) => {
+    if (detail && detail.type === "task-manager-sync-error") {
+      elements.error.textContent = `Sheets sync queued: ${detail.error}`;
+      elements.error.hidden = false;
+      return;
+    }
+    if (detail && String(detail.type || "").startsWith("task-manager-")) {
+      loadTaskManager().catch((error) => console.warn("Task Manager refresh failed", error));
+    }
+  });
 
   attachEvents();
   loadTaskManager().catch((error) => {
     console.error(error);
     elements.status.textContent = "Unable to load Task Manager.";
+    elements.error.textContent = error.message || "Unable to load Task Manager.";
+    elements.error.hidden = false;
     elements.projectList.innerHTML = `<div class="task-empty">Failed to load project tasks. ${error.message || "Unknown error"}</div>`;
     elements.repeatableList.innerHTML = "";
   });
