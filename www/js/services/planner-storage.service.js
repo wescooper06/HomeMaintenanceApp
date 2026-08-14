@@ -4,6 +4,7 @@
     parkingLot: "hm_parking_lot",
     retryQueue: "hm_sheet_write_retry_queue",
     taskManager: "hm_task_manager_tasks",
+    curatedTasks: "hm_planner_curated_tasks",
     repeatable: "hm_repeatable_tasks",
     weeklyPlanner: "hm_weekly_planner",
   };
@@ -16,7 +17,7 @@
   };
 
   const state = {
-    useSheets: false,
+    useSheets: Boolean(window.APP_CONFIG && window.APP_CONFIG.USE_SHEETS),
     listeners: new Set(),
   };
 
@@ -163,37 +164,179 @@
 
   function readTaskManagerLocal() {
     const items = readJson(STORAGE_KEYS.taskManager, []);
-    return Array.isArray(items) ? items : [];
+    return Array.isArray(items) ? items.map((item) => normalizeTaskManagerTask(item)) : [];
   }
 
-  function upsertTaskManagerTask(task) {
-    const current = readTaskManagerLocal();
-    const id = ensureUuid(task && (task.taskId || task.id));
+  function normalizeTaskManagerTask(task, defaultOrder) {
+    const existing = task && typeof task === "object" ? task : {};
+    const id = ensureUuid(existing.id || existing.taskId);
+    return {
+      id,
+      projectId: cleanText(existing.projectId, id),
+      title: cleanText(existing.title, "Untitled Task"),
+      source: cleanText(existing.source, "unknown"),
+      category: cleanText(existing.category, "uncategorized"),
+      state: cleanText(existing.state, "unknown"),
+      priority: existing.priority != null ? existing.priority : 3,
+      order: existing.order != null ? existing.order : defaultOrder,
+      recurrence: cleanText(existing.recurrence, ""),
+      startDate: cleanText(existing.startDate, ""),
+      updatedAt: cleanText(existing.updatedAt, nowIso()),
+      metadataJson: cleanText(existing.metadataJson, existing.metadata ? JSON.stringify(existing.metadata) : "{}"),
+    };
+  }
+
+  function saveTaskManagerLocal(items) {
+    writeJson(STORAGE_KEYS.taskManager, Array.isArray(items) ? items : []);
+  }
+
+  function getCuratedTasks() {
+    const items = readJson(STORAGE_KEYS.curatedTasks, []);
+    return Array.isArray(items) ? clone(items) : [];
+  }
+
+  async function upsertCuratedTask(task) {
+    const current = getCuratedTasks();
     const normalized = {
-      taskId: id,
-      projectId: cleanText(task && task.projectId, id),
+      taskId: ensureUuid(task && (task.taskId || task.id)),
+      projectId: cleanText(task && task.projectId, ""),
       title: cleanText(task && task.title, "Untitled Task"),
       source: cleanText(task && task.source, "unknown"),
       category: cleanText(task && task.category, "uncategorized"),
-      state: cleanText(task && task.state, "unknown"),
+      recurrence: cleanText(task && task.recurrence, ""),
       priority: task && task.priority != null ? task.priority : 3,
       order: task && task.order != null ? task.order : current.length + 1,
-      recurrence: cleanText(task && task.recurrence, ""),
-      asset: cleanText(task && task.asset, ""),
-      mileage: cleanText(task && task.mileage, ""),
-      updatedAt: nowIso(),
     };
+    const index = current.findIndex((item) => cleanText(item.taskId, "") === normalized.taskId);
+    if (index >= 0) current[index] = { ...current[index], ...normalized };
+    else current.push(normalized);
+    writeJson(STORAGE_KEYS.curatedTasks, current);
+    emitChange({ type: "curated-task-upsert", item: clone(normalized) });
+    return clone(normalized);
+  }
 
-    const index = current.findIndex((entry) => cleanText(entry.taskId, "") === normalized.taskId);
+  function getSheetsEndpoint(action) {
+    const baseUrl = cleanText(window.APP_CONFIG && window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL, "");
+    if (!baseUrl) {
+      throw new Error("Google Apps Script endpoint is not configured.");
+    }
+    const url = new URL(baseUrl);
+    url.searchParams.set("action", action);
+    return url;
+  }
+
+  function getSpreadsheetId() {
+    return cleanText(window.APP_CONFIG && window.APP_CONFIG.GOOGLE_SHEETS_SPREADSHEET_ID, "18la6E47KuiFWXFSIASd8QYbvxEo-ZJ7RaxnnuxIml9k");
+  }
+
+  // Read Task Manager rows from Sheets and normalize the fixed planner schema.
+  async function getTaskManagerFromSheets() {
+    const url = getSheetsEndpoint("getTaskManagerState");
+    url.searchParams.set("spreadsheetId", getSpreadsheetId());
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      throw new Error(`Task Manager read failed (${response.status}).`);
+    }
+    const payload = await response.json();
+    if (!payload || payload.ok === false) {
+      throw new Error(cleanText(payload && payload.error, "Task Manager read failed."));
+    }
+    return (Array.isArray(payload.rows) ? payload.rows : []).map((row, index) => normalizeTaskManagerTask(row, index + 1));
+  }
+
+  async function sendTaskManagerBatch(mutations) {
+    const url = getSheetsEndpoint("batchApplyPlannerChanges");
+    const clientTxnId = ensureUuid();
+    const payload = {
+      action: "batchApplyPlannerChanges",
+      spreadsheetId: getSpreadsheetId(),
+      clientTxnId,
+      mutations,
+    };
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify(payload),
+    });
+    if (response.type !== "opaque" && !response.ok) {
+      throw new Error(`Task Manager write failed (${response.status}).`);
+    }
+    return { ok: true, clientTxnId };
+  }
+
+  // Return Sheets rows first when enabled, falling back to the optimistic local copy.
+  async function getTaskManager() {
+    if (state.useSheets) {
+      try {
+        const rows = await getTaskManagerFromSheets();
+        saveTaskManagerLocal(rows);
+        return clone(rows).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+      } catch (error) {
+        console.warn("Task Manager Sheets read failed; using local fallback.", error);
+        emitChange({ type: "task-manager-sync-error", error: String(error && error.message ? error.message : error) });
+      }
+    }
+    return clone(readTaskManagerLocal()).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+  }
+
+  // Persist a Task Manager task locally first, then sync its latest timestamp to Sheets.
+  async function upsertTaskManagerTask(task) {
+    const current = readTaskManagerLocal();
+    const normalized = normalizeTaskManagerTask({ ...task, updatedAt: nowIso() }, current.length + 1);
+
+    const index = current.findIndex((entry) => cleanText(entry.id || entry.taskId, "") === normalized.id);
     if (index >= 0) {
       current[index] = { ...current[index], ...normalized };
     } else {
       current.push(normalized);
     }
 
-    writeJson(STORAGE_KEYS.taskManager, current);
+    saveTaskManagerLocal(current);
     emitChange({ type: "task-manager-upsert", item: clone(normalized) });
-    return Promise.resolve(clone(normalized));
+    if (state.useSheets) {
+      try {
+        await sendTaskManagerBatch([{ op: "upsert", sheet: SHEET_NAMES.taskManager, row: normalized }]);
+      } catch (error) {
+        queueRetry({ op: "upsert", sheet: SHEET_NAMES.taskManager, row: normalized });
+        console.warn("Task Manager Sheets write queued for retry.", error);
+        emitChange({ type: "task-manager-sync-error", error: String(error && error.message ? error.message : error) });
+      }
+    }
+    return clone(normalized);
+  }
+
+  // Remove a Task Manager task locally first and enqueue the Sheets delete on failure.
+  async function deleteTaskManagerTask(id) {
+    const targetId = cleanText(id, "");
+    const current = readTaskManagerLocal().filter((entry) => cleanText(entry.id || entry.taskId, "") !== targetId);
+    saveTaskManagerLocal(current);
+    emitChange({ type: "task-manager-delete", id: targetId });
+    if (state.useSheets) {
+      try {
+        await sendTaskManagerBatch([{ op: "delete", sheet: SHEET_NAMES.taskManager, id: targetId, row: { id: targetId, updatedAt: nowIso() } }]);
+      } catch (error) {
+        queueRetry({ op: "delete", sheet: SHEET_NAMES.taskManager, id: targetId, row: { id: targetId, updatedAt: nowIso() } });
+        console.warn("Task Manager Sheets delete queued for retry.", error);
+        emitChange({ type: "task-manager-sync-error", error: String(error && error.message ? error.message : error) });
+      }
+    }
+    return { ok: true, id: targetId };
+  }
+
+  // Batch-import the legacy local Task Manager copy without deleting it.
+  async function importTaskManagerToSheets(sourceRows) {
+    const rows = (Array.isArray(sourceRows) ? sourceRows : readTaskManagerLocal())
+      .map((row, index) => normalizeTaskManagerTask(row, index + 1));
+    const mutations = rows.map((row) => ({ op: "upsert", sheet: SHEET_NAMES.taskManager, row }));
+    try {
+      const result = await sendTaskManagerBatch(mutations);
+      console.info("Imported Task Manager rows to Sheets.", rows.length);
+      return { ...result, imported: rows.length };
+    } catch (error) {
+      console.error("Task Manager migration failed.", error);
+      mutations.forEach(queueRetry);
+      throw error;
+    }
   }
 
   function readRepeatableLocal() {
@@ -330,7 +473,7 @@
     writeJson(STORAGE_KEYS.retryQueue, queue);
   }
 
-  function batchApplyPlannerChanges(operations) {
+  async function batchApplyPlannerChanges(operations) {
     const list = Array.isArray(operations) ? operations : [];
     const results = [];
 
@@ -362,14 +505,21 @@
 
         if (operation.sheet === SHEET_NAMES.taskManager) {
           if (operation.op === "delete") {
-            const current = readTaskManagerLocal().filter((entry) => cleanText(entry.taskId, "") !== cleanText(operation.id, ""));
+            const current = readTaskManagerLocal().filter((entry) => cleanText(entry.id || entry.taskId, "") !== cleanText(operation.id, ""));
             writeJson(STORAGE_KEYS.taskManager, current);
             results.push({ sheet: operation.sheet, result: { ok: true, id: cleanText(operation.id, "") } });
             emitChange({ type: "task-manager-delete", id: cleanText(operation.id, "") });
             return;
           }
 
-          results.push({ sheet: operation.sheet, result: upsertTaskManagerTask(operation.row || operation.item) });
+          const current = readTaskManagerLocal();
+          const normalized = normalizeTaskManagerTask({ ...(operation.row || operation.item), updatedAt: nowIso() }, current.length + 1);
+          const index = current.findIndex((entry) => cleanText(entry.id || entry.taskId, "") === normalized.id);
+          if (index >= 0) current[index] = { ...current[index], ...normalized };
+          else current.push(normalized);
+          saveTaskManagerLocal(current);
+          emitChange({ type: "task-manager-upsert", item: clone(normalized) });
+          results.push({ sheet: operation.sheet, result: clone(normalized) });
           return;
         }
 
@@ -393,8 +543,17 @@
       }
     });
 
+    if (state.useSheets && list.some((operation) => operation && operation.sheet === SHEET_NAMES.taskManager)) {
+      const taskManagerOperations = list.filter((operation) => operation && operation.sheet === SHEET_NAMES.taskManager);
+      try {
+        await sendTaskManagerBatch(taskManagerOperations);
+      } catch (error) {
+        taskManagerOperations.forEach(queueRetry);
+        console.warn("Planner batch queued for retry.", error);
+      }
+    }
     emitChange({ type: "batch-apply", operations: list.length, results });
-    return Promise.resolve({ ok: true, applied: results.length, results });
+    return { ok: true, applied: results.length, results };
   }
 
   function importParkingToSheets() {
@@ -436,15 +595,20 @@
     deleteParkingItem,
     importParkingToSheets,
     batchApplyPlannerChanges,
+    getTaskManager,
+    getCuratedTasks,
+    upsertCuratedTask,
     upsertWeeklyTask,
     deleteWeeklyTask,
     upsertTaskManagerTask,
+    deleteTaskManagerTask,
+    importTaskManagerToSheets,
     upsertRepeatableOverride,
     setUseSheets,
     getUseSheets,
     onChange,
     emitChange,
-    getTaskManagerTasks: () => Promise.resolve(clone(readTaskManagerLocal())),
+    getTaskManagerTasks: () => getTaskManager(),
     getRepeatableOverrides: () => Promise.resolve(clone(readRepeatableLocal())),
     getWeeklyPlanner: () => Promise.resolve(clone(readWeeklyPlannerLocal())),
   };

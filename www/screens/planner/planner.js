@@ -1903,6 +1903,9 @@ function initPlannerScreen() {
       await ensureProjectServicesLoaded();
       const projects = await window.loadAllProjects();
       state.allProjects = (projects || []).map(toProjectView);
+      const taskManagerTasks = window.PlannerStorage && typeof window.PlannerStorage.getTaskManager === "function"
+        ? await window.PlannerStorage.getTaskManager()
+        : [];
 
       const overrides = loadRepeatableOverrides();
       const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
@@ -1938,6 +1941,46 @@ function initPlannerScreen() {
           };
         })
         .filter(Boolean);
+
+      const repeatableProjectIds = new Set(state.repeatableTasks.map((task) => cleanText(task.projectId, "")));
+      taskManagerTasks
+        .filter((task) => normalizeSource(task.source) === "repeating")
+        .filter((task) => {
+          try {
+            const metadata = JSON.parse(cleanText(task.metadataJson, "{}"));
+            return metadata && metadata.plannerRepeatable === true;
+          } catch (error) {
+            return false;
+          }
+        })
+        .filter((task) => !repeatableProjectIds.has(cleanText(task.projectId, "")))
+        .forEach((task, index) => {
+          state.repeatableTasks.push({
+            id: cleanText(task.id, cleanText(task.projectId, `repeatable-task-${index + 1}`)),
+            taskId: `repeatable-${cleanText(task.projectId, task.id)}`,
+            projectId: cleanText(task.projectId, ""),
+            title: cleanText(task.title, "Untitled Task"),
+            source: "repeating",
+            state: cleanText(task.state, "unknown"),
+            recurrence: normalizeRecurrence(task.recurrence),
+            baseDay: "",
+            monthWeek: "",
+            baseBucket: "",
+            startDate: cleanText(task.startDate, ""),
+            originalStartDate: cleanText(task.startDate, ""),
+            active: true,
+            priority: parseNumber(task.priority, 3),
+            order: parseNumber(task.order, state.repeatableTasks.length + 1),
+            category: cleanText(task.category, "uncategorized"),
+            asset: "",
+            mileage: "",
+          });
+        });
+
+      state.repeatableTasks.sort((left, right) => {
+        const orderDifference = parseNumber(left.order, Number.MAX_SAFE_INTEGER) - parseNumber(right.order, Number.MAX_SAFE_INTEGER);
+        return orderDifference || cleanText(left.title, "").localeCompare(cleanText(right.title, ""));
+      });
 
       renderRepeatablePanel();
     } catch (error) {
@@ -3094,12 +3137,8 @@ function initPlannerScreen() {
         return;
       }
 
-      const approved = window.confirm("This will permanently remove all scheduled instances and all checklist items for this task.");
-      if (!approved) {
-        return;
-      }
-
-      removeTaskFromPlanner(card.dataset.taskId);
+      removeTaskFromCurated(card.dataset.taskId);
+      elements.status.textContent = "Project removed from the Planner container. Weekly schedule entries were preserved.";
     };
 
     elements.taskPoolLeft.addEventListener("click", onTaskPoolClick, { signal: controller.signal });

@@ -6,6 +6,11 @@ const TAB_HOME = 'Project List_A (Home Maintenance)';
 const TAB_VEHICLE = 'Project List_B (Vehicle/Small Engine)';
 const TAB_REPEATING = 'Project List_C (Repeating Household)';
 const SCRIPT_VERSION = '20260811-2';
+const PLANNER_TASK_MANAGER = 'Planner_TaskManager';
+const PLANNER_TASK_MANAGER_HEADERS = [
+  'id', 'projectId', 'title', 'source', 'category', 'state', 'priority',
+  'order', 'recurrence', 'startDate', 'updatedAt', 'metadataJson',
+];
 
 const FIXED_HOME_HEADERS = [
   'ID',
@@ -69,6 +74,12 @@ function doGet(e) {
   const canJsonp = /^[A-Za-z_$][A-Za-z0-9_.$]*$/.test(callback);
 
   try {
+    if (action === 'getTaskManagerState') {
+      const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
+      const payload = getTaskManagerState(spreadsheetId);
+      return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+    }
+
     if (action === 'projectDropdownOptions') {
       const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
       const payload = buildProjectDropdownOptionsPayload(spreadsheetId || '');
@@ -119,7 +130,7 @@ function doGet(e) {
       service: 'home-maintenance-sheet-writer',
       version: SCRIPT_VERSION,
       methods: ['GET', 'POST'],
-      actions: ['projectDropdownOptions', 'createProject', 'projectExists', 'repairProjectTitle'],
+      actions: ['projectDropdownOptions', 'getTaskManagerState', 'batchTaskManagerMutations', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
     };
 
     return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
@@ -133,6 +144,186 @@ function doGet(e) {
 
     return canJsonp ? jsonpResponse(callback, failure) : jsonResponse(failure);
   }
+}
+
+function taskManagerDate(value) {
+  const date = new Date(text(value));
+  return isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function ensureTaskManagerSheet(spreadsheet) {
+  const sheet = resolveSheetByTabName(spreadsheet, PLANNER_TASK_MANAGER);
+  if (!sheet) {
+    throw new Error('Tab not found: ' + PLANNER_TASK_MANAGER);
+  }
+
+  const headerRange = sheet.getRange(1, 1, 1, PLANNER_TASK_MANAGER_HEADERS.length);
+  const headers = headerRange.getDisplayValues()[0].map(function (value) { return text(value); });
+  const matches = PLANNER_TASK_MANAGER_HEADERS.every(function (header, index) {
+    return headers[index] === header;
+  });
+  if (!matches) {
+    const oldLastRow = sheet.getLastRow();
+    const oldLastColumn = sheet.getLastColumn();
+    const oldValues = oldLastRow > 1 && oldLastColumn > 0
+      ? sheet.getRange(2, 1, oldLastRow - 1, oldLastColumn).getDisplayValues()
+      : [];
+    const oldHeaderMap = {};
+    headers.forEach(function (header, index) {
+      oldHeaderMap[normalizeKey(header)] = index;
+    });
+    const oldValue = function (row, names) {
+      for (var i = 0; i < names.length; i += 1) {
+        const column = oldHeaderMap[normalizeKey(names[i])];
+        if (column != null && text(row[column])) {
+          return text(row[column]);
+        }
+      }
+      return '';
+    };
+    const migratedRows = oldValues.filter(function (row) {
+      return row.some(function (value) { return text(value) !== ''; });
+    }).map(function (row) {
+      const metadata = {};
+      const asset = oldValue(row, ['asset']);
+      const mileage = oldValue(row, ['mileage']);
+      const deleted = oldValue(row, ['deleted']);
+      if (asset) metadata.asset = asset;
+      if (mileage) metadata.mileage = mileage;
+      if (deleted) metadata.deleted = deleted;
+      return [
+        oldValue(row, ['id', 'taskId']),
+        oldValue(row, ['projectId']),
+        oldValue(row, ['title']),
+        oldValue(row, ['source']),
+        oldValue(row, ['category']),
+        oldValue(row, ['state']),
+        oldValue(row, ['priority']),
+        oldValue(row, ['order']),
+        oldValue(row, ['recurrence']),
+        oldValue(row, ['startDate']),
+        oldValue(row, ['updatedAt']) || new Date().toISOString(),
+        JSON.stringify(metadata),
+      ];
+    });
+    headerRange.setValues([PLANNER_TASK_MANAGER_HEADERS]);
+    if (migratedRows.length) {
+      sheet.getRange(2, 1, migratedRows.length, PLANNER_TASK_MANAGER_HEADERS.length).setValues(migratedRows);
+    }
+  }
+  return sheet;
+}
+
+function taskManagerRows(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    return [];
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, PLANNER_TASK_MANAGER_HEADERS.length).getDisplayValues();
+  return values.map(function (row, index) {
+    const item = {};
+    PLANNER_TASK_MANAGER_HEADERS.forEach(function (header, column) {
+      item[header] = text(row[column]);
+    });
+    item._rowNumber = index + 2;
+    return item;
+  }).filter(function (item) { return text(item.id); });
+}
+
+function getTaskManagerState(spreadsheetId) {
+  if (!text(spreadsheetId)) {
+    throw new Error('Missing spreadsheetId for getTaskManagerState.');
+  }
+  const spreadsheet = SpreadsheetApp.openById(text(spreadsheetId));
+  const sheet = ensureTaskManagerSheet(spreadsheet);
+  return {
+    ok: true,
+    action: 'getTaskManagerState',
+    version: SCRIPT_VERSION,
+    rows: taskManagerRows(sheet),
+  };
+}
+
+function batchTaskManagerMutations(mutations, clientTxnId, spreadsheetId) {
+  if (!text(spreadsheetId)) {
+    throw new Error('Missing spreadsheetId for batchTaskManagerMutations.');
+  }
+
+  const txnId = text(clientTxnId);
+  const properties = PropertiesService.getScriptProperties();
+  const txnKey = 'planner_task_manager_txn_' + txnId;
+  if (txnId && properties.getProperty(txnKey)) {
+    return JSON.parse(properties.getProperty(txnKey));
+  }
+
+  const spreadsheet = SpreadsheetApp.openById(text(spreadsheetId));
+  const sheet = ensureTaskManagerSheet(spreadsheet);
+  const existing = taskManagerRows(sheet);
+  const byId = {};
+  existing.forEach(function (row) { byId[text(row.id)] = row; });
+  const results = [];
+  (Array.isArray(mutations) ? mutations : []).forEach(function (mutation) {
+    const row = mutation && mutation.row ? mutation.row : {};
+    const id = text((mutation && mutation.id) || row.id);
+    if (!id) {
+      results.push({ ok: false, error: 'Mutation is missing id.' });
+      return;
+    }
+
+    const current = byId[id];
+    if (mutation.op === 'delete') {
+      if (!current || taskManagerDate(row.updatedAt) >= taskManagerDate(current.updatedAt)) {
+        if (current) {
+          sheet.deleteRow(current._rowNumber);
+          existing.splice(existing.indexOf(current), 1);
+          existing.forEach(function (item, index) { item._rowNumber = index + 2; });
+          delete byId[id];
+        }
+        results.push({ ok: true, op: 'delete', id: id, applied: true });
+      } else {
+        results.push({ ok: true, op: 'delete', id: id, applied: false, conflict: true });
+      }
+      return;
+    }
+
+    const normalized = {};
+    PLANNER_TASK_MANAGER_HEADERS.forEach(function (header) {
+      normalized[header] = text(row[header]);
+    });
+    normalized.id = id;
+    normalized.updatedAt = normalized.updatedAt || new Date().toISOString();
+    if (current && taskManagerDate(normalized.updatedAt) < taskManagerDate(current.updatedAt)) {
+      results.push({ ok: true, op: 'upsert', id: id, applied: false, conflict: true });
+      return;
+    }
+
+    if (current) {
+      sheet.getRange(current._rowNumber, 1, 1, PLANNER_TASK_MANAGER_HEADERS.length).setValues([PLANNER_TASK_MANAGER_HEADERS.map(function (header) { return normalized[header]; })]);
+      byId[id] = Object.assign({}, normalized, { _rowNumber: current._rowNumber });
+    } else {
+      sheet.appendRow(PLANNER_TASK_MANAGER_HEADERS.map(function (header) { return normalized[header]; }));
+      byId[id] = Object.assign({}, normalized, { _rowNumber: sheet.getLastRow() });
+    }
+    results.push({ ok: true, op: 'upsert', id: id, applied: true });
+  });
+
+  const response = { ok: true, action: 'batchTaskManagerMutations', version: SCRIPT_VERSION, clientTxnId: txnId, results: results };
+  if (txnId) {
+    properties.setProperty(txnKey, JSON.stringify(response));
+  }
+  return response;
+}
+
+function batchApplyPlannerChanges(mutations, clientTxnId, spreadsheetId) {
+  const list = Array.isArray(mutations) ? mutations : [];
+  const taskManagerMutations = list.filter(function (mutation) {
+    return mutation && mutation.sheet === PLANNER_TASK_MANAGER;
+  });
+  if (taskManagerMutations.length !== list.length) {
+    throw new Error('Unsupported planner sheet in batchApplyPlannerChanges.');
+  }
+  return batchTaskManagerMutations(taskManagerMutations, clientTxnId, spreadsheetId);
 }
 
 function buildProjectDropdownOptionsPayload(spreadsheetId) {
@@ -583,6 +774,13 @@ function doPost(e) {
     const bodyText = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     const body = JSON.parse(bodyText);
     const action = text(body.action || (e && e.parameter && e.parameter.action) || 'updateProject');
+
+    if (action === 'batchTaskManagerMutations' || action === 'batchApplyPlannerChanges') {
+      const result = action === 'batchTaskManagerMutations'
+        ? batchTaskManagerMutations(body.mutations, body.clientTxnId, body.spreadsheetId)
+        : batchApplyPlannerChanges(body.mutations, body.clientTxnId, body.spreadsheetId);
+      return jsonResponse(result);
+    }
 
     if (action === 'sendReminder' || action === 'resetReminder' || action === 'deleteReminder') {
       const reminderResult = handleReminderAction(action, body);

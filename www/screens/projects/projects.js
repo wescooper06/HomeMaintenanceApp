@@ -98,6 +98,8 @@ function initProjectsScreen() {
   const isStillActive = () => window.location.hash.replace("#", "") === "projects";
 
   async function ensureProjectServicesLoaded() {
+    await loadScriptFresh("js/utils/uuid.js");
+    await loadScriptFresh("js/services/planner-storage.service.js");
     await loadScriptFresh("js/services/sheets.service.js");
     await loadScriptFresh("js/services/projects.service.js");
 
@@ -1884,20 +1886,12 @@ function initProjectsScreen() {
     elements.list.innerHTML = html;
   }
 
-  function addToTaskManager(project) {
+  async function addToTaskManager(project) {
     if (sourceTag(project.source) === "repeating") {
-      const repeatableKey = "hm_repeatable_tasks";
-      let repeatableOverrides = [];
-
-      try {
-        const parsed = JSON.parse(localStorage.getItem(repeatableKey) || "[]");
-        repeatableOverrides = Array.isArray(parsed) ? parsed : [];
-      } catch (error) {
-        repeatableOverrides = [];
-      }
-
       const projectId = cleanText(project.id, "");
-      const repeatableIndex = repeatableOverrides.findIndex((item) => cleanText(item && item.projectId, "") === projectId);
+      const existingTasks = await window.PlannerStorage.getTaskManager();
+      const existingTask = existingTasks.find((item) => cleanText(item.projectId, "") === projectId
+        && sourceTag(item.source) === "repeating");
       const repeatableRecord = {
         projectId,
         title: cleanText(project.title, "Untitled Task"),
@@ -1913,50 +1907,47 @@ function initProjectsScreen() {
         removedFromTaskManager: false,
         removedFromPlanner: false,
       };
-      if (repeatableIndex >= 0) {
-        repeatableOverrides[repeatableIndex] = {
-          ...repeatableOverrides[repeatableIndex],
-          ...repeatableRecord,
-        };
-      } else {
-        repeatableOverrides.push(repeatableRecord);
-      }
-
-      localStorage.setItem(repeatableKey, JSON.stringify(repeatableOverrides));
+      await window.PlannerStorage.upsertRepeatableOverride(repeatableRecord);
+      await window.PlannerStorage.upsertTaskManagerTask({
+        id: existingTask && existingTask.id ? existingTask.id : window.generateUuidV4(),
+        projectId,
+        title: cleanText(project.title, "Untitled Task"),
+        source: "repeating",
+        category: cleanText(project.category, "uncategorized"),
+        state: cleanText(project.state, "unknown"),
+        priority: parseNumber(project.priority, 3),
+        order: parseNumber(project.order, existingTasks.length + 1),
+        recurrence: cleanText(project.recurrence, ""),
+        startDate: firstDefined(project.metadata || {}, ["startDate", "date"]) || "",
+        metadataJson: JSON.stringify({
+          asset: project.asset || "",
+          mileage: project.mileage || "",
+        }),
+      });
       renderSummary(`Added "${project.title}" to Repeatable Tasks.`);
       return;
     }
 
-    const key = "hm_task_manager_tasks";
-    const existing = JSON.parse(localStorage.getItem(key) || "[]");
-    const rowNumber = firstDefined(project.metadata || {}, ["sheetRowNumber", "rownumber", "_rownumber"]);
-    const taskId = `task-${project.source}-${rowNumber == null ? project.id : rowNumber}`;
+    const existingTasks = await window.PlannerStorage.getTaskManager();
+    const existingTask = existingTasks.find((item) => cleanText(item.projectId, "") === cleanText(project.id, "")
+      && sourceTag(item.source) === sourceTag(project.source));
     const record = {
-      taskId,
+      id: existingTask && existingTask.id ? existingTask.id : window.generateUuidV4(),
       projectId: project.id,
       title: project.title,
       source: project.source,
       category: project.category,
       state: project.state,
       priority: parseNumber(project.priority) ?? 3,
-      order: parseNumber(project.order) ?? (existing.length + 1),
+      order: parseNumber(project.order) ?? (existingTasks.length + 1),
+      startDate: firstDefined(project.metadata || {}, ["startDate", "date"] ) || "",
       recurrence: project.recurrence || "",
-      asset: project.asset || "",
-      mileage: project.mileage || "",
-      updatedAt: new Date().toISOString(),
+      metadataJson: JSON.stringify({
+        asset: project.asset || "",
+        mileage: project.mileage || "",
+      }),
     };
-
-    const index = existing.findIndex((item) => item.taskId === taskId);
-    if (index >= 0) {
-      existing[index] = {
-        ...existing[index],
-        ...record,
-      };
-    } else {
-      existing.push(record);
-    }
-
-    localStorage.setItem(key, JSON.stringify(existing));
+    await window.PlannerStorage.upsertTaskManagerTask(record);
     renderSummary(`Added \"${project.title}\" to Task Manager.`);
   }
 
@@ -2093,7 +2084,10 @@ function initProjectsScreen() {
       }
 
       if (addBtn) {
-        addToTaskManager(project);
+        addToTaskManager(project).catch((error) => {
+          console.error("Failed to add project to Task Manager", error);
+          renderSummary(`Unable to add "${project.title}" to Task Manager: ${error.message || "sync failed"}`);
+        });
       }
 
       if (deleteBtn) {
