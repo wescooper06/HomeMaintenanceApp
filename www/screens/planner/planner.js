@@ -1067,6 +1067,10 @@ function initPlannerScreen() {
 
     return new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-module-src="${src}"]`);
+      if (existing && src === "js/services/planner-storage.service.js") {
+        resolve();
+        return;
+      }
       if (existing) {
         existing.remove();
       }
@@ -1883,6 +1887,7 @@ function initPlannerScreen() {
       await ensureProjectServicesLoaded();
       const projects = await window.loadAllProjects();
       state.allProjects = (projects || []).map(toProjectView);
+      window.PlannerStorage.setCachedProjects(projects || []);
       const taskManagerTasks = window.PlannerStorage && typeof window.PlannerStorage.getTaskManager === "function"
         ? await window.PlannerStorage.getTaskManager()
         : [];
@@ -3906,12 +3911,16 @@ function initPlannerScreen() {
   }
 
   async function initialize() {
+    console.time("planner-load");
     await ensurePlannerStorageLoaded();
     elements.mode.textContent = window.PlannerStorage.getUseSheets() ? "Sheets mode" : "Local mode";
     state.curatedTasks = loadCuratedTasks();
     state.planner = await loadPlanner();
+    void window.PlannerStorage.prefetchAll().catch((error) => console.warn("Background PlannerStorage prefetch failed", error));
     state.selectedCalendarDate = state.planner.weekStartDate;
     state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
+    renderTaskPool();
+    renderWeekGrid();
     await loadRepeatableTasks();
     await mountParkingLotPanel();
     if (window.PlannerStorage && typeof window.PlannerStorage.onChange === "function") {
@@ -3937,6 +3946,7 @@ function initPlannerScreen() {
     renderWeekGrid();
     consumeStagedQueue();
     elements.status.textContent = `Planning week of ${state.planner.weekStartDate}.`;
+    console.timeEnd("planner-load");
   }
 
   window.loadPlanner = loadPlanner;
