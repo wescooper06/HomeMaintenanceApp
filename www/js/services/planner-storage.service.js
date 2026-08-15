@@ -1,5 +1,13 @@
 // PlannerStorage provides the local-first persistence boundary for planner features.
 (function () {
+  const PlannerCache = {
+    projects: null,
+    tasks: null,
+    weekly: null,
+    overrides: null,
+    expires: 0,
+  };
+
   const STORAGE_KEYS = {
     parkingLot: "hm_parking_lot",
     retryQueue: "hm_sheet_write_retry_queue",
@@ -21,6 +29,22 @@
     listeners: new Set(),
     weeklyPlannerWriteQueue: Promise.resolve(),
   };
+
+  function cacheValid() {
+    return Date.now() < PlannerCache.expires;
+  }
+
+  function setCache(data) {
+    Object.assign(PlannerCache, data || {});
+    PlannerCache.expires = Date.now() + 5 * 60 * 1000;
+  }
+
+  function invalidateCache(keys) {
+    (Array.isArray(keys) ? keys : []).forEach((key) => {
+      PlannerCache[key] = null;
+    });
+    PlannerCache.expires = 0;
+  }
 
   function nowIso() {
     return new Date().toISOString();
@@ -267,17 +291,24 @@
 
   // Return Sheets rows first when enabled, falling back to the optimistic local copy.
   async function getTaskManager() {
+    if (cacheValid() && Array.isArray(PlannerCache.tasks)) {
+      return clone(PlannerCache.tasks);
+    }
     if (state.useSheets) {
       try {
         const rows = await getTaskManagerFromSheets();
         saveTaskManagerLocal(rows);
-        return clone(rows).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+        const sorted = clone(rows).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+        setCache({ tasks: sorted });
+        return sorted;
       } catch (error) {
         console.warn("Task Manager Sheets read failed; using local fallback.", error);
         emitChange({ type: "task-manager-sync-error", error: String(error && error.message ? error.message : error) });
       }
     }
-    return clone(readTaskManagerLocal()).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+    const sorted = clone(readTaskManagerLocal()).sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+    setCache({ tasks: sorted });
+    return sorted;
   }
 
   // Persist a Task Manager task locally first, then sync its latest timestamp to Sheets.
@@ -293,6 +324,7 @@
     }
 
     saveTaskManagerLocal(current);
+    invalidateCache(["tasks"]);
     emitChange({ type: "task-manager-upsert", item: clone(normalized) });
     if (state.useSheets) {
       try {
@@ -382,6 +414,7 @@
     }
 
     writeJson(STORAGE_KEYS.repeatable, current);
+    invalidateCache(["overrides"]);
     emitChange({ type: "repeatable-upsert", item: clone(normalized) });
     return Promise.resolve(clone(normalized));
   }
@@ -499,6 +532,7 @@
     }
 
     saveWeeklyPlannerLocal(planner);
+    invalidateCache(["weekly"]);
     emitChange({ type: "weekly-task-upsert", item: clone(normalized) });
     return clone(normalized);
   }
@@ -524,12 +558,16 @@
     }
 
     saveWeeklyPlannerLocal(planner);
+    invalidateCache(["weekly"]);
     emitChange({ type: "weekly-task-delete", id: targetId, hardDelete });
     return { ok: true, id: targetId, hardDelete };
   }
 
   // Read Weekly Planner rows from Sheets first, preserving the existing planner object shape.
   async function getWeeklyPlanner() {
+    if (cacheValid() && PlannerCache.weekly) {
+      return clone(PlannerCache.weekly);
+    }
     if (state.useSheets) {
       try {
         const url = getSheetsEndpoint("getWeeklyPlannerState");
@@ -546,18 +584,22 @@
         }
         const planner = { weekStartDate: cleanText(local.weekStartDate, ""), tasks: sortWeeklyTasks(tasks) };
         saveWeeklyPlannerLocal(planner);
+        setCache({ weekly: planner });
         return clone(planner);
       } catch (error) {
         console.warn("Weekly Planner Sheets read failed; using local fallback.", error);
       }
     }
     const planner = readWeeklyPlannerLocal();
-    return { ...clone(planner), tasks: sortWeeklyTasks(planner.tasks) };
+    const result = { ...clone(planner), tasks: sortWeeklyTasks(planner.tasks) };
+    setCache({ weekly: result });
+    return result;
   }
 
   // Persist one Weekly Planner task optimistically, then sync its row to Planner_WeeklyTasks.
   async function upsertWeeklyTask(task) {
     const normalized = upsertWeeklyTaskLocal(task);
+    invalidateCache(["weekly"]);
     if (state.useSheets) {
       try {
         await sendWeeklyPlannerBatch([{ op: "upsert", sheet: SHEET_NAMES.weeklyTasks, row: weeklyTaskToSheetRow(normalized) }]);
@@ -572,6 +614,7 @@
   // Delete one Weekly Planner task optimistically, then sync its deletion to Sheets.
   async function deleteWeeklyTask(id, options) {
     const result = deleteWeeklyTaskLocal(id, options);
+    invalidateCache(["weekly"]);
     if (state.useSheets && result.ok) {
       try {
         await sendWeeklyPlannerBatch([{ op: "delete", sheet: SHEET_NAMES.weeklyTasks, id: result.id, row: { id: result.id, updatedAt: nowIso() } }]);
@@ -608,6 +651,7 @@
   function saveWeeklyPlannerState(planner) {
     const nextPlanner = planner && typeof planner === "object" ? planner : { weekStartDate: "", tasks: [] };
     state.weeklyPlannerWriteQueue = state.weeklyPlannerWriteQueue.then(async () => {
+      invalidateCache(["weekly"]);
       const current = readWeeklyPlannerLocal();
       const nextTasks = Array.isArray(nextPlanner.tasks) ? nextPlanner.tasks : [];
       const nextIds = new Set(nextTasks.map((task) => cleanText(task && (task.id || task.taskId), "")));
@@ -786,6 +830,38 @@
     return state.useSheets;
   }
 
+  function getCachedProjects() {
+    return cacheValid() && Array.isArray(PlannerCache.projects)
+      ? clone(PlannerCache.projects)
+      : null;
+  }
+
+  function setCachedProjects(projects) {
+    if (Array.isArray(projects)) {
+      setCache({ projects: clone(projects) });
+    }
+  }
+
+  async function prefetchAll() {
+    if (cacheValid() && PlannerCache.tasks && PlannerCache.weekly && PlannerCache.overrides) {
+      return { ...PlannerCache };
+    }
+    const projectsPromise = typeof window.loadAllProjects === "function"
+      ? window.loadAllProjects().catch((error) => {
+        console.warn("Projects prefetch failed.", error);
+        return null;
+      })
+      : Promise.resolve(null);
+    const [projects, tasks, weekly, overrides] = await Promise.all([
+      projectsPromise,
+      getTaskManager(),
+      getWeeklyPlanner(),
+      Promise.resolve(clone(readRepeatableLocal())),
+    ]);
+    setCache({ projects, tasks, weekly, overrides });
+    return { ...PlannerCache };
+  }
+
   window.PlannerStorage = {
     getParkingLot,
     upsertParkingItem,
@@ -806,9 +882,19 @@
     upsertRepeatableOverride,
     setUseSheets,
     getUseSheets,
+    getCachedProjects,
+    setCachedProjects,
+    prefetchAll,
     onChange,
     emitChange,
     getTaskManagerTasks: () => getTaskManager(),
-    getRepeatableOverrides: () => Promise.resolve(clone(readRepeatableLocal())),
+    getRepeatableOverrides: () => {
+      if (cacheValid() && Array.isArray(PlannerCache.overrides)) {
+        return Promise.resolve(clone(PlannerCache.overrides));
+      }
+      const overrides = clone(readRepeatableLocal());
+      setCache({ overrides });
+      return Promise.resolve(overrides);
+    },
   };
 })();

@@ -147,6 +147,10 @@ function initTasksScreen() {
 
     return new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-module-src=\"${src}\"]`);
+      if (existing && src === "js/services/planner-storage.service.js") {
+        resolve();
+        return;
+      }
       if (existing) {
         existing.remove();
       }
@@ -635,11 +639,17 @@ function initTasksScreen() {
   }
 
   async function loadTaskManager() {
+    console.time("tasks-load");
     elements.status.textContent = "Loading tasks...";
     elements.error.hidden = true;
     await ensureProjectServicesLoaded();
     elements.mode.textContent = window.PlannerStorage.getUseSheets() ? "Sheets mode" : "Local mode";
-    const projects = await window.loadAllProjects();
+    const [projects] = await Promise.all([
+      window.loadAllProjects(),
+      window.PlannerStorage.getTaskManager(),
+    ]);
+    window.PlannerStorage.setCachedProjects(projects || []);
+    void window.PlannerStorage.prefetchAll().catch((error) => console.warn("Background PlannerStorage prefetch failed", error));
     state.allProjects = (projects || []).map(toProjectView);
 
     const projectMapByKey = new Map(state.allProjects.map((project) => [makeProjectKey(project.source, project.projectId), project]));
@@ -655,6 +665,7 @@ function initTasksScreen() {
     await buildProjectTasks(projectMapByKey, projectMapById);
     await buildRepeatableTasks(state.allProjects);
     renderAll();
+    console.timeEnd("tasks-load");
   }
 
   window.PlannerStorage && window.PlannerStorage.onChange((detail) => {

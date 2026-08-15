@@ -13,6 +13,12 @@ const routes = {
     js: "screens/tasks/tasks.js",
     init: "initTasksScreen",
   },
+  workbench: {
+    html: "screens/workbench/workbench.html",
+    css: "screens/workbench/workbench.css",
+    js: "screens/workbench/workbench.js",
+    init: "initWorkbenchScreen",
+  },
   planner: {
     html: "screens/planner/planner.html",
     css: "screens/planner/planner.css",

@@ -113,6 +113,10 @@ function initProjectsScreen() {
 
     return new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-module-src=\"${src}\"]`);
+      if (existing && src === "js/services/planner-storage.service.js") {
+        resolve();
+        return;
+      }
       if (existing) {
         existing.remove();
       }
@@ -729,6 +733,14 @@ function initProjectsScreen() {
       return [];
     }
 
+    if (fieldKey === "recurrence") {
+      const currentValue = cleanText(getFieldValue(project, field), "");
+      return sortDropdownValues([
+        ...buildMergedRecurrenceOptions(),
+        currentValue,
+      ]);
+    }
+
     const values = new Set();
 
     const sourceDropdowns = state.sheetDropdowns[project.source] || {};
@@ -1019,10 +1031,15 @@ function initProjectsScreen() {
   function renderAddProjectDynamicFields() {
     const sourceType = getAddProjectSourceType();
     const draft = state.addProjectDraft;
-    const isRepeatingChecked = Boolean(draft.addToRepeating);
 
     if (!sourceType) {
-      elements.addDynamicFields.innerHTML = '<p class="project-add-hint">Select Property or Vehicle / Engine to continue.</p>';
+      const recurrenceField = buildAddField({
+        key: "recurrence",
+        label: "Recurrance",
+        type: "select",
+        options: buildMergedRecurrenceOptions(),
+      });
+      elements.addDynamicFields.innerHTML = `${recurrenceField}<p class="project-add-hint">Select Property or Vehicle / Engine to continue.</p>`;
       return;
     }
 
@@ -1089,9 +1106,10 @@ function initProjectsScreen() {
       ]);
     }
 
-    const allFields = isRepeatingChecked
-      ? [...baseFields, { key: "recurrence", label: "Recurrance", type: "select", options: repeatingOptions }]
-      : baseFields;
+    const allFields = [
+      ...baseFields,
+      { key: "recurrence", label: "Recurrance", type: "select", options: repeatingOptions },
+    ];
 
     elements.addDynamicFields.innerHTML = allFields.map(buildAddField).join("");
 
@@ -2115,17 +2133,74 @@ function initProjectsScreen() {
   }
 
   async function loadProjects() {
+    console.time("projects-load");
     renderSummary("Loading projects...");
     state.retryQueue = loadRetryQueue();
     renderSyncStatus();
 
     await ensureProjectServicesLoaded();
     await refreshProjectsFromSheet();
+    void window.PlannerStorage.prefetchAll().catch((error) => console.warn("Background PlannerStorage prefetch failed", error));
+    const pendingWorkbenchAction = sessionStorage.getItem("hm_workbench_project_action");
+    if (pendingWorkbenchAction) {
+      sessionStorage.removeItem("hm_workbench_project_action");
+      try {
+        const request = JSON.parse(pendingWorkbenchAction);
+        const project = state.allProjects.find((item) => cleanText(item.id, "") === cleanText(request.projectId, "")
+          && sourceTag(item.source) === sourceTag(request.source));
+        if (project && request.action === "edit-project") {
+          openEditModal(project);
+          Object.keys(request.values || {}).forEach((key) => {
+            const control = elements.modalFields.querySelector(`[data-field-key="${CSS.escape(key)}"]`);
+            if (control) control.value = request.values[key] == null ? "" : request.values[key];
+          });
+        }
+        if (project && request.action === "delete-project") openDeleteModal(project);
+      } catch (error) {
+        console.warn("Workbench project action could not be opened.", error);
+      }
+    }
+    const pendingWorkbenchAdd = sessionStorage.getItem("hm_workbench_project_add");
+    if (pendingWorkbenchAdd) {
+      sessionStorage.removeItem("hm_workbench_project_add");
+      try {
+        const values = JSON.parse(pendingWorkbenchAdd);
+        openAddProjectModal();
+        const setValue = (selector, value) => {
+          const control = document.querySelector(selector);
+          if (control && value != null) control.value = value;
+          return control;
+        };
+        const property = setValue("#projectAddProperty", values.property);
+        const vehicle = setValue("#projectAddVehicle", values.vehicle);
+        if (property && values.property) handlePropertySelection();
+        else if (vehicle && values.vehicle) handleVehicleSelection();
+        renderAddProjectDynamicFields();
+        Object.keys(values).forEach((key) => {
+          const control = elements.addDynamicFields.querySelector(`[data-add-key="${CSS.escape(key)}"]`);
+          if (!control) return;
+          if (control.type === "checkbox") control.checked = values[key] === true || values[key] === "true";
+          else control.value = values[key] == null ? "" : values[key];
+        });
+        const repeatingCheckbox = elements.addDynamicFields.querySelector('input[data-add-key="addToRepeating"]');
+        if (repeatingCheckbox && repeatingCheckbox.checked) {
+          repeatingCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+          Object.keys(values).forEach((key) => {
+            const control = elements.addDynamicFields.querySelector(`[data-add-key="${CSS.escape(key)}"]`);
+            if (control && key !== "addToRepeating") control.value = values[key] == null ? "" : values[key];
+          });
+        }
+      } catch (error) {
+        console.warn("Workbench Add Project values could not be opened.", error);
+      }
+    }
+    console.timeEnd("projects-load");
   }
 
   async function refreshProjectsFromSheet() {
+    const cachedProjects = window.PlannerStorage.getCachedProjects();
     const [projects] = await Promise.all([
-      window.loadAllProjects(),
+      cachedProjects || window.loadAllProjects(),
       refreshSheetDropdowns(),
     ]);
 
@@ -2136,6 +2211,7 @@ function initProjectsScreen() {
     }
 
     state.allProjects = (projects || []).map(toViewModel);
+    window.PlannerStorage.setCachedProjects(projects || []);
     const stats = window.ProjectsService && window.ProjectsService.lastLoadStats;
     state.sheetCounts = (stats && stats.effective)
       ? {
