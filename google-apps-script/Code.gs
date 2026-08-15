@@ -11,6 +11,13 @@ const PLANNER_TASK_MANAGER_HEADERS = [
   'id', 'projectId', 'title', 'source', 'category', 'state', 'priority',
   'order', 'recurrence', 'startDate', 'updatedAt', 'metadataJson',
 ];
+const PLANNER_WEEKLY_TASKS = 'Planner_WeeklyTasks';
+const PLANNER_WEEKLY_TASK_HEADERS = [
+  'id', 'taskType', 'title', 'source', 'projectId', 'parentRepeatableId',
+  'occurenceDate', 'date', 'timeSlot', 'bucket', 'completed', 'overridden',
+  'deletedInstance', 'checklistJson', 'checklistOpen', 'reminderJson',
+  'metadataJson', 'updatedAt', 'deleted',
+];
 
 const FIXED_HOME_HEADERS = [
   'ID',
@@ -74,6 +81,12 @@ function doGet(e) {
   const canJsonp = /^[A-Za-z_$][A-Za-z0-9_.$]*$/.test(callback);
 
   try {
+    if (action === 'getWeeklyPlannerState') {
+      const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
+      const payload = getWeeklyPlannerState(spreadsheetId);
+      return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+    }
+
     if (action === 'getTaskManagerState') {
       const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
       const payload = getTaskManagerState(spreadsheetId);
@@ -130,7 +143,7 @@ function doGet(e) {
       service: 'home-maintenance-sheet-writer',
       version: SCRIPT_VERSION,
       methods: ['GET', 'POST'],
-      actions: ['projectDropdownOptions', 'getTaskManagerState', 'batchTaskManagerMutations', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
+      actions: ['projectDropdownOptions', 'getTaskManagerState', 'batchTaskManagerMutations', 'getWeeklyPlannerState', 'batchWeeklyPlannerMutations', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
     };
 
     return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
@@ -317,6 +330,12 @@ function batchTaskManagerMutations(mutations, clientTxnId, spreadsheetId) {
 
 function batchApplyPlannerChanges(mutations, clientTxnId, spreadsheetId) {
   const list = Array.isArray(mutations) ? mutations : [];
+  const weeklyMutations = list.filter(function (mutation) {
+    return mutation && mutation.sheet === PLANNER_WEEKLY_TASKS;
+  });
+  if (weeklyMutations.length === list.length) {
+    return batchWeeklyPlannerMutations(weeklyMutations, clientTxnId, spreadsheetId);
+  }
   const taskManagerMutations = list.filter(function (mutation) {
     return mutation && mutation.sheet === PLANNER_TASK_MANAGER;
   });
@@ -324,6 +343,74 @@ function batchApplyPlannerChanges(mutations, clientTxnId, spreadsheetId) {
     throw new Error('Unsupported planner sheet in batchApplyPlannerChanges.');
   }
   return batchTaskManagerMutations(taskManagerMutations, clientTxnId, spreadsheetId);
+}
+
+function ensureWeeklyPlannerSheet(spreadsheet) {
+  const sheet = resolveSheetByTabName(spreadsheet, PLANNER_WEEKLY_TASKS);
+  if (!sheet) throw new Error('Tab not found: ' + PLANNER_WEEKLY_TASKS);
+  const headerRange = sheet.getRange(1, 1, 1, PLANNER_WEEKLY_TASK_HEADERS.length);
+  const headers = headerRange.getDisplayValues()[0].map(function (value) { return text(value); });
+  const matches = PLANNER_WEEKLY_TASK_HEADERS.every(function (header, index) { return headers[index] === header; });
+  if (!matches) headerRange.setValues([PLANNER_WEEKLY_TASK_HEADERS]);
+  return sheet;
+}
+
+function weeklyPlannerRows(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, PLANNER_WEEKLY_TASK_HEADERS.length).getDisplayValues();
+  return values.map(function (row, index) {
+    const item = {};
+    PLANNER_WEEKLY_TASK_HEADERS.forEach(function (header, column) { item[header] = text(row[column]); });
+    item._rowNumber = index + 2;
+    return item;
+  }).filter(function (item) { return text(item.id); });
+}
+
+function getWeeklyPlannerState(spreadsheetId) {
+  if (!text(spreadsheetId)) throw new Error('Missing spreadsheetId for getWeeklyPlannerState.');
+  const sheet = ensureWeeklyPlannerSheet(SpreadsheetApp.openById(text(spreadsheetId)));
+  return { ok: true, action: 'getWeeklyPlannerState', version: SCRIPT_VERSION, rows: weeklyPlannerRows(sheet) };
+}
+
+function batchWeeklyPlannerMutations(mutations, clientTxnId, spreadsheetId) {
+  if (!text(spreadsheetId)) throw new Error('Missing spreadsheetId for batchWeeklyPlannerMutations.');
+  const txnId = text(clientTxnId);
+  const properties = PropertiesService.getScriptProperties();
+  const txnKey = 'planner_weekly_tasks_txn_' + txnId;
+  if (txnId && properties.getProperty(txnKey)) return JSON.parse(properties.getProperty(txnKey));
+
+  const sheet = ensureWeeklyPlannerSheet(SpreadsheetApp.openById(text(spreadsheetId)));
+  const existing = weeklyPlannerRows(sheet);
+  const byId = {};
+  existing.forEach(function (row) { byId[text(row.id)] = row; });
+  const results = [];
+  (Array.isArray(mutations) ? mutations : []).forEach(function (mutation) {
+    const row = mutation && mutation.row ? mutation.row : {};
+    const id = text((mutation && mutation.id) || row.id);
+    if (!id) { results.push({ ok: false, error: 'Mutation is missing id.' }); return; }
+    const current = byId[id];
+    if (current && taskManagerDate(row.updatedAt) < taskManagerDate(current.updatedAt)) {
+      results.push({ ok: true, id: id, applied: false, conflict: true });
+      return;
+    }
+    if (mutation.op === 'delete') {
+      if (current) sheet.deleteRow(current._rowNumber);
+      results.push({ ok: true, op: 'delete', id: id, applied: Boolean(current) });
+      return;
+    }
+    const normalized = {};
+    PLANNER_WEEKLY_TASK_HEADERS.forEach(function (header) { normalized[header] = text(row[header]); });
+    normalized.id = id;
+    normalized.updatedAt = normalized.updatedAt || new Date().toISOString();
+    const values = PLANNER_WEEKLY_TASK_HEADERS.map(function (header) { return normalized[header]; });
+    if (current) sheet.getRange(current._rowNumber, 1, 1, PLANNER_WEEKLY_TASK_HEADERS.length).setValues([values]);
+    else sheet.appendRow(values);
+    results.push({ ok: true, op: 'upsert', id: id, applied: true });
+  });
+  const response = { ok: true, action: 'batchWeeklyPlannerMutations', version: SCRIPT_VERSION, clientTxnId: txnId, results: results };
+  if (txnId) properties.setProperty(txnKey, JSON.stringify(response));
+  return response;
 }
 
 function buildProjectDropdownOptionsPayload(spreadsheetId) {
@@ -780,6 +867,10 @@ function doPost(e) {
         ? batchTaskManagerMutations(body.mutations, body.clientTxnId, body.spreadsheetId)
         : batchApplyPlannerChanges(body.mutations, body.clientTxnId, body.spreadsheetId);
       return jsonResponse(result);
+    }
+
+    if (action === 'batchWeeklyPlannerMutations') {
+      return jsonResponse(batchWeeklyPlannerMutations(body.mutations, body.clientTxnId, body.spreadsheetId));
     }
 
     if (action === 'sendReminder' || action === 'resetReminder' || action === 'deleteReminder') {

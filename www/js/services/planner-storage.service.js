@@ -19,6 +19,7 @@
   const state = {
     useSheets: Boolean(window.APP_CONFIG && window.APP_CONFIG.USE_SHEETS),
     listeners: new Set(),
+    weeklyPlannerWriteQueue: Promise.resolve(),
   };
 
   function nowIso() {
@@ -398,33 +399,97 @@
     return planner;
   }
 
-  function upsertWeeklyTask(task) {
-    const planner = readWeeklyPlannerLocal();
-    const id = ensureUuid(task && (task.id || task.taskId));
-    const normalized = {
-      id,
-      taskId: id,
-      taskType: cleanText(task && (task.taskType || task.type), "curated"),
-      type: cleanText(task && (task.taskType || task.type), "curated"),
-      title: cleanText(task && task.title, "Untitled Task"),
-      source: cleanText(task && task.source, "unknown"),
-      projectId: cleanText(task && task.projectId, ""),
-      parentRepeatableId: cleanText(task && task.parentRepeatableId, ""),
-      occurrenceDate: cleanText(task && task.occurrenceDate, cleanText(task && task.date, "")),
-      date: cleanText(task && task.date, ""),
-      timeSlot: cleanText(task && task.timeSlot, cleanText(task && task.slot, "morning")),
-      bucket: cleanText(task && task.bucket, cleanText(task && task.timeSlot, "morning")),
-      completed: Boolean(task && task.completed),
-      overridden: Boolean(task && task.overridden),
-      deletedInstance: Boolean(task && task.deletedInstance),
-      checklist: Array.isArray(task && task.checklist) ? task.checklist : [],
-      checklistOpen: Boolean(task && task.checklistOpen),
-      reminder: task && task.reminder && typeof task.reminder === "object" ? { ...task.reminder } : {},
-      metadata: task && task.metadata && typeof task.metadata === "object" ? { ...task.metadata } : {},
-      priority: task && task.priority != null ? task.priority : null,
-      recurrence: cleanText(task && task.recurrence, ""),
-      updatedAt: nowIso(),
+  function normalizeWeeklySheetTask(task, defaultOrder) {
+    const existing = task && typeof task === "object" ? task : {};
+    const parseObject = (value, fallback) => {
+      if (value && typeof value === "object") return value;
+      try { return JSON.parse(cleanText(value, "")) || fallback; } catch (error) { return fallback; }
     };
+    const parseArray = (value) => {
+      const parsed = parseObject(value, []);
+      return Array.isArray(parsed) ? parsed : [];
+    };
+    const metadata = parseObject(existing.metadata || existing.metadataJson, {});
+    return {
+      id: ensureUuid(existing.id || existing.taskId),
+      taskId: ensureUuid(existing.id || existing.taskId),
+      taskType: cleanText(existing.taskType || existing.type, "curated"),
+      type: cleanText(existing.taskType || existing.type, "curated"),
+      title: cleanText(existing.title, "Untitled Task"),
+      source: cleanText(existing.source, "unknown"),
+      projectId: cleanText(existing.projectId, ""),
+      parentRepeatableId: cleanText(existing.parentRepeatableId, ""),
+      occurrenceDate: cleanText(existing.occurrenceDate || existing.occurenceDate, cleanText(existing.date, "")),
+      date: cleanText(existing.date, ""),
+      timeSlot: cleanText(existing.timeSlot, "morning"),
+      bucket: cleanText(existing.bucket, cleanText(existing.timeSlot, "morning")),
+      completed: existing.completed === true || String(existing.completed).toLowerCase() === "true",
+      overridden: existing.overridden === true || String(existing.overridden).toLowerCase() === "true",
+      deletedInstance: existing.deletedInstance === true || String(existing.deletedInstance).toLowerCase() === "true",
+      checklist: parseArray(existing.checklist || existing.checklistJson),
+      checklistOpen: existing.checklistOpen === true || String(existing.checklistOpen).toLowerCase() === "true",
+      reminder: parseObject(existing.reminder || existing.reminderJson, {}),
+      metadata,
+      priority: existing.priority != null ? existing.priority : null,
+      recurrence: cleanText(existing.recurrence, ""),
+      order: existing.order != null ? existing.order : (metadata.order != null ? metadata.order : defaultOrder),
+      updatedAt: cleanText(existing.updatedAt, nowIso()),
+    };
+  }
+
+  function weeklyTaskToSheetRow(task) {
+    const normalized = normalizeWeeklySheetTask(task, 1);
+    return {
+      id: normalized.id,
+      taskType: normalized.taskType,
+      title: normalized.title,
+      source: normalized.source,
+      projectId: normalized.projectId,
+      parentRepeatableId: normalized.parentRepeatableId,
+      occurenceDate: normalized.occurrenceDate,
+      date: normalized.date,
+      timeSlot: normalized.timeSlot,
+      bucket: normalized.bucket,
+      completed: normalized.completed,
+      overridden: normalized.overridden,
+      deletedInstance: normalized.deletedInstance,
+      checklistJson: JSON.stringify(normalized.checklist || []),
+      checklistOpen: normalized.checklistOpen,
+      reminderJson: JSON.stringify(normalized.reminder || {}),
+      metadataJson: JSON.stringify({ ...(normalized.metadata || {}), order: normalized.order }),
+      updatedAt: normalized.updatedAt,
+      deleted: false,
+    };
+  }
+
+  function sheetRowToWeeklyTask(row, index) {
+    return normalizeWeeklySheetTask({
+      ...row,
+      occurrenceDate: row.occurenceDate || row.occurrenceDate,
+      checklist: row.checklistJson,
+      reminder: row.reminderJson,
+      metadata: row.metadataJson,
+    }, index + 1);
+  }
+
+  function sortWeeklyTasks(tasks) {
+    const slotOrder = { morning: 0, afternoon: 1, evening: 2 };
+    return [...(Array.isArray(tasks) ? tasks : [])].sort((left, right) => {
+      const dateDifference = cleanText(left.date, "").localeCompare(cleanText(right.date, ""));
+      if (dateDifference) return dateDifference;
+      const slotDifference = (slotOrder[cleanText(left.timeSlot, "morning")] || 0) - (slotOrder[cleanText(right.timeSlot, "morning")] || 0);
+      if (slotDifference) return slotDifference;
+      return Number(left.order || 0) - Number(right.order || 0);
+    });
+  }
+
+  function saveWeeklyPlannerLocal(planner) {
+    writeJson(STORAGE_KEYS.weeklyPlanner, planner);
+  }
+
+  function upsertWeeklyTaskLocal(task) {
+    const planner = readWeeklyPlannerLocal();
+    const normalized = normalizeWeeklySheetTask({ ...task, updatedAt: nowIso() }, planner.tasks.length + 1);
 
     const index = planner.tasks.findIndex((entry) => cleanText(entry.id || entry.taskId, "") === normalized.id);
     if (index >= 0) {
@@ -433,12 +498,12 @@
       planner.tasks.push(normalized);
     }
 
-    writeJson(STORAGE_KEYS.weeklyPlanner, planner);
+    saveWeeklyPlannerLocal(planner);
     emitChange({ type: "weekly-task-upsert", item: clone(normalized) });
-    return Promise.resolve(clone(normalized));
+    return clone(normalized);
   }
 
-  function deleteWeeklyTask(id, options) {
+  function deleteWeeklyTaskLocal(id, options) {
     const planner = readWeeklyPlannerLocal();
     const targetId = cleanText(id, "");
     const hardDelete = Boolean(options && options.hardDelete);
@@ -458,9 +523,128 @@
       };
     }
 
-    writeJson(STORAGE_KEYS.weeklyPlanner, planner);
+    saveWeeklyPlannerLocal(planner);
     emitChange({ type: "weekly-task-delete", id: targetId, hardDelete });
-    return Promise.resolve({ ok: true, id: targetId, hardDelete });
+    return { ok: true, id: targetId, hardDelete };
+  }
+
+  // Read Weekly Planner rows from Sheets first, preserving the existing planner object shape.
+  async function getWeeklyPlanner() {
+    if (state.useSheets) {
+      try {
+        const url = getSheetsEndpoint("getWeeklyPlannerState");
+        url.searchParams.set("spreadsheetId", getSpreadsheetId());
+        const response = await fetch(url.toString());
+        if (!response.ok) throw new Error(`Weekly Planner read failed (${response.status}).`);
+        const payload = await response.json();
+        if (!payload || payload.ok === false) throw new Error(cleanText(payload && payload.error, "Weekly Planner read failed."));
+        const local = readWeeklyPlannerLocal();
+        const tasks = (Array.isArray(payload.rows) ? payload.rows : []).map(sheetRowToWeeklyTask);
+        if (!tasks.length && Array.isArray(local.tasks) && local.tasks.length) {
+          console.warn("Weekly Planner Sheets state is empty; preserving local planner tasks for manual migration.");
+          return { ...clone(local), tasks: sortWeeklyTasks(local.tasks) };
+        }
+        const planner = { weekStartDate: cleanText(local.weekStartDate, ""), tasks: sortWeeklyTasks(tasks) };
+        saveWeeklyPlannerLocal(planner);
+        return clone(planner);
+      } catch (error) {
+        console.warn("Weekly Planner Sheets read failed; using local fallback.", error);
+      }
+    }
+    const planner = readWeeklyPlannerLocal();
+    return { ...clone(planner), tasks: sortWeeklyTasks(planner.tasks) };
+  }
+
+  // Persist one Weekly Planner task optimistically, then sync its row to Planner_WeeklyTasks.
+  async function upsertWeeklyTask(task) {
+    const normalized = upsertWeeklyTaskLocal(task);
+    if (state.useSheets) {
+      try {
+        await sendWeeklyPlannerBatch([{ op: "upsert", sheet: SHEET_NAMES.weeklyTasks, row: weeklyTaskToSheetRow(normalized) }]);
+      } catch (error) {
+        queueRetry({ op: "upsert", sheet: SHEET_NAMES.weeklyTasks, row: weeklyTaskToSheetRow(normalized) });
+        emitChange({ type: "weekly-task-sync-error", error: String(error && error.message ? error.message : error) });
+      }
+    }
+    return clone(normalized);
+  }
+
+  // Delete one Weekly Planner task optimistically, then sync its deletion to Sheets.
+  async function deleteWeeklyTask(id, options) {
+    const result = deleteWeeklyTaskLocal(id, options);
+    if (state.useSheets && result.ok) {
+      try {
+        await sendWeeklyPlannerBatch([{ op: "delete", sheet: SHEET_NAMES.weeklyTasks, id: result.id, row: { id: result.id, updatedAt: nowIso() } }]);
+      } catch (error) {
+        queueRetry({ op: "delete", sheet: SHEET_NAMES.weeklyTasks, id: result.id, row: { id: result.id, updatedAt: nowIso() } });
+      }
+    }
+    return result;
+  }
+
+  async function sendWeeklyPlannerBatch(mutations) {
+    const url = getSheetsEndpoint("batchApplyPlannerChanges");
+    const payload = { action: "batchApplyPlannerChanges", spreadsheetId: getSpreadsheetId(), clientTxnId: ensureUuid(), mutations };
+    const response = await fetch(url.toString(), { method: "POST", mode: "no-cors", body: JSON.stringify(payload) });
+    if (response.type !== "opaque" && !response.ok) throw new Error(`Weekly Planner write failed (${response.status}).`);
+    return { ok: true, clientTxnId: payload.clientTxnId };
+  }
+
+  async function importWeeklyPlannerToSheets(sourcePlanner) {
+    if (Array.isArray(sourcePlanner)) {
+      const result = await sendWeeklyPlannerBatch(sourcePlanner);
+      console.info("Imported Weekly Planner mutations to Sheets.", sourcePlanner.length);
+      return { ...result, imported: sourcePlanner.length };
+    }
+    const planner = sourcePlanner && typeof sourcePlanner === "object" ? sourcePlanner : readWeeklyPlannerLocal();
+    const rows = (Array.isArray(planner.tasks) ? planner.tasks : []).map((task, index) => weeklyTaskToSheetRow({ ...task, updatedAt: task.updatedAt || nowIso(), order: task.order || index + 1 }));
+    const mutations = rows.map((row) => ({ op: "upsert", sheet: SHEET_NAMES.weeklyTasks, row }));
+    const result = await sendWeeklyPlannerBatch(mutations);
+    console.info("Imported Weekly Planner rows to Sheets.", rows.length);
+    return { ...result, imported: rows.length };
+  }
+
+  // Persist the complete Weekly Planner snapshot while keeping week navigation metadata local.
+  function saveWeeklyPlannerState(planner) {
+    const nextPlanner = planner && typeof planner === "object" ? planner : { weekStartDate: "", tasks: [] };
+    state.weeklyPlannerWriteQueue = state.weeklyPlannerWriteQueue.then(async () => {
+      const current = readWeeklyPlannerLocal();
+      const nextTasks = Array.isArray(nextPlanner.tasks) ? nextPlanner.tasks : [];
+      const nextIds = new Set(nextTasks.map((task) => cleanText(task && (task.id || task.taskId), "")));
+      const currentRows = new Map((Array.isArray(current.tasks) ? current.tasks : []).map((task) => {
+        const row = weeklyTaskToSheetRow(task);
+        const comparable = { ...row };
+        delete comparable.updatedAt;
+        return [row.id, JSON.stringify(comparable)];
+      }));
+      const operations = [];
+      nextTasks.forEach((task) => {
+        const row = weeklyTaskToSheetRow(task);
+        const comparable = { ...row };
+        delete comparable.updatedAt;
+        if (currentRows.get(row.id) !== JSON.stringify(comparable)) {
+          operations.push({ op: "upsert", sheet: SHEET_NAMES.weeklyTasks, row });
+        }
+      });
+      (Array.isArray(current.tasks) ? current.tasks : []).forEach((task) => {
+        const id = cleanText(task && (task.id || task.taskId), "");
+        if (id && !nextIds.has(id)) {
+          operations.push({ op: "delete", sheet: SHEET_NAMES.weeklyTasks, id, row: { id, updatedAt: nowIso() } });
+        }
+      });
+      if (operations.length) {
+        await batchApplyPlannerChanges(operations);
+      }
+      writeJson(STORAGE_KEYS.weeklyPlanner, {
+        weekStartDate: cleanText(nextPlanner.weekStartDate, ""),
+        tasks: nextTasks,
+      });
+      emitChange({ type: "weekly-snapshot-saved", operations: operations.length });
+    }).catch((error) => {
+      console.warn("Weekly Planner snapshot save failed.", error);
+      emitChange({ type: "weekly-task-sync-error", error: String(error && error.message ? error.message : error) });
+    });
+    return state.weeklyPlannerWriteQueue;
   }
 
   function queueRetry(operation) {
@@ -495,11 +679,11 @@
 
         if (operation.sheet === SHEET_NAMES.weeklyTasks) {
           if (operation.op === "delete") {
-            results.push({ sheet: operation.sheet, result: deleteWeeklyTask(operation.id, { hardDelete: Boolean(operation.hardDelete) }) });
+            results.push({ sheet: operation.sheet, result: deleteWeeklyTaskLocal(operation.id, { hardDelete: Boolean(operation.hardDelete) }) });
             return;
           }
 
-          results.push({ sheet: operation.sheet, result: upsertWeeklyTask(operation.row || operation.item) });
+          results.push({ sheet: operation.sheet, result: upsertWeeklyTaskLocal(operation.row || operation.item) });
           return;
         }
 
@@ -542,6 +726,19 @@
         results.push({ sheet: operation && operation.sheet ? operation.sheet : "unknown", error: String(error && error.message ? error.message : error) });
       }
     });
+
+    if (state.useSheets && list.some((operation) => operation && operation.sheet === SHEET_NAMES.weeklyTasks)) {
+      const weeklyOperations = list.filter((operation) => operation && operation.sheet === SHEET_NAMES.weeklyTasks);
+      try {
+        await sendWeeklyPlannerBatch(weeklyOperations.map((operation) => ({
+          ...operation,
+          row: operation.row ? weeklyTaskToSheetRow(operation.row) : operation.row,
+        })));
+      } catch (error) {
+        weeklyOperations.forEach(queueRetry);
+        console.warn("Weekly Planner batch queued for retry.", error);
+      }
+    }
 
     if (state.useSheets && list.some((operation) => operation && operation.sheet === SHEET_NAMES.taskManager)) {
       const taskManagerOperations = list.filter((operation) => operation && operation.sheet === SHEET_NAMES.taskManager);
@@ -595,6 +792,9 @@
     deleteParkingItem,
     importParkingToSheets,
     batchApplyPlannerChanges,
+    getWeeklyPlanner,
+    saveWeeklyPlannerState,
+    importWeeklyPlannerToSheets,
     getTaskManager,
     getCuratedTasks,
     upsertCuratedTask,
@@ -610,6 +810,5 @@
     emitChange,
     getTaskManagerTasks: () => getTaskManager(),
     getRepeatableOverrides: () => Promise.resolve(clone(readRepeatableLocal())),
-    getWeeklyPlanner: () => Promise.resolve(clone(readWeeklyPlannerLocal())),
   };
 })();
