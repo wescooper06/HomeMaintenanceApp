@@ -38,6 +38,7 @@ function initPlannerScreen() {
 
   const elements = {
     status: document.getElementById("plannerStatus"),
+    mode: document.getElementById("plannerMode"),
     curatedLeftColumn: document.getElementById("curated-left"),
     curatedMiddleColumn: document.getElementById("curated-middle"),
     taskPoolLeft: document.getElementById("plannerTaskPoolLeft"),
@@ -61,7 +62,7 @@ function initPlannerScreen() {
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.parkingLotHost || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.seriesModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.mode || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.parkingLotHost || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.seriesModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -1443,42 +1444,21 @@ function initPlannerScreen() {
     }
   }
 
-  function loadPlanner() {
+  async function loadPlanner() {
     const weekStartDate = getWeekStartISO(new Date());
-
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.planner);
-      const parsed = JSON.parse(raw || "null");
-
-      if (!parsed || typeof parsed !== "object") {
-        return buildEmptyPlanner(weekStartDate);
-      }
-
-      if (Array.isArray(parsed.tasks)) {
-        const safePlanner = buildEmptyPlanner(cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate));
-        safePlanner.tasks = parsed.tasks
-          .map((item) => normalizeWeeklyTask(item, cleanText(item.date, safePlanner.weekStartDate), cleanText(item.timeSlot || item.slot, "morning")))
-          .filter(Boolean);
-        return safePlanner;
-      }
-
-      if (parsed.days) {
-        return migrateLegacyPlanner(parsed, cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate));
-      }
-
-      return buildEmptyPlanner(cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate));
-    } catch (error) {
-      console.warn("Failed to read planner data", error);
-      return buildEmptyPlanner(weekStartDate);
-    }
+    const storedPlanner = await window.PlannerStorage.getWeeklyPlanner();
+    const safePlanner = buildEmptyPlanner(cleanText(storedPlanner && storedPlanner.weekStartDate, weekStartDate));
+    safePlanner.tasks = (storedPlanner && Array.isArray(storedPlanner.tasks) ? storedPlanner.tasks : [])
+      .map((item) => normalizeWeeklyTask(item, cleanText(item.date, safePlanner.weekStartDate), cleanText(item.timeSlot || item.slot, "morning")))
+      .filter(Boolean);
+    return safePlanner;
   }
 
   function savePlanner() {
     if (!state.planner) {
       return;
     }
-
-    localStorage.setItem(STORAGE_KEYS.planner, JSON.stringify(state.planner));
+    return window.PlannerStorage.saveWeeklyPlannerState(state.planner);
   }
 
   function saveCuratedTasks() {
@@ -3496,9 +3476,21 @@ function initPlannerScreen() {
         if (action === "series-edit") {
           closeWeekMenus();
           const match = findWeeklyTaskById(taskId);
-          const master = match && findRepeatableMaster(match.item.parentRepeatableId);
+          const master = match && (findRepeatableMaster(match.item.parentRepeatableId) || {
+            id: cleanText(match.item.parentRepeatableId, ""),
+            projectId: cleanText(match.item.projectId, ""),
+            title: cleanText(match.item.title, "Untitled Task"),
+            recurrence: cleanText(match.item.recurrence, "weekly"),
+            baseDay: getDayName(cleanText(match.item.occurrenceDate, match.item.date)),
+            baseBucket: cleanText(match.item.timeSlot, "morning").replace(/^./, (character) => character.toUpperCase()),
+            startDate: cleanText(match.item.occurrenceDate, match.item.date),
+            originalStartDate: cleanText(match.item.occurrenceDate, match.item.date),
+            active: true,
+          });
           if (match && master) {
             openSeriesEditModal(master, match.item);
+          } else {
+            elements.status.textContent = "Unable to locate that recurrence series.";
           }
           return;
         }
@@ -3915,22 +3907,29 @@ function initPlannerScreen() {
 
   async function initialize() {
     await ensurePlannerStorageLoaded();
+    elements.mode.textContent = window.PlannerStorage.getUseSheets() ? "Sheets mode" : "Local mode";
     state.curatedTasks = loadCuratedTasks();
-    state.planner = loadPlanner();
+    state.planner = await loadPlanner();
     state.selectedCalendarDate = state.planner.weekStartDate;
     state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
     await loadRepeatableTasks();
     await mountParkingLotPanel();
     if (window.PlannerStorage && typeof window.PlannerStorage.onChange === "function") {
-      state.parkingStorageUnsubscribe = window.PlannerStorage.onChange(() => {
+      state.parkingStorageUnsubscribe = window.PlannerStorage.onChange((detail) => {
         if (!state.planner) {
           return;
         }
 
-        state.planner = loadPlanner();
-        renderTaskPool();
-        renderRepeatablePanel();
-        renderWeekGrid();
+        if (detail && detail.type === "weekly-snapshot-saved") {
+          return;
+        }
+
+        loadPlanner().then((planner) => {
+          state.planner = planner;
+          renderTaskPool();
+          renderRepeatablePanel();
+          renderWeekGrid();
+        }).catch((error) => console.warn("Weekly Planner refresh failed", error));
       });
     }
     generateVisibleRecurringInstances();
