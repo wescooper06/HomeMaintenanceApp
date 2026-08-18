@@ -89,9 +89,12 @@ function initWorkbenchScreen() {
         ? `<span class="workbench-project-order-pill">Order: ${escape(order)}</span>`
         : "";
       const projectIndex = state.projects.indexOf(project);
+      const metadata = project.metadata || {};
+      const vehicle = clean(project.vehicle, clean(metadata.vehicle, clean(metadata.asset)));
+      const vehicleMeta = vehicle ? `<span>${escape(vehicle)}</span>` : "";
       return `<article class="workbench-card" data-project-id="${escape(project.id)}" data-project-source="${escape(source)}" data-project-index="${projectIndex}">
         <div class="workbench-card-title"><h3>${escape(project.title || "Untitled Project")} <strong class="workbench-project-id">(ID: ${escape(project.id || "-")})</strong></h3><div class="workbench-project-card-badges">${orderPill}</div></div>
-        <div class="workbench-meta"><span>Source: ${escape(source)}</span><span>Category: ${escape(project.category || "-")}</span><span>State: ${escape(project.state || "-")}</span><span>Priority: ${escape(priority)}</span></div>
+        <div class="workbench-meta"><span>Source: ${escape(source)}</span>${vehicleMeta}<span>Category: ${escape(project.category || "-")}</span><span>State: ${escape(project.state || "-")}</span><span>Priority: ${escape(priority)}</span></div>
         <div class="workbench-actions"><button class="workbench-action" data-action="edit-project" data-project-id="${escape(project.id)}">Edit Details</button><button class="workbench-action danger" data-action="delete-project" data-project-id="${escape(project.id)}">Delete</button><button class="workbench-action" data-action="add-task" data-task-id="${escape(taskId)}">Add to Task Manager</button></div>
       </article>`;
     }).join("") : '<div class="workbench-card">No projects match.</div>';
@@ -269,19 +272,26 @@ function initWorkbenchScreen() {
   function openEditProject(project) {
     activeProject = project;
     elements.editTitle.textContent = `Edit Project Details (ID: ${project.id || "-"})`;
+    const value = (...keys) => {
+      const metadata = project.metadata || {};
+      const match = keys.find((key) => project[key] != null && project[key] !== "")
+        || keys.find((key) => metadata[key] != null && metadata[key] !== "");
+      if (!match) return "";
+      return project[match] != null && project[match] !== "" ? project[match] : metadata[match];
+    };
     const fields = [
       ["title", "Title", project.title], ["category", "Category", project.category],
-      ["state", "State", project.state], ["priority", "Priority", project.priority],
-      ["order", "Order", project.order], ["recurrence", "Recurrence", project.recurrence],
-      ["area", "Area", project.area], ["actualCost", "Cost", project.cost],
-      ["resourceLinks", "Resource Links", project.resourceLinks], ["notes", "Notes", project.notes],
-      ["addToRepeating", "Add to Repeating List", Boolean(project.addToRepeating || project.recurrence)],
+      ["state", "State", project.state], ["priority", "Priority", value("priority")],
+      ["order", "Order", value("order")], ["recurrence", "Recurrence", value("recurrence")],
+      ["area", "Area", value("area")], ["actualCost", "Cost", value("actualCost", "cost")],
+      ["resourceLinks", "Resource Links", value("resourceLinks")], ["notes", "Notes", value("notes")],
+      ["addToRepeating", "Add to Repeating List", Boolean(project.addToRepeating || value("recurrence"))],
     ];
     if (sourceTag(project.source) === "home" || sourceTag(project.source) === "repeating") {
-      fields.push(["property", "Property", project.property], ["dateCompleted", "Date Completed", project.dateCompleted]);
+      fields.push(["property", "Property", value("property")], ["dateCompleted", "Date Completed", value("dateCompleted", "datecompleted")]);
     }
     if (sourceTag(project.source) === "vehicle") {
-      fields.push(["vehicle", "Vehicle / Small Engine", project.vehicle || project.asset], ["mileage", "Mileage", project.mileage], ["engineHours", "Engine Hours", project.engineHours]);
+      fields.push(["vehicle", "Vehicle / Small Engine", value("vehicle", "asset")], ["mileage", "Mileage", value("mileage")], ["engineHours", "Engine Hours", value("engineHours")]);
     }
     const reserved = new Set(fields.map((field) => field[0]));
     const nonEditableMetadataKeys = new Set(["sources", "sheetRowNumber", "rownumber", "_rowNumber", "_rownumber", "_sourceTabId", "_sourceGeneratedId", "_originalTitle", "_originalId"]);
