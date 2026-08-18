@@ -386,11 +386,27 @@ function initTasksScreen() {
     refreshStatus();
   }
 
+  async function clearGeneratedRepeatableInstances(projectId) {
+    const planner = await window.PlannerStorage.getWeeklyPlanner();
+    const tasks = planner && Array.isArray(planner.tasks) ? planner.tasks : [];
+    const generated = tasks.filter((item) => {
+      if (item.overridden) {
+        return false;
+      }
+
+      const id = cleanText(item.id || item.taskId, "");
+      return cleanText(item.parentRepeatableId, "") === projectId || id.startsWith(`repeatable-${projectId}-`);
+    });
+
+    await Promise.all(generated.map((item) => window.PlannerStorage.deleteWeeklyTask(cleanText(item.id || item.taskId, ""), { hardDelete: true })));
+  }
+
   async function sendToWeeklyPlanner(task, type) {
     const isRepeatable = type === "repeating";
     if (isRepeatable) {
+      const projectId = cleanText(task.projectId, "");
       const taskManagerTasks = await window.PlannerStorage.getTaskManager();
-      const storedTask = taskManagerTasks.find((item) => cleanText(item.projectId, "") === cleanText(task.projectId, ""));
+      const storedTask = taskManagerTasks.find((item) => cleanText(item.projectId, "") === projectId);
       if (storedTask) {
         let metadata = {};
         try {
@@ -403,9 +419,29 @@ function initTasksScreen() {
           ...storedTask,
           metadataJson: JSON.stringify({ ...metadata, plannerRepeatable: true }),
         });
-        const generatedDate = cleanText(task.startDate, new Date().toISOString().slice(0, 10));
-        await window.PlannerStorage.deleteWeeklyTask(`repeatable-${storedTask.projectId}-${generatedDate}`);
       }
+
+      const existingOverride = state.repeatableOverrideMap.get(projectId) || {};
+      const override = {
+        ...existingOverride,
+        projectId,
+        title: cleanText(task.title, cleanText(existingOverride.title, "Untitled Task")),
+        state: cleanText(task.state, cleanText(existingOverride.state, "unknown")),
+        category: cleanText(task.category, cleanText(existingOverride.category, "uncategorized")),
+        priority: parseNumber(task.priority, parseNumber(existingOverride.priority, 3)),
+        order: parseNumber(task.order, parseNumber(existingOverride.order, 999)),
+        recurrence: cleanText(task.recurrence, cleanText(existingOverride.recurrence, "weekly")),
+        // Staged only: the series stays unscheduled until it is dragged onto a day in the planner.
+        startDate: "",
+        originalStartDate: "",
+        active: false,
+        removedFromPlanner: false,
+        removedFromTaskManager: false,
+      };
+      state.repeatableOverrideMap.set(projectId, override);
+      await window.PlannerStorage.upsertRepeatableOverride(override);
+      await clearGeneratedRepeatableInstances(projectId);
+
       elements.status.textContent = `Added "${task.title}" to Repeatable Tasks.`;
       return;
     }

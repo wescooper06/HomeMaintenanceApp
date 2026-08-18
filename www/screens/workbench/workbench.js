@@ -157,9 +157,70 @@ function initWorkbenchScreen() {
     renderTasks();
   }
 
+  async function clearGeneratedRepeatableInstances(projectId) {
+    const planner = await window.PlannerStorage.getWeeklyPlanner();
+    const tasks = planner && Array.isArray(planner.tasks) ? planner.tasks : [];
+    const generated = tasks.filter((item) => {
+      if (item.overridden) return false;
+      const id = clean(item.id || item.taskId);
+      return clean(item.parentRepeatableId) === projectId || id.startsWith(`repeatable-${projectId}-`);
+    });
+    await Promise.all(generated.map((item) => window.PlannerStorage.deleteWeeklyTask(clean(item.id || item.taskId), { hardDelete: true })));
+  }
+
+  async function sendRepeatableToPlanner(task) {
+    const projectId = clean(task.projectId, clean(task.id));
+    let metadata = {};
+    try {
+      metadata = JSON.parse(clean(task.metadataJson, "{}")) || {};
+    } catch (error) {
+      metadata = {};
+    }
+
+    const saved = await window.PlannerStorage.upsertTaskManagerTask({ ...task, metadataJson: JSON.stringify({ ...metadata, plannerRepeatable: true }) });
+    state.tasks = state.tasks.map((item) => item.id === saved.id ? saved : item);
+
+    const overrides = await window.PlannerStorage.getRepeatableOverrides();
+    const existing = overrides.find((item) => clean(item.projectId) === projectId) || {};
+    await window.PlannerStorage.upsertRepeatableOverride({
+      ...existing,
+      projectId,
+      title: clean(task.title, clean(existing.title, "Untitled Task")),
+      state: clean(task.state, clean(existing.state, "unknown")),
+      category: clean(task.category, clean(existing.category, "uncategorized")),
+      priority: number(task.priority, number(existing.priority, 3)),
+      order: number(task.order, number(existing.order, state.tasks.length + 1)),
+      recurrence: clean(task.recurrence, clean(existing.recurrence, "weekly")),
+      // Staged only: the series stays unscheduled until it is dragged onto a day in the planner.
+      startDate: "",
+      originalStartDate: "",
+      active: false,
+      removedFromPlanner: false,
+      removedFromTaskManager: false,
+    });
+
+    await clearGeneratedRepeatableInstances(projectId);
+    renderTasks();
+  }
+
   async function sendWeekly(task) {
-    await window.PlannerStorage.upsertWeeklyTask({ ...task, taskType: "curated", type: "curated", date: new Date().toISOString().slice(0, 10), timeSlot: "morning", bucket: "morning" });
-    elements.status.textContent = `Sent "${task.title}" to Weekly Planner.`;
+    if (sourceTag(task.source) === "repeating") {
+      await sendRepeatableToPlanner(task);
+      elements.status.textContent = `Added "${task.title}" to Repeatable Tasks. Drag it onto a day to schedule it.`;
+      return;
+    }
+
+    await window.PlannerStorage.upsertCuratedTask({
+      taskId: clean(task.id, clean(task.projectId)),
+      projectId: clean(task.projectId),
+      title: clean(task.title, "Untitled Task"),
+      source: sourceTag(task.source),
+      category: clean(task.category, "uncategorized"),
+      recurrence: clean(task.recurrence),
+      priority: number(task.priority, 3),
+      order: number(task.order, state.tasks.length + 1),
+    });
+    elements.status.textContent = `Added "${task.title}" to Planner Projects. Drag it onto a day to schedule it.`;
   }
 
   async function updateTaskOrderOrPriority(task, action) {

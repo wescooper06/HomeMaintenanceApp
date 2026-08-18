@@ -365,6 +365,37 @@ function initCalendarScreen() {
     window.localStorage.setItem("hm_weekly_planner", JSON.stringify(planner));
   }
 
+  function loadPlannerScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[data-module-src="${src}"]`)) {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = src;
+      script.dataset.moduleSrc = src;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+      document.body.appendChild(script);
+    });
+  }
+
+  async function ensurePlannerStorageLoaded() {
+    if (window.PlannerStorage) {
+      return window.PlannerStorage;
+    }
+
+    try {
+      await loadPlannerScript("js/utils/uuid.js");
+      await loadPlannerScript("js/services/planner-storage.service.js");
+    } catch (error) {
+      console.warn("PlannerStorage is unavailable; falling back to local planner storage.", error);
+    }
+
+    return window.PlannerStorage || null;
+  }
+
   function getPlannerEventIdSet() {
     const planner = readPlannerStorage();
     const ids = new Set();
@@ -1336,7 +1367,7 @@ function initCalendarScreen() {
     }
   }
 
-  function addEventToPlanner(event, occurrenceDateKey) {
+  async function addEventToPlanner(event, occurrenceDateKey) {
     const rawEvent = event && event.raw ? event.raw : event;
     if (!rawEvent) {
       setStatus("Unable to add event to Planner.");
@@ -1350,7 +1381,8 @@ function initCalendarScreen() {
       : mapEventTimeToBucket(rawEvent.start && rawEvent.start.dateTime, false);
     const timeSlot = bucket === "Morning" ? "morning" : bucket === "Afternoon" ? "afternoon" : bucket === "Evening" ? "evening" : "morning";
     const sourceDate = normalizeDateKey(occurrenceDateKey) || cleanText(rawStart.date || (rawStart.dateTime ? toDateKey(new Date(rawStart.dateTime)) : ""), "");
-    const planner = readPlannerStorage();
+    const storage = await ensurePlannerStorageLoaded();
+    const planner = storage ? await storage.getWeeklyPlanner() : readPlannerStorage();
     const span = parseEventSpan(rawEvent);
     const dateKeysToAdd = [];
 
@@ -1369,7 +1401,7 @@ function initCalendarScreen() {
 
     const eventProjectId = cleanText(rawEvent.id, "");
     const existingTasks = Array.isArray(planner.tasks) ? planner.tasks : [];
-    let addedCount = 0;
+    const additions = [];
 
     dateKeysToAdd.forEach((dateKey) => {
       const duplicate = existingTasks.find((task) => {
@@ -1382,8 +1414,8 @@ function initCalendarScreen() {
         return;
       }
 
-      const plannerId = `google-${eventProjectId || dateKey}-${dateKey}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      existingTasks.push({
+      const plannerId = `google-${eventProjectId || dateKey}-${dateKey}`;
+      const record = {
         id: plannerId,
         taskId: plannerId,
         title: cleanText(rawEvent.summary, "Untitled event"),
@@ -1400,13 +1432,16 @@ function initCalendarScreen() {
         projectId: eventProjectId,
         recurrence: "",
         priority: null,
-      });
-      addedCount += 1;
+        metadata: { notes: cleanText(rawEvent.description, ""), allDay: isAllDay },
+      };
+
+      existingTasks.push(record);
+      additions.push(record);
     });
 
     planner.tasks = existingTasks;
 
-    if (!addedCount) {
+    if (!additions.length) {
       closeCalendarModal();
       const label = cleanText(rawEvent.summary, "Untitled event");
       if (dateKeysToAdd.length > 1) {
@@ -1417,12 +1452,20 @@ function initCalendarScreen() {
       return true;
     }
 
-    savePlannerStorage(planner);
+    if (storage) {
+      // Route through PlannerStorage so the entries persist locally and sync to Planner_WeeklyTasks.
+      for (let index = 0; index < additions.length; index += 1) {
+        await storage.upsertWeeklyTask(additions[index]);
+      }
+    } else {
+      savePlannerStorage(planner);
+    }
+
     closeCalendarModal();
     state.lastUpdatedAt = new Date();
     renderMonthGrid();
     if (dateKeysToAdd.length > 1) {
-      setStatus(`Added "${cleanText(rawEvent.summary, "Untitled event")}" to Planner for ${addedCount} day(s) in the event range.`);
+      setStatus(`Added "${cleanText(rawEvent.summary, "Untitled event")}" to Planner for ${additions.length} day(s) in the event range.`);
     } else {
       setStatus(`Added "${cleanText(rawEvent.summary, "Untitled event")}" to Planner.`);
     }
@@ -1519,7 +1562,10 @@ function initCalendarScreen() {
 
     if (action === "add-to-planner") {
       if (selected) {
-        addEventToPlanner(selected, eventDateKey);
+        addEventToPlanner(selected, eventDateKey).catch((error) => {
+          console.warn("Unable to add event to Planner", error);
+          setStatus("Unable to add event to Planner.");
+        });
       } else {
         setStatus("Event is no longer available.");
       }
@@ -1661,7 +1707,10 @@ function initCalendarScreen() {
     if (addButton) {
       const selected = getCalendarEventById(addButton.dataset.eventId, addButton.dataset.dateKey);
       if (selected) {
-        addEventToPlanner(selected, addButton.dataset.dateKey);
+        addEventToPlanner(selected, addButton.dataset.dateKey).catch((error) => {
+          console.warn("Unable to add event to Planner", error);
+          setStatus("Unable to add event to Planner.");
+        });
       }
       event.stopPropagation();
       return;
