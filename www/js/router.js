@@ -1,4 +1,5 @@
-const BUILD_VERSION = "20260727-4";
+// test
+const BUILD_VERSION = "20260811-7";
 
 const routes = {
   dashboard: {
@@ -12,6 +13,12 @@ const routes = {
     css: "screens/tasks/tasks.css",
     js: "screens/tasks/tasks.js",
     init: "initTasksScreen",
+  },
+  workbench: {
+    html: "screens/workbench/workbench.html",
+    css: "screens/workbench/workbench.css",
+    js: "screens/workbench/workbench.js",
+    init: "initWorkbenchScreen",
   },
   planner: {
     html: "screens/planner/planner.html",

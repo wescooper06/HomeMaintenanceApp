@@ -1,0 +1,58 @@
+<section class="workbench-screen hm-card">
+  <div data-main-nav></div>
+  <header class="workbench-header">
+    <div>
+      <p class="workbench-kicker">Operations view</p>
+      <h1>Workbench</h1>
+      <p class="hm-muted">Review projects, curate tasks, and stage the next move.</p>
+    </div>
+    <div id="workbenchStatus" class="workbench-status">Loading...</div>
+  </header>
+  <main class="workbench-container">
+    <section class="workbench-panel" aria-labelledby="workbench-projects-title">
+      <div class="workbench-panel-header">
+        <div>
+          <h2 id="workbench-projects-title">Projects</h2>
+          <span id="workbenchProjectsCount" class="workbench-count"></span>
+        </div>
+        <button id="workbenchAddProject" class="workbench-primary" type="button">Add Project</button>
+      </div>
+      <div class="workbench-filter-bar">
+        <label>Search<input id="workbenchProjectSearch" type="search" placeholder="Search projects" aria-label="Search projects" /></label>
+        <label>Source<details class="workbench-multi-select"><summary><span id="workbenchProjectSourceSummary">All sources</span></summary><div id="workbenchProjectSource" class="workbench-multi-select-options" role="group" aria-label="Filter projects by source"></div></details></label>
+        <label>Category<details class="workbench-multi-select"><summary><span id="workbenchProjectCategorySummary">All categories</span></summary><div id="workbenchProjectCategory" class="workbench-multi-select-options" role="group" aria-label="Filter projects by category"></div></details></label>
+        <label>State<details class="workbench-multi-select"><summary><span id="workbenchProjectStateSummary">All states</span></summary><div id="workbenchProjectState" class="workbench-multi-select-options" role="group" aria-label="Filter projects by state"></div></details></label>
+        <label>Sort By<select id="workbenchProjectSort" aria-label="Sort projects"><option value="order">Order</option><option value="priority">Priority</option><option value="category">Category</option></select></label>
+      </div>
+      <div id="workbenchProjects" class="workbench-list" aria-live="polite"></div>
+    </section>
+    <section class="workbench-panel" aria-labelledby="workbench-tasks-title">
+      <div class="workbench-panel-header">
+        <div>
+          <h2 id="workbench-tasks-title">Task Manager</h2>
+          <span id="workbenchTasksCount" class="workbench-count"></span>
+        </div>
+        <button id="workbenchTaskSort" class="workbench-quiet" type="button">Order: Ascending</button>
+      </div>
+      <div id="workbenchTasks" class="workbench-list" aria-live="polite"></div>
+    </section>
+  </main>
+  <div id="workbenchEditModal" class="workbench-modal" hidden>
+    <div class="workbench-modal-card" role="dialog" aria-modal="true" aria-labelledby="workbenchEditTitle">
+      <div class="workbench-modal-header"><h2 id="workbenchEditTitle">Edit Project Details</h2><button id="workbenchEditClose" type="button" aria-label="Close">X</button></div>
+      <form id="workbenchEditForm">
+        <div id="workbenchEditFields" class="workbench-edit-grid"></div>
+        <div class="workbench-modal-actions"><button type="button" id="workbenchEditCancel">Cancel</button><button class="workbench-primary" type="submit">Submit</button></div>
+      </form>
+    </div>
+  </div>
+  <div id="workbenchAddModal" class="workbench-modal" hidden>
+    <div class="workbench-modal-card" role="dialog" aria-modal="true" aria-labelledby="workbenchAddTitle">
+      <div class="workbench-modal-header"><h2 id="workbenchAddTitle">Add Project</h2><button id="workbenchAddClose" type="button" aria-label="Close">X</button></div>
+      <form id="workbenchAddForm">
+        <div id="workbenchAddFields" class="workbench-edit-grid"></div>
+        <div class="workbench-modal-actions"><button type="button" id="workbenchAddCancel">Cancel</button><button class="workbench-primary" type="submit">Submit</button></div>
+      </form>
+    </div>
+  </div>
+</section>

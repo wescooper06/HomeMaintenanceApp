@@ -3,28 +3,30 @@ function initTasksScreen() {
     return;
   }
 
-  const SERVICE_VERSION = "20260727-4";
-
-  const STORAGE_KEYS = {
-    curated: "hm_task_manager_tasks",
-    legacyQueue: "hm_task_manager_queue",
-    repeatable: "hm_repeatable_tasks",
-    weeklyPlanner: "hm_weekly_planner_queue",
-  };
+  const SERVICE_VERSION = "20260814-1";
 
   const state = {
     allProjects: [],
     projectTasks: [],
     repeatableTasks: [],
+    repeatableOverrideMap: new Map(),
+    sortDirection: {
+      project: "asc",
+      repeatable: "asc",
+    },
   };
 
   const elements = {
     status: document.getElementById("tasksStatus"),
+    mode: document.getElementById("tasksMode"),
+    error: document.getElementById("tasksError"),
     projectList: document.getElementById("projectTaskList"),
     repeatableList: document.getElementById("repeatableTaskList"),
+    projectSortToggle: document.getElementById("projectTaskSortToggle"),
+    repeatableSortToggle: document.getElementById("repeatableTaskSortToggle"),
   };
 
-  if (!elements.status || !elements.projectList || !elements.repeatableList) {
+  if (!elements.status || !elements.mode || !elements.error || !elements.projectList || !elements.repeatableList || !elements.projectSortToggle || !elements.repeatableSortToggle) {
     return;
   }
 
@@ -88,98 +90,55 @@ function initTasksScreen() {
     return `task-${projectId}`;
   }
 
-  function loadTasks() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.curated);
-      const parsed = JSON.parse(raw || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.warn("Failed to read curated tasks", error);
-      return [];
-    }
+  function makeProjectKey(source, projectId) {
+    return `${normalizeSource(source)}::${cleanText(projectId, "")}`;
   }
 
-  function saveTasks(tasks) {
-    localStorage.setItem(STORAGE_KEYS.curated, JSON.stringify(tasks));
+  async function loadTasks() {
+    return window.PlannerStorage.getTaskManager();
   }
 
-  function addTask(project) {
-    const tasks = loadTasks();
+  async function addTask(project) {
     const task = {
-      taskId: makeTaskId(project.projectId),
+      id: makeTaskId(project.projectId),
       projectId: project.projectId,
       title: project.title,
       source: project.source,
       category: project.category,
       state: project.state,
       priority: parseNumber(project.priority, 3),
-      order: parseNumber(project.order, tasks.length + 1),
+      order: parseNumber(project.order, 1),
       recurrence: cleanText(project.recurrence, ""),
       asset: cleanText(project.asset, ""),
       mileage: cleanText(project.mileage, ""),
-      updatedAt: new Date().toISOString(),
+      metadataJson: "{}",
     };
-
-    const existingIndex = tasks.findIndex((item) => item.taskId === task.taskId);
-    if (existingIndex >= 0) {
-      tasks[existingIndex] = { ...tasks[existingIndex], ...task };
-    } else {
-      tasks.push(task);
-    }
-
-    saveTasks(tasks);
-    return task;
+    return window.PlannerStorage.upsertTaskManagerTask(task);
   }
 
-  function updateTask(task) {
-    const tasks = loadTasks();
-    const index = tasks.findIndex((item) => item.taskId === task.taskId);
-    if (index < 0) {
-      return null;
-    }
-
-    tasks[index] = {
-      ...tasks[index],
-      ...task,
-      updatedAt: new Date().toISOString(),
-    };
-
-    saveTasks(tasks);
-    return tasks[index];
+  async function updateTask(task) {
+    return window.PlannerStorage.upsertTaskManagerTask(task);
   }
 
-  function removeTask(taskId) {
-    const tasks = loadTasks();
-    const nextTasks = tasks.filter((item) => item.taskId !== taskId);
-    saveTasks(nextTasks);
-    return nextTasks;
+  async function removeTask(taskId) {
+    return window.PlannerStorage.deleteTaskManagerTask(taskId);
   }
 
   window.TaskManagerStorage = {
     loadTasks,
-    saveTasks,
     addTask,
     updateTask,
     removeTask,
   };
 
-  function loadRepeatableOverrides() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.repeatable);
-      const parsed = JSON.parse(raw || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.warn("Failed to read repeatable task overrides", error);
-      return [];
-    }
-  }
-
-  function saveRepeatableOverrides(items) {
-    localStorage.setItem(STORAGE_KEYS.repeatable, JSON.stringify(items));
+  async function loadRepeatableOverrides() {
+    return window.PlannerStorage.getRepeatableOverrides();
   }
 
   function ensureProjectServicesLoaded() {
-    return loadScriptFresh("js/services/sheets.service.js")
+    return loadScriptFresh("js/utils/uuid.js")
+      .then(() => loadScriptFresh("js/services/planner-storage.service.js"))
+      .then(() => loadScriptFresh("js/services/sheets.service.js"))
       .then(() => loadScriptFresh("js/services/projects.service.js"));
   }
 
@@ -188,6 +147,10 @@ function initTasksScreen() {
 
     return new Promise((resolve, reject) => {
       const existing = document.querySelector(`script[data-module-src=\"${src}\"]`);
+      if (existing && src === "js/services/planner-storage.service.js") {
+        resolve();
+        return;
+      }
       if (existing) {
         existing.remove();
       }
@@ -201,37 +164,20 @@ function initTasksScreen() {
     });
   }
 
-  function migrateLegacyQueue(projectMap) {
-    let legacy;
-    try {
-      legacy = JSON.parse(localStorage.getItem(STORAGE_KEYS.legacyQueue) || "[]");
-    } catch (error) {
-      legacy = [];
-    }
-
-    if (!Array.isArray(legacy) || legacy.length === 0) {
-      return;
-    }
-
-    legacy.forEach((entry) => {
-      const project = projectMap.get(cleanText(entry.projectId, ""));
-      if (project) {
-        addTask(project);
-      }
-    });
-
-    localStorage.removeItem(STORAGE_KEYS.legacyQueue);
-  }
-
-  function buildProjectTasks(projectMap) {
-    const curated = loadTasks();
+  async function buildProjectTasks(projectMapByKey, projectMapById) {
+    const curated = await loadTasks();
 
     state.projectTasks = curated
       .map((item) => {
-        const enriched = projectMap.get(item.projectId);
+        const itemProjectId = cleanText(item.projectId, "");
+        const enrichedByKey = projectMapByKey.get(makeProjectKey(item.source, itemProjectId));
+        const byId = projectMapById.get(itemProjectId) || [];
+        const fallback = byId.find((project) => normalizeSource(project.source) !== "repeating") || byId[0] || null;
+        const enriched = enrichedByKey || fallback;
         if (!enriched) {
           return {
             ...item,
+            taskId: cleanText(item.id || item.taskId, makeTaskId(itemProjectId)),
             title: cleanText(item.title, "Unknown Project"),
             source: normalizeSource(item.source),
             category: cleanText(item.category, "uncategorized"),
@@ -246,6 +192,7 @@ function initTasksScreen() {
 
         return {
           ...item,
+          taskId: cleanText(item.id || item.taskId, makeTaskId(itemProjectId)),
           title: enriched.title,
           source: enriched.source,
           category: enriched.category,
@@ -257,28 +204,116 @@ function initTasksScreen() {
           order: parseNumber(item.order, parseNumber(enriched.order, 999)),
         };
       })
-      .sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
+      .filter((item) => normalizeSource(item.source) !== "repeating");
+
+    state.projectTasks = sortTaskList(state.projectTasks, "project");
   }
 
-  function buildRepeatableTasks(projectMap) {
-    const overrides = loadRepeatableOverrides();
-    const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
+  async function buildRepeatableTasks(projects) {
+    const overrides = await loadRepeatableOverrides();
+    const overrideMap = new Map(overrides.map((item) => [cleanText(item && item.projectId, ""), item]).filter((entry) => Boolean(entry[0])));
+    state.repeatableOverrideMap = overrideMap;
 
-    state.repeatableTasks = [...projectMap.values()]
-      .filter((project) => project.source === "repeating")
+    const projectMapById = new Map((projects || []).map((project) => [cleanText(project.projectId, ""), project]).filter((entry) => Boolean(entry[0])));
+
+    const seenRepeatableIds = new Set();
+
+    state.repeatableTasks = [...(projects || [])]
+      .filter((project) => normalizeSource(cleanText(project && project.source, "")) === "repeating")
       .map((project, index) => {
-        const override = overrideMap.get(project.projectId) || {};
+        const projectId = cleanText(project.projectId, "");
+        if (!projectId) {
+          return null;
+        }
+
+        seenRepeatableIds.add(projectId);
+
+        const override = overrideMap.get(projectId) || {};
+        if (override.removedFromTaskManager === true || override.removed === true) {
+          return null;
+        }
+
         return {
-          taskId: `repeatable-${project.projectId}`,
-          projectId: project.projectId,
+          taskId: `repeatable-${projectId}`,
+          projectId,
           title: project.title,
+          source: normalizeSource(project.source) || "repeating",
+          state: cleanText(project.state, "unknown"),
           recurrence: cleanText(project.recurrence, "none").toLowerCase(),
           priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
           order: parseNumber(override.order, parseNumber(project.order, index + 1)),
           category: project.category,
+          asset: cleanText(project.asset, ""),
+          mileage: cleanText(project.mileage, ""),
         };
       })
-      .sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
+      .filter(Boolean);
+
+    overrides.forEach((override, index) => {
+      if (!override || override.removedFromTaskManager === true || override.removed === true) {
+        return;
+      }
+
+      const projectId = cleanText(override.projectId, "");
+      if (!projectId || seenRepeatableIds.has(projectId)) {
+        return;
+      }
+
+      const title = cleanText(override.title, "");
+      if (!title) {
+        return;
+      }
+
+      const overrideSource = cleanText(override.source, "");
+      const isRepeatableFromOverride = normalizeSource(overrideSource) === "repeating" || overrideSource.toLowerCase().includes("repeating") || overrideSource.toLowerCase().includes("list_c") || overrideSource === "repeating";
+      if (!isRepeatableFromOverride) {
+        return;
+      }
+
+      seenRepeatableIds.add(projectId);
+      state.repeatableTasks.push({
+        taskId: `repeatable-${projectId}`,
+        projectId,
+        title,
+        source: "repeating",
+        state: cleanText(override.state, "unknown"),
+        recurrence: cleanText(override.recurrence, "none").toLowerCase(),
+        priority: parseNumber(override.priority, 3),
+        order: parseNumber(override.order, index + 1),
+        category: cleanText(override.category, "uncategorized"),
+        asset: cleanText(override.asset, ""),
+        mileage: cleanText(override.mileage, ""),
+      });
+    });
+
+    state.repeatableTasks = sortTaskList(state.repeatableTasks, "repeatable");
+  }
+
+  function compareTasksAscending(a, b) {
+    const leftOrder = parseNumber(a.order, Number.MAX_SAFE_INTEGER);
+    const rightOrder = parseNumber(b.order, Number.MAX_SAFE_INTEGER);
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+
+    return a.title.localeCompare(b.title);
+  }
+
+  function sortTaskList(items, listType) {
+    const direction = (state.sortDirection && state.sortDirection[listType]) === "desc" ? "desc" : "asc";
+    const sorted = [...(items || [])].sort(compareTasksAscending);
+    return direction === "desc" ? sorted.reverse() : sorted;
+  }
+
+  function orderBadge(task) {
+    const orderValue = parseNumber(task.order, null);
+    const displayOrder = orderValue == null ? "" : String(orderValue);
+    return `<span class="task-order-badge">Order: ${displayOrder || "-"}</span>`;
+  }
+
+  function updateSortToggleLabels() {
+    elements.projectSortToggle.textContent = `Sort: ${state.sortDirection.project === "asc" ? "Ascending" : "Descending"}`;
+    elements.repeatableSortToggle.textContent = `Sort: ${state.sortDirection.repeatable === "asc" ? "Ascending" : "Descending"}`;
   }
 
   function renderProjectTasks() {
@@ -290,20 +325,17 @@ function initTasksScreen() {
     elements.projectList.innerHTML = state.projectTasks
       .map((task) => {
         const recurrence = task.recurrence || "-";
+        const orderPill = orderBadge(task);
         return `
           <article class="task-card" data-type="project" data-task-id="${task.taskId}">
-            <h3>${task.title}</h3>
+            <h3 class="task-card-title"><span class="task-title-main">${task.title}</span>${orderPill}</h3>
             <div class="task-meta-grid">
               <div class="task-meta"><strong>Source:</strong> ${task.source}</div>
               <div class="task-meta"><strong>Category:</strong> ${task.category}</div>
               <div class="task-meta"><strong>State:</strong> ${task.state}</div>
-              <div class="task-meta"><strong>Priority:</strong> ${task.priority}</div>
-              <div class="task-meta"><strong>Order:</strong> ${task.order}</div>
               <div class="task-meta"><strong>Recurrence:</strong> ${recurrence}</div>
             </div>
             <div class="task-actions">
-              <button type="button" data-action="priority-up">Increase priority</button>
-              <button type="button" data-action="priority-down">Decrease priority</button>
               <button type="button" data-action="move-up">Move up</button>
               <button type="button" data-action="move-down">Move down</button>
               <button type="button" class="primary" data-action="send-weekly">Send to Weekly Planner</button>
@@ -322,24 +354,24 @@ function initTasksScreen() {
     }
 
     elements.repeatableList.innerHTML = state.repeatableTasks
-      .map((task) => `
+      .map((task) => {
+        const orderPill = orderBadge(task);
+        return `
         <article class="task-card" data-type="repeatable" data-task-id="${task.taskId}">
-          <h3>${task.title}</h3>
+          <h3 class="task-card-title"><span class="task-title-main">${task.title}</span>${orderPill}</h3>
           <div class="task-meta-grid">
             <div class="task-meta"><strong>Recurrence:</strong> ${task.recurrence}</div>
-            <div class="task-meta"><strong>Priority:</strong> ${task.priority}</div>
-            <div class="task-meta"><strong>Order:</strong> ${task.order}</div>
             <div class="task-meta"><strong>Category:</strong> ${task.category}</div>
           </div>
           <div class="task-actions">
-            <button type="button" data-action="priority-up">Increase priority</button>
-            <button type="button" data-action="priority-down">Decrease priority</button>
             <button type="button" data-action="move-up">Move up</button>
             <button type="button" data-action="move-down">Move down</button>
             <button type="button" class="primary" data-action="send-weekly">Add to weekly planner</button>
+            <button type="button" class="danger" data-action="remove">Remove from Task Manager</button>
           </div>
         </article>
-      `)
+      `;
+      })
       .join("");
   }
 
@@ -348,53 +380,160 @@ function initTasksScreen() {
   }
 
   function renderAll() {
+    updateSortToggleLabels();
     renderProjectTasks();
     renderRepeatableTasks();
     refreshStatus();
   }
 
-  function sendToWeeklyPlanner(task, type) {
-    let plannerItems;
-    try {
-      plannerItems = JSON.parse(localStorage.getItem(STORAGE_KEYS.weeklyPlanner) || "[]");
-    } catch (error) {
-      plannerItems = [];
+  async function clearGeneratedRepeatableInstances(projectId) {
+    const planner = await window.PlannerStorage.getWeeklyPlanner();
+    const tasks = planner && Array.isArray(planner.tasks) ? planner.tasks : [];
+    const generated = tasks.filter((item) => {
+      if (item.overridden) {
+        return false;
+      }
+
+      const id = cleanText(item.id || item.taskId, "");
+      return cleanText(item.parentRepeatableId, "") === projectId || id.startsWith(`repeatable-${projectId}-`);
+    });
+
+    await Promise.all(generated.map((item) => window.PlannerStorage.deleteWeeklyTask(cleanText(item.id || item.taskId, ""), { hardDelete: true })));
+  }
+
+  async function sendToWeeklyPlanner(task, type) {
+    const isRepeatable = type === "repeating";
+    if (isRepeatable) {
+      const projectId = cleanText(task.projectId, "");
+      const taskManagerTasks = await window.PlannerStorage.getTaskManager();
+      const storedTask = taskManagerTasks.find((item) => cleanText(item.projectId, "") === projectId);
+      if (storedTask) {
+        let metadata = {};
+        try {
+          metadata = JSON.parse(cleanText(storedTask.metadataJson, "{}")) || {};
+        } catch (error) {
+          metadata = {};
+        }
+
+        await window.PlannerStorage.upsertTaskManagerTask({
+          ...storedTask,
+          metadataJson: JSON.stringify({ ...metadata, plannerRepeatable: true }),
+        });
+      }
+
+      const existingOverride = state.repeatableOverrideMap.get(projectId) || {};
+      const override = {
+        ...existingOverride,
+        projectId,
+        title: cleanText(task.title, cleanText(existingOverride.title, "Untitled Task")),
+        state: cleanText(task.state, cleanText(existingOverride.state, "unknown")),
+        category: cleanText(task.category, cleanText(existingOverride.category, "uncategorized")),
+        priority: parseNumber(task.priority, parseNumber(existingOverride.priority, 3)),
+        order: parseNumber(task.order, parseNumber(existingOverride.order, 999)),
+        recurrence: cleanText(task.recurrence, cleanText(existingOverride.recurrence, "weekly")),
+        // Staged only: the series stays unscheduled until it is dragged onto a day in the planner.
+        startDate: "",
+        originalStartDate: "",
+        active: false,
+        removedFromPlanner: false,
+        removedFromTaskManager: false,
+      };
+      state.repeatableOverrideMap.set(projectId, override);
+      await window.PlannerStorage.upsertRepeatableOverride(override);
+      await clearGeneratedRepeatableInstances(projectId);
+
+      elements.status.textContent = `Added "${task.title}" to Repeatable Tasks.`;
+      return;
     }
 
-    plannerItems.push({
-      id: `${type}-${task.projectId}-${Date.now()}`,
+    const projectId = cleanText(task.projectId, "");
+    const generatedDate = cleanText(task.startDate, new Date().toISOString().slice(0, 10));
+    await window.PlannerStorage.deleteWeeklyTask(`curated-${projectId}-${generatedDate}`);
+    await window.PlannerStorage.upsertCuratedTask({
+      taskId: cleanText(task.id || task.taskId, ""),
       projectId: task.projectId,
       title: task.title,
       priority: task.priority,
       order: task.order,
       recurrence: cleanText(task.recurrence, ""),
       source: cleanText(task.source, type),
-      addedAt: new Date().toISOString(),
     });
-
-    localStorage.setItem(STORAGE_KEYS.weeklyPlanner, JSON.stringify(plannerItems));
-    elements.status.textContent = `Sent "${task.title}" to Weekly Planner.`;
+    elements.status.textContent = `Added "${task.title}" to Planner Projects.`;
   }
 
-  function updateProjectTaskList(nextList) {
-    state.projectTasks = nextList.sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
-    saveTasks(state.projectTasks);
+  async function updateProjectTaskList(nextList) {
+    state.projectTasks = sortTaskList(nextList, "project");
+    await Promise.all(state.projectTasks.map((task) => updateTask(task)));
     renderAll();
   }
 
-  function saveRepeatableState() {
-    const overrides = state.repeatableTasks.map((task) => ({
-      projectId: task.projectId,
-      priority: task.priority,
-      order: task.order,
-    }));
-
-    saveRepeatableOverrides(overrides);
+  function toProjectTaskRecord(task) {
+    return {
+      taskId: cleanText(task.taskId, ""),
+      projectId: cleanText(task.projectId, ""),
+      title: cleanText(task.title, "Untitled Task"),
+      source: normalizeSource(task.source),
+      category: cleanText(task.category, "uncategorized"),
+      state: cleanText(task.state, "unknown"),
+      priority: parseNumber(task.priority, 3),
+      order: parseNumber(task.order, 999),
+      recurrence: cleanText(task.recurrence, ""),
+      asset: cleanText(task.asset, ""),
+      mileage: cleanText(task.mileage, ""),
+    };
   }
 
-  function updateRepeatableTaskList(nextList) {
-    state.repeatableTasks = nextList.sort((a, b) => a.order - b.order || a.priority - b.priority || a.title.localeCompare(b.title));
-    saveRepeatableState();
+  async function addRepeatableToCuratedTasks(task) {
+    const saved = await addTask({
+      projectId: cleanText(task.projectId, ""),
+      title: cleanText(task.title, "Untitled Task"),
+      source: normalizeSource(task.source) || "repeating",
+      category: cleanText(task.category, "uncategorized"),
+      state: cleanText(task.state, "unknown"),
+      priority: parseNumber(task.priority, 3),
+      order: parseNumber(task.order, 999),
+      recurrence: cleanText(task.recurrence, ""),
+      asset: cleanText(task.asset, ""),
+      mileage: cleanText(task.mileage, ""),
+    });
+
+    const normalized = toProjectTaskRecord(saved);
+    const list = [...state.projectTasks];
+    const index = list.findIndex((item) => item.taskId === normalized.taskId);
+    if (index >= 0) {
+      list[index] = {
+        ...list[index],
+        ...normalized,
+      };
+    } else {
+      list.push(normalized);
+    }
+
+    state.projectTasks = sortTaskList(list, "project");
+    renderAll();
+  }
+
+  async function saveRepeatableState() {
+    const overrides = Array.from(state.repeatableOverrideMap.values());
+    await Promise.all(overrides.map((override) => window.PlannerStorage.upsertRepeatableOverride(override)));
+  }
+
+  async function updateRepeatableTaskList(nextList) {
+    state.repeatableTasks = sortTaskList(nextList, "repeatable");
+
+    state.repeatableTasks.forEach((task) => {
+      const existing = state.repeatableOverrideMap.get(task.projectId) || {};
+      state.repeatableOverrideMap.set(task.projectId, {
+        ...existing,
+        projectId: task.projectId,
+        priority: task.priority,
+        order: task.order,
+        removed: false,
+        removedFromTaskManager: false,
+      });
+    });
+
+    await saveRepeatableState();
     renderAll();
   }
 
@@ -416,84 +555,87 @@ function initTasksScreen() {
     return cloned;
   }
 
-  function onProjectAction(action, taskId) {
+  async function onProjectAction(action, taskId) {
     const list = [...state.projectTasks];
     const index = list.findIndex((item) => item.taskId === taskId);
     if (index < 0) {
       return;
     }
 
-    if (action === "priority-up") {
-      list[index].priority = Math.max(1, parseNumber(list[index].priority, 3) - 1);
-      updateTask(list[index]);
-      updateProjectTaskList(list);
-      return;
-    }
-
-    if (action === "priority-down") {
-      list[index].priority = Math.min(9, parseNumber(list[index].priority, 3) + 1);
-      updateTask(list[index]);
-      updateProjectTaskList(list);
-      return;
-    }
-
     if (action === "move-up") {
-      updateProjectTaskList(shiftOrder(list, taskId, -1));
+      await updateProjectTaskList(shiftOrder(list, taskId, -1));
       return;
     }
 
     if (action === "move-down") {
-      updateProjectTaskList(shiftOrder(list, taskId, 1));
+      await updateProjectTaskList(shiftOrder(list, taskId, 1));
       return;
     }
 
     if (action === "remove") {
-      removeTask(taskId);
+      await removeTask(taskId);
       state.projectTasks = state.projectTasks.filter((item) => item.taskId !== taskId);
       renderAll();
       return;
     }
 
     if (action === "send-weekly") {
-      sendToWeeklyPlanner(list[index], "project");
+      await sendToWeeklyPlanner(list[index], "project");
     }
   }
 
-  function onRepeatableAction(action, taskId) {
+  async function onRepeatableAction(action, taskId) {
     const list = [...state.repeatableTasks];
     const index = list.findIndex((item) => item.taskId === taskId);
     if (index < 0) {
       return;
     }
 
-    if (action === "priority-up") {
-      list[index].priority = Math.max(1, parseNumber(list[index].priority, 3) - 1);
-      updateRepeatableTaskList(list);
-      return;
-    }
-
-    if (action === "priority-down") {
-      list[index].priority = Math.min(9, parseNumber(list[index].priority, 3) + 1);
-      updateRepeatableTaskList(list);
-      return;
-    }
-
     if (action === "move-up") {
-      updateRepeatableTaskList(shiftOrder(list, taskId, -1));
+      await updateRepeatableTaskList(shiftOrder(list, taskId, -1));
       return;
     }
 
     if (action === "move-down") {
-      updateRepeatableTaskList(shiftOrder(list, taskId, 1));
+      await updateRepeatableTaskList(shiftOrder(list, taskId, 1));
       return;
     }
 
     if (action === "send-weekly") {
-      sendToWeeklyPlanner(list[index], "repeatable");
+      await sendToWeeklyPlanner(list[index], "repeating");
+      return;
+    }
+
+    if (action === "remove") {
+      const task = list[index];
+      const existing = state.repeatableOverrideMap.get(task.projectId) || {};
+      state.repeatableOverrideMap.set(task.projectId, {
+        ...existing,
+        projectId: task.projectId,
+        priority: task.priority,
+        order: task.order,
+        removedFromTaskManager: true,
+      });
+
+      state.repeatableTasks = state.repeatableTasks.filter((item) => item.taskId !== taskId);
+      await saveRepeatableState();
+      renderAll();
     }
   }
 
   function attachEvents() {
+    elements.projectSortToggle.addEventListener("click", () => {
+      state.sortDirection.project = state.sortDirection.project === "asc" ? "desc" : "asc";
+      state.projectTasks = sortTaskList(state.projectTasks, "project");
+      renderAll();
+    }, { signal: controller.signal });
+
+    elements.repeatableSortToggle.addEventListener("click", () => {
+      state.sortDirection.repeatable = state.sortDirection.repeatable === "asc" ? "desc" : "asc";
+      state.repeatableTasks = sortTaskList(state.repeatableTasks, "repeatable");
+      renderAll();
+    }, { signal: controller.signal });
+
     elements.projectList.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-action]");
       if (!button) {
@@ -533,22 +675,52 @@ function initTasksScreen() {
   }
 
   async function loadTaskManager() {
+    console.time("tasks-load");
     elements.status.textContent = "Loading tasks...";
+    elements.error.hidden = true;
     await ensureProjectServicesLoaded();
-    const projects = await window.loadAllProjects();
+    elements.mode.textContent = window.PlannerStorage.getUseSheets() ? "Sheets mode" : "Local mode";
+    const [projects] = await Promise.all([
+      window.loadAllProjects(),
+      window.PlannerStorage.getTaskManager(),
+    ]);
+    window.PlannerStorage.setCachedProjects(projects || []);
+    void window.PlannerStorage.prefetchAll().catch((error) => console.warn("Background PlannerStorage prefetch failed", error));
     state.allProjects = (projects || []).map(toProjectView);
 
-    const projectMap = new Map(state.allProjects.map((project) => [project.projectId, project]));
-    migrateLegacyQueue(projectMap);
-    buildProjectTasks(projectMap);
-    buildRepeatableTasks(projectMap);
+    const projectMapByKey = new Map(state.allProjects.map((project) => [makeProjectKey(project.source, project.projectId), project]));
+    const projectMapById = new Map();
+    state.allProjects.forEach((project) => {
+      const key = cleanText(project.projectId, "");
+      if (!projectMapById.has(key)) {
+        projectMapById.set(key, []);
+      }
+      projectMapById.get(key).push(project);
+    });
+
+    await buildProjectTasks(projectMapByKey, projectMapById);
+    await buildRepeatableTasks(state.allProjects);
     renderAll();
+    console.timeEnd("tasks-load");
   }
+
+  window.PlannerStorage && window.PlannerStorage.onChange((detail) => {
+    if (detail && detail.type === "task-manager-sync-error") {
+      elements.error.textContent = `Sheets sync queued: ${detail.error}`;
+      elements.error.hidden = false;
+      return;
+    }
+    if (detail && String(detail.type || "").startsWith("task-manager-")) {
+      loadTaskManager().catch((error) => console.warn("Task Manager refresh failed", error));
+    }
+  });
 
   attachEvents();
   loadTaskManager().catch((error) => {
     console.error(error);
     elements.status.textContent = "Unable to load Task Manager.";
+    elements.error.textContent = error.message || "Unable to load Task Manager.";
+    elements.error.hidden = false;
     elements.projectList.innerHTML = `<div class="task-empty">Failed to load project tasks. ${error.message || "Unknown error"}</div>`;
     elements.repeatableList.innerHTML = "";
   });

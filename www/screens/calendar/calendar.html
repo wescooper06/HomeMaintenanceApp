@@ -1,8 +1,24 @@
 <section class="calendar-screen hm-card">
-  <h1>Calendar</h1>
-  <p class="hm-muted">Upcoming maintenance timeline.</p>
+  <div data-main-nav></div>
+
+  <header class="calendar-header">
+    <div>
+      <h1>Calendar</h1>
+    </div>
+    <div class="calendar-controls" aria-label="Calendar month navigation">
+      <span id="calendarStatus" class="calendar-status" role="status" aria-live="polite">Ready.</span>
+      <button id="calendar-add-event-btn" type="button">+ Add Event</button>
+      <button id="calendar-refresh-btn" type="button">⟳ Refresh</button>
+      <button id="calendarPrevMonth" type="button" aria-label="Previous month">◀</button>
+      <button id="calendarToday" type="button">Today</button>
+      <button id="calendarNextMonth" type="button" aria-label="Next month">▶</button>
+    </div>
+  </header>
+
+  <h2 id="calendarMonthLabel" class="calendar-month-label"></h2>
+  <div id="calendarUpdatedAt" class="calendar-updated-at"></div>
 
   <div id="calendarEvents" class="calendar-events"></div>
 
-  <div data-main-nav></div>
+  <div id="calendar-modal" class="weather-modal-host" hidden></div>
 </section>
