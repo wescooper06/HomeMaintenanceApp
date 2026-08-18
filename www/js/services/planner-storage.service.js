@@ -43,7 +43,6 @@
     (Array.isArray(keys) ? keys : []).forEach((key) => {
       PlannerCache[key] = null;
     });
-    PlannerCache.expires = 0;
   }
 
   function nowIso() {
@@ -516,8 +515,14 @@
     });
   }
 
+  // The local snapshot stays authoritative so a lagging Sheets write cannot restore removed tasks.
   function saveWeeklyPlannerLocal(planner) {
-    writeJson(STORAGE_KEYS.weeklyPlanner, planner);
+    const snapshot = {
+      weekStartDate: cleanText(planner && planner.weekStartDate, ""),
+      tasks: Array.isArray(planner && planner.tasks) ? planner.tasks : [],
+    };
+    writeJson(STORAGE_KEYS.weeklyPlanner, snapshot);
+    setCache({ weekly: { ...clone(snapshot), tasks: sortWeeklyTasks(snapshot.tasks) } });
   }
 
   function upsertWeeklyTaskLocal(task) {
@@ -532,7 +537,6 @@
     }
 
     saveWeeklyPlannerLocal(planner);
-    invalidateCache(["weekly"]);
     emitChange({ type: "weekly-task-upsert", item: clone(normalized) });
     return clone(normalized);
   }
@@ -558,7 +562,6 @@
     }
 
     saveWeeklyPlannerLocal(planner);
-    invalidateCache(["weekly"]);
     emitChange({ type: "weekly-task-delete", id: targetId, hardDelete });
     return { ok: true, id: targetId, hardDelete };
   }
@@ -599,7 +602,6 @@
   // Persist one Weekly Planner task optimistically, then sync its row to Planner_WeeklyTasks.
   async function upsertWeeklyTask(task) {
     const normalized = upsertWeeklyTaskLocal(task);
-    invalidateCache(["weekly"]);
     if (state.useSheets) {
       try {
         await sendWeeklyPlannerBatch([{ op: "upsert", sheet: SHEET_NAMES.weeklyTasks, row: weeklyTaskToSheetRow(normalized) }]);
@@ -614,7 +616,6 @@
   // Delete one Weekly Planner task optimistically, then sync its deletion to Sheets.
   async function deleteWeeklyTask(id, options) {
     const result = deleteWeeklyTaskLocal(id, options);
-    invalidateCache(["weekly"]);
     if (state.useSheets && result.ok) {
       try {
         await sendWeeklyPlannerBatch([{ op: "delete", sheet: SHEET_NAMES.weeklyTasks, id: result.id, row: { id: result.id, updatedAt: nowIso() } }]);
@@ -650,12 +651,13 @@
   // Persist the complete Weekly Planner snapshot while keeping week navigation metadata local.
   function saveWeeklyPlannerState(planner) {
     const nextPlanner = planner && typeof planner === "object" ? planner : { weekStartDate: "", tasks: [] };
+    const previousTasks = readWeeklyPlannerLocal().tasks;
+    const nextTasks = Array.isArray(nextPlanner.tasks) ? clone(nextPlanner.tasks) : [];
+    saveWeeklyPlannerLocal({ weekStartDate: cleanText(nextPlanner.weekStartDate, ""), tasks: nextTasks });
+
     state.weeklyPlannerWriteQueue = state.weeklyPlannerWriteQueue.then(async () => {
-      invalidateCache(["weekly"]);
-      const current = readWeeklyPlannerLocal();
-      const nextTasks = Array.isArray(nextPlanner.tasks) ? nextPlanner.tasks : [];
       const nextIds = new Set(nextTasks.map((task) => cleanText(task && (task.id || task.taskId), "")));
-      const currentRows = new Map((Array.isArray(current.tasks) ? current.tasks : []).map((task) => {
+      const currentRows = new Map((Array.isArray(previousTasks) ? previousTasks : []).map((task) => {
         const row = weeklyTaskToSheetRow(task);
         const comparable = { ...row };
         delete comparable.updatedAt;
@@ -670,7 +672,7 @@
           operations.push({ op: "upsert", sheet: SHEET_NAMES.weeklyTasks, row });
         }
       });
-      (Array.isArray(current.tasks) ? current.tasks : []).forEach((task) => {
+      (Array.isArray(previousTasks) ? previousTasks : []).forEach((task) => {
         const id = cleanText(task && (task.id || task.taskId), "");
         if (id && !nextIds.has(id)) {
           operations.push({ op: "delete", sheet: SHEET_NAMES.weeklyTasks, id, row: { id, updatedAt: nowIso() } });
@@ -679,10 +681,6 @@
       if (operations.length) {
         await batchApplyPlannerChanges(operations);
       }
-      writeJson(STORAGE_KEYS.weeklyPlanner, {
-        weekStartDate: cleanText(nextPlanner.weekStartDate, ""),
-        tasks: nextTasks,
-      });
       emitChange({ type: "weekly-snapshot-saved", operations: operations.length });
     }).catch((error) => {
       console.warn("Weekly Planner snapshot save failed.", error);
