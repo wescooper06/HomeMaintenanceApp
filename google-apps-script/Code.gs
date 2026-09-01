@@ -18,6 +18,12 @@ const PLANNER_WEEKLY_TASK_HEADERS = [
   'deletedInstance', 'checklistJson', 'checklistOpen', 'reminderJson',
   'metadataJson', 'updatedAt', 'deleted',
 ];
+const PLANNER_PARKING_LOT = 'Planner_ParkingLot';
+const PLANNER_PARKING_LOT_HEADERS = [
+  'id', 'title', 'notes', 'tags', 'priority', 'color',
+  'checklistJson', 'reminderJson', 'metadataJson',
+  'convertedToType', 'convertedToId', 'createdAt', 'updatedAt', 'deleted',
+];
 
 const FIXED_HOME_HEADERS = [
   'ID',
@@ -93,6 +99,14 @@ function doGet(e) {
       return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
     }
 
+    if (action === 'getParkingLotState' || action === 'fetchParkingLot') {
+      const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
+      console.log('ParkingLot: ' + action + ' requested');
+      ensureParkingLotSheet(SpreadsheetApp.openById(spreadsheetId));
+      const payload = getParkingLotState(spreadsheetId);
+      return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+    }
+
     if (action === 'projectDropdownOptions') {
       const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
       const payload = buildProjectDropdownOptionsPayload(spreadsheetId || '');
@@ -143,7 +157,7 @@ function doGet(e) {
       service: 'home-maintenance-sheet-writer',
       version: SCRIPT_VERSION,
       methods: ['GET', 'POST'],
-      actions: ['projectDropdownOptions', 'getTaskManagerState', 'batchTaskManagerMutations', 'getWeeklyPlannerState', 'batchWeeklyPlannerMutations', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
+      actions: ['projectDropdownOptions', 'getTaskManagerState', 'batchTaskManagerMutations', 'getWeeklyPlannerState', 'batchWeeklyPlannerMutations', 'getParkingLotState', 'upsertParkingItem', 'deleteParkingItem', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
     };
 
     return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
@@ -339,10 +353,18 @@ function batchApplyPlannerChanges(mutations, clientTxnId, spreadsheetId) {
   const taskManagerMutations = list.filter(function (mutation) {
     return mutation && mutation.sheet === PLANNER_TASK_MANAGER;
   });
-  if (taskManagerMutations.length !== list.length) {
-    throw new Error('Unsupported planner sheet in batchApplyPlannerChanges.');
+  if (taskManagerMutations.length === list.length) {
+    return batchTaskManagerMutations(taskManagerMutations, clientTxnId, spreadsheetId);
   }
-  return batchTaskManagerMutations(taskManagerMutations, clientTxnId, spreadsheetId);
+  const parkingLotMutations = list.filter(function (mutation) {
+    return mutation && mutation.sheet === PLANNER_PARKING_LOT;
+  });
+  if (parkingLotMutations.length === list.length) {
+    // Defensively guarantee the sheet exists even if batchParkingLotMutations is ever called without it.
+    ensureParkingLotSheet(SpreadsheetApp.openById(text(spreadsheetId)));
+    return batchParkingLotMutations(parkingLotMutations, clientTxnId, spreadsheetId);
+  }
+  throw new Error('Unsupported planner sheet in batchApplyPlannerChanges.');
 }
 
 function ensureWeeklyPlannerSheet(spreadsheet) {
@@ -413,6 +435,108 @@ function batchWeeklyPlannerMutations(mutations, clientTxnId, spreadsheetId) {
   return response;
 }
 
+function ensureParkingLotSheet(spreadsheet) {
+  // Look up the exact tab name first so a missing sheet is never masked by fuzzy matching.
+  var sheet = spreadsheet.getSheetByName(PLANNER_PARKING_LOT) || resolveSheetByTabName(spreadsheet, PLANNER_PARKING_LOT);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(PLANNER_PARKING_LOT);
+    console.log('Created Planner_ParkingLot sheet');
+  }
+  const headerRange = sheet.getRange(1, 1, 1, PLANNER_PARKING_LOT_HEADERS.length);
+  const headers = headerRange.getDisplayValues()[0].map(function (value) { return text(value); });
+  const matches = PLANNER_PARKING_LOT_HEADERS.every(function (header, index) { return headers[index] === header; });
+  if (!matches) headerRange.setValues([PLANNER_PARKING_LOT_HEADERS]);
+  return sheet;
+}
+
+function getParkingLotSheet(spreadsheet) {
+  return ensureParkingLotSheet(spreadsheet);
+}
+
+function parkingLotRows(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, PLANNER_PARKING_LOT_HEADERS.length).getDisplayValues();
+  return values.map(function (row, index) {
+    const item = {};
+    PLANNER_PARKING_LOT_HEADERS.forEach(function (header, column) { item[header] = text(row[column]); });
+    item._rowNumber = index + 2;
+    return item;
+  }).filter(function (item) { return text(item.id); });
+}
+
+function getParkingLotState(spreadsheetId) {
+  if (!text(spreadsheetId)) throw new Error('Missing spreadsheetId for getParkingLotState.');
+  const sheet = ensureParkingLotSheet(SpreadsheetApp.openById(text(spreadsheetId)));
+  const rows = parkingLotRows(sheet);
+  return { ok: true, status: 'ok', action: 'getParkingLotState', version: SCRIPT_VERSION, rows: rows };
+}
+
+function batchParkingLotMutations(mutations, clientTxnId, spreadsheetId) {
+  if (!text(spreadsheetId)) throw new Error('Missing spreadsheetId for batchParkingLotMutations.');
+  const txnId = text(clientTxnId);
+  const properties = PropertiesService.getScriptProperties();
+  const txnKey = 'planner_parking_lot_txn_' + txnId;
+  if (txnId && properties.getProperty(txnKey)) return JSON.parse(properties.getProperty(txnKey));
+
+  const sheet = ensureParkingLotSheet(SpreadsheetApp.openById(text(spreadsheetId)));
+  const existing = parkingLotRows(sheet);
+  const byId = {};
+  existing.forEach(function (row) { byId[text(row.id)] = row; });
+  const results = [];
+  (Array.isArray(mutations) ? mutations : []).forEach(function (mutation) {
+    const row = mutation && mutation.row ? mutation.row : {};
+    const id = text((mutation && mutation.id) || row.id);
+    if (!id) { results.push({ ok: false, error: 'Mutation is missing id.' }); return; }
+    const current = byId[id];
+    if (current && taskManagerDate(row.updatedAt) < taskManagerDate(current.updatedAt)) {
+      results.push({ ok: true, id: id, applied: false, conflict: true });
+      return;
+    }
+
+    if (mutation.op === 'delete') {
+      if (!current) {
+        results.push({ ok: true, op: 'delete', id: id, applied: false });
+        return;
+      }
+      if (mutation.hardDelete) {
+        sheet.deleteRow(current._rowNumber);
+        existing.splice(existing.indexOf(current), 1);
+        existing.forEach(function (item, index) { item._rowNumber = index + 2; });
+        delete byId[id];
+      } else {
+        const deletedValues = PLANNER_PARKING_LOT_HEADERS.map(function (header) {
+          if (header === 'deleted') return true;
+          if (header === 'updatedAt') return row.updatedAt || new Date().toISOString();
+          return current[header];
+        });
+        sheet.getRange(current._rowNumber, 1, 1, PLANNER_PARKING_LOT_HEADERS.length).setValues([deletedValues]);
+        byId[id] = Object.assign({}, current, { deleted: true, updatedAt: deletedValues[PLANNER_PARKING_LOT_HEADERS.indexOf('updatedAt')] });
+      }
+      results.push({ ok: true, op: 'delete', id: id, applied: true });
+      return;
+    }
+
+    const normalized = {};
+    PLANNER_PARKING_LOT_HEADERS.forEach(function (header) { normalized[header] = text(row[header]); });
+    normalized.id = id;
+    normalized.updatedAt = normalized.updatedAt || new Date().toISOString();
+    const values = PLANNER_PARKING_LOT_HEADERS.map(function (header) { return normalized[header]; });
+    if (current) {
+      sheet.getRange(current._rowNumber, 1, 1, PLANNER_PARKING_LOT_HEADERS.length).setValues([values]);
+      byId[id] = Object.assign({}, normalized, { _rowNumber: current._rowNumber });
+    } else {
+      sheet.appendRow(values);
+      byId[id] = Object.assign({}, normalized, { _rowNumber: sheet.getLastRow() });
+    }
+    results.push({ ok: true, op: 'upsert', id: id, applied: true });
+  });
+
+  const response = { ok: true, action: 'batchParkingLotMutations', version: SCRIPT_VERSION, clientTxnId: txnId, results: results };
+  if (txnId) properties.setProperty(txnKey, JSON.stringify(response));
+  return response;
+}
+
 function buildProjectDropdownOptionsPayload(spreadsheetId) {
   const targetSpreadsheetId = text(spreadsheetId);
   if (!targetSpreadsheetId) {
@@ -429,6 +553,7 @@ function buildProjectDropdownOptionsPayload(spreadsheetId) {
         priority: ['Priority'],
         recurrence: ['Recurrence', 'Frequency', 'Repeat'],
         area: ['Area'],
+        property: ['Property'],
       },
     },
     vehicle: {
@@ -451,6 +576,7 @@ function buildProjectDropdownOptionsPayload(spreadsheetId) {
         recurrance: ['Recurrance', 'Recurrence', 'Frequency', 'Repeat', 'Interval'],
         recurrence: ['Recurrence', 'Frequency', 'Repeat', 'Interval'],
         area: ['Area'],
+        property: ['Property'],
       },
     },
   };
@@ -871,6 +997,28 @@ function doPost(e) {
 
     if (action === 'batchWeeklyPlannerMutations') {
       return jsonResponse(batchWeeklyPlannerMutations(body.mutations, body.clientTxnId, body.spreadsheetId));
+    }
+
+    if (action === 'upsertParkingItem') {
+      console.log('ParkingLot: upsertParkingItem requested');
+      ensureParkingLotSheet(SpreadsheetApp.openById(text(body.spreadsheetId)));
+      const result = batchParkingLotMutations(
+        [{ op: 'upsert', sheet: PLANNER_PARKING_LOT, row: body.row || body.item }],
+        body.clientTxnId,
+        body.spreadsheetId
+      );
+      return jsonResponse(result);
+    }
+
+    if (action === 'deleteParkingItem') {
+      console.log('ParkingLot: deleteParkingItem requested');
+      ensureParkingLotSheet(SpreadsheetApp.openById(text(body.spreadsheetId)));
+      const result = batchParkingLotMutations(
+        [{ op: 'delete', sheet: PLANNER_PARKING_LOT, id: body.id, hardDelete: Boolean(body.hardDelete), row: { id: body.id, updatedAt: new Date().toISOString() } }],
+        body.clientTxnId,
+        body.spreadsheetId
+      );
+      return jsonResponse(result);
     }
 
     if (action === 'sendReminder' || action === 'resetReminder' || action === 'deleteReminder') {
