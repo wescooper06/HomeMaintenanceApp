@@ -1,5 +1,5 @@
 function initWorkbenchScreen() {
-  const SERVICE_VERSION = "20260814-2";
+  const SERVICE_VERSION = "20260822-13";
   const state = { projects: [], tasks: [], taskSort: "asc", projectSort: "order", search: "", source: [], category: [], projectState: [] };
   const elements = {
     status: document.getElementById("workbenchStatus"),
@@ -41,6 +41,28 @@ function initWorkbenchScreen() {
     script.onerror = () => reject(new Error(`Failed to load ${src}`));
     document.body.appendChild(script);
   });
+
+  function ensureAgentCommandBar() {
+    const screen = document.querySelector(".workbench-screen");
+    if (!screen || document.getElementById("agent-command-bar")) {
+      return;
+    }
+
+    const header = screen.querySelector(".workbench-header");
+    if (!header) {
+      return;
+    }
+
+    const commandBar = document.createElement("div");
+    commandBar.id = "agent-command-bar";
+    commandBar.innerHTML = '<input id="agent-input" type="text" placeholder="Ask the Agent..." autocomplete="off" />';
+
+    const response = document.createElement("div");
+    response.id = "agent-response";
+
+    screen.insertBefore(response, header);
+    screen.insertBefore(commandBar, response);
+  }
 
   const clean = (value, fallback = "") => {
     const result = value == null ? "" : String(value).trim();
@@ -252,12 +274,16 @@ function initWorkbenchScreen() {
     renderTasks();
   }
 
-  async function loadWorkbench() {
+  async function loadWorkbench(forceReload) {
     renderSkeleton();
     elements.status.textContent = "Loading Workbench...";
     console.time("workbench-load");
-    await Promise.all([loadScript("js/utils/uuid.js"), loadScript("js/services/planner-storage.service.js"), loadScript("js/services/sheets.service.js"), loadScript("js/services/projects.service.js")]);
-    const cachedProjects = window.PlannerStorage.getCachedProjects && window.PlannerStorage.getCachedProjects();
+    ensureAgentCommandBar();
+    await Promise.all([loadScript("js/utils/uuid.js"), loadScript("js/services/planner-storage.service.js"), loadScript("js/services/sheets.service.js"), loadScript("js/services/projects.service.js"), loadScript("/www/workbench/agent-ui.js")]);
+    if (window.WorkbenchAgentUI && typeof window.WorkbenchAgentUI.bootstrap === "function") {
+      await window.WorkbenchAgentUI.bootstrap();
+    }
+    const cachedProjects = !forceReload && window.PlannerStorage.getCachedProjects ? window.PlannerStorage.getCachedProjects() : null;
     const [projects, tasks] = await Promise.all([cachedProjects || window.loadAllProjects(), window.PlannerStorage.getTaskManager()]);
     state.projects = projects || [];
     state.tasks = tasks || [];
@@ -437,7 +463,7 @@ function initWorkbenchScreen() {
         addToRepeating: Boolean(values.addToRepeating),
       });
       closeAddProject();
-      await loadWorkbench();
+      await loadWorkbench(true);
       elements.status.textContent = `Created project ${result.id} in ${result.tabName}.`;
     } catch (error) {
       elements.status.textContent = error && error.message ? error.message : "Unable to create project.";
@@ -445,12 +471,12 @@ function initWorkbenchScreen() {
       submitButton.disabled = false;
     }
   });
-  elements.projects.addEventListener("click", (event) => {
+  elements.projects.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const card = button.closest("article[data-project-id]");
-    const projectIndex = Number(card && card.dataset.projectIndex);
-    const project = Number.isInteger(projectIndex) ? state.projects[projectIndex] : null;
+    const projectId = card && card.dataset.projectId;
+    const project = state.projects.find((item) => String(item.id) === String(projectId));
     if (!project) return;
     if (button.dataset.action === "add-task") {
       addProjectTask(project).catch((error) => { elements.status.textContent = error.message; });
@@ -460,8 +486,33 @@ function initWorkbenchScreen() {
       openEditProject(project);
       return;
     }
-    sessionStorage.setItem("hm_workbench_project_action", JSON.stringify({ action: button.dataset.action, projectId: project.id, source: project.source }));
-    window.location.hash = "#projects";
+    if (button.dataset.action === "delete-project") {
+      if (!window.ProjectsService || typeof window.ProjectsService.deleteProject !== "function") {
+        elements.status.textContent = "Project delete service is unavailable.";
+        return;
+      }
+
+      const confirmDelete = window.confirm(`Delete project ${project.title || project.id}?`);
+      if (!confirmDelete) {
+        return;
+      }
+
+      button.disabled = true;
+      elements.status.textContent = "Deleting project...";
+      try {
+        const result = await window.SheetsService.deleteProject(project);
+        if (result && result.ok === false) {
+          throw new Error(result.error || "Unable to delete project.");
+        }
+        await loadWorkbench(true);
+        elements.status.textContent = `Deleted project ${project.id}.`;
+      } catch (error) {
+        elements.status.textContent = error && error.message ? error.message : "Unable to delete project.";
+      } finally {
+        button.disabled = false;
+      }
+      return;
+    }
   });
   elements.tasks.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");

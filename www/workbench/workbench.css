@@ -1,0 +1,31 @@
+#agent-command-bar {
+  display: flex;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid #dbe3ec;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+#agent-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fff;
+  font: inherit;
+}
+
+#agent-response {
+  margin: 0 0 14px;
+  color: #0f172a;
+  font-size: 0.9rem;
+}
+
+.agent-response-text {
+  margin: 0;
+}
