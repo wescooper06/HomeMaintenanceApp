@@ -10,10 +10,57 @@
   };
 
   let cachedTemplate = "";
+  let cachedDropdownOptions = null;
+  let cachedDropdownOptionsPromise = null;
 
   function cleanText(value, fallback) {
     const text = value == null ? "" : String(value).trim();
     return text || fallback;
+  }
+
+  // Reuse the same Sheets-backed dropdown metadata the Projects screen uses (Category/State/Priority/Area).
+  async function getProjectDropdownOptions() {
+    if (cachedDropdownOptions) {
+      return cachedDropdownOptions;
+    }
+
+    if (!window.SheetsService || typeof window.SheetsService.fetchProjectDropdownOptions !== "function") {
+      return { home: {}, vehicle: {}, repeating: {} };
+    }
+
+    if (!cachedDropdownOptionsPromise) {
+      cachedDropdownOptionsPromise = window.SheetsService.fetchProjectDropdownOptions()
+        .then((options) => {
+          cachedDropdownOptions = options && typeof options === "object" ? options : { home: {}, vehicle: {}, repeating: {} };
+          return cachedDropdownOptions;
+        })
+        .catch((error) => {
+          console.warn("Unable to load project dropdown options for Parking Lot edit dialog", error);
+          cachedDropdownOptionsPromise = null;
+          return { home: {}, vehicle: {}, repeating: {} };
+        });
+    }
+
+    return cachedDropdownOptionsPromise;
+  }
+
+  function buildSelectOptions(values, currentValue, options) {
+    const allowEmpty = Boolean(options && options.allowEmpty);
+    const list = Array.isArray(values) ? values.filter((value) => cleanText(value, "")) : [];
+    const current = cleanText(currentValue, "");
+    if (current && !list.includes(current)) {
+      list.unshift(current);
+    }
+
+    if (!current && allowEmpty) {
+      list.unshift("");
+    }
+
+    if (!list.length) {
+      return `<option value="${escapeHtml(current)}">${escapeHtml(current || "\u2014")}</option>`;
+    }
+
+    return list.map((value) => `<option value="${escapeHtml(value)}"${value === current ? " selected" : ""}>${escapeHtml(value || "\u2014 None \u2014")}</option>`).join("");
   }
 
   function escapeHtml(value) {
@@ -153,7 +200,8 @@
             <div class="parking-lot-actions">
               <button type="button" class="parking-lot-drag-handle" data-action="drag-handle" draggable="true" aria-label="Drag parking lot item" title="Drag">⋮⋮</button>
               <button type="button" class="parking-lot-action-btn" data-action="edit" aria-label="Edit parking lot item" title="Edit">✎</button>
-              <button type="button" class="parking-lot-action-btn parking-lot-delete-btn" data-action="delete" aria-label="Delete parking lot item" title="Delete">X</button>
+              ${(convertedType === "project" || convertedType === "repeatable") ? `<button type="button" class="parking-lot-action-btn pool-icon-btn curated-only" data-action="remove-from-projects" aria-label="Remove from Projects" title="Remove from Projects">🗂️</button>` : ""}
+              <button type="button" class="parking-lot-action-btn parking-lot-delete-btn" data-action="delete" aria-label="Remove from Parking Lot" title="Remove from Parking Lot">🗑️</button>
             </div>
           </div>
         </div>
@@ -385,7 +433,8 @@
       return false;
     }
 
-    const expectedSource = sourceFromConvertedType(cleanText(convertedType, ""));
+    const expectedSource = cleanText(parkingItem && parkingItem.convertedTo && parkingItem.convertedTo.sheetSource, "")
+      || sourceFromConvertedType(cleanText(convertedType, ""));
     const project = await findProjectById(targetId, expectedSource, {
       titleHint: cleanText(titleFallback, ""),
       rowHint: Number(parkingItem && parkingItem.convertedTo && parkingItem.convertedTo.rowNumber || 0),
@@ -417,6 +466,10 @@
       return false;
     }
 
+    const dropdownOptions = await getProjectDropdownOptions();
+    const dropdownSourceKey = expectedSource === "repeating" ? "repeating" : "home";
+    const sourceDropdowns = (dropdownOptions && dropdownOptions[dropdownSourceKey]) || {};
+
     host.hidden = false;
     host.innerHTML = `
       <div class="parking-lot-modal" role="dialog" aria-modal="true" aria-labelledby="parking-project-edit-title">
@@ -430,12 +483,13 @@
         <div class="parking-lot-modal-body">
           <form class="parking-lot-form-grid">
             <label>Title<input name="title" type="text" required value="${escapeHtml(cleanText(project.title, titleFallback || "Untitled Project"))}" /></label>
-            <label>Category<input name="category" type="text" value="${escapeHtml(cleanText(project.category, "uncategorized"))}" /></label>
-            <label>State<input name="state" type="text" value="${escapeHtml(cleanText(project.state, "unknown"))}" /></label>
-            <label>Priority<input name="priority" type="text" value="${escapeHtml(cleanText(metadata.priority, ""))}" /></label>
+            <label>Source<select name="source">${["home", "vehicle", "repeating"].map((value) => `<option value="${value}"${value === cleanText(expectedSource, "home") ? " selected" : ""}>${value === "home" ? "Home" : value === "vehicle" ? "Vehicle" : "Repeating"}</option>`).join("")}</select></label>
+            <label>Category<select name="category">${buildSelectOptions(sourceDropdowns.category, cleanText(project.category, "uncategorized"))}</select></label>
+            <label>State<select name="state">${buildSelectOptions(sourceDropdowns.state, cleanText(project.state, "unknown"))}</select></label>
+            <label>Priority<select name="priority">${buildSelectOptions(sourceDropdowns.priority, cleanText(metadata.priority, ""))}</select></label>
             <label>Order<input name="order" type="text" value="${escapeHtml(cleanText(metadata.order, ""))}" /></label>
-            <label>Area<input name="area" type="text" value="${escapeHtml(cleanText(metadata.area, ""))}" /></label>
-            <label>Property<input name="property" type="text" value="${escapeHtml(cleanText(metadata.property, ""))}" /></label>
+            <label>Area<select name="area">${buildSelectOptions(sourceDropdowns.area, cleanText(metadata.area, ""))}</select></label>
+            <label>Property<select name="property">${buildSelectOptions(sourceDropdowns.property, cleanText(metadata.property, ""), { allowEmpty: true })}</select></label>
             <label>Date Completed<input name="dateCompleted" type="text" value="${escapeHtml(cleanText(metadata.dateCompleted, ""))}" /></label>
           </form>
           <p class="parking-lot-edit-status" data-role="project-edit-status" aria-live="polite"></p>
@@ -461,6 +515,64 @@
       const form = host.querySelector(".parking-lot-form-grid");
       const nextTitle = cleanText(form.querySelector("[name='title']").value, cleanText(project.title, "Untitled Project"));
       const nextPropertyRaw = String(form.querySelector("[name='property']").value == null ? "" : form.querySelector("[name='property']").value).trim();
+      const nextSourceKey = cleanText(form.querySelector("[name='source']").value, expectedSource).toLowerCase();
+
+      // Moving Source creates the project in the new list and removes it from the old one.
+      if (nextSourceKey !== expectedSource) {
+        status.textContent = "Moving project...";
+        try {
+          if (!window.ProjectsService || typeof window.ProjectsService.createProject !== "function") {
+            throw new Error("ProjectsService.createProject is unavailable.");
+          }
+
+          const createResult = await window.ProjectsService.createProject({
+            source: nextSourceKey,
+            title: nextTitle,
+            category: cleanText(form.querySelector("[name='category']").value, cleanText(project.category, "uncategorized")),
+            state: cleanText(form.querySelector("[name='state']").value, cleanText(project.state, "unknown")),
+            priority: cleanText(form.querySelector("[name='priority']").value, cleanText(metadata.priority, "")),
+            order: cleanText(form.querySelector("[name='order']").value, cleanText(metadata.order, "")),
+            area: cleanText(form.querySelector("[name='area']").value, cleanText(metadata.area, "")),
+            property: nextPropertyRaw,
+            vehicle: nextPropertyRaw,
+            dateCompleted: cleanText(form.querySelector("[name='dateCompleted']").value, cleanText(metadata.dateCompleted, "")),
+            recurrence: cleanText(metadata.recurrence, ""),
+          });
+
+          if (!createResult || createResult.ok === false) {
+            throw new Error(cleanText(createResult && createResult.error, "Unable to create project in the new list."));
+          }
+
+          try {
+            await window.SheetsService.deleteProject({
+              id: cleanText(project.id, targetId),
+              source: expectedSource,
+              metadata: { sheetRowNumber: Number(metadata.sheetRowNumber || 0) },
+            });
+          } catch (deleteError) {
+            console.warn("Unable to remove project from previous list after moving source", deleteError);
+          }
+
+          if (parkingItem) {
+            parkingItem.title = nextTitle;
+            parkingItem.convertedTo = {
+              ...(parkingItem.convertedTo && typeof parkingItem.convertedTo === "object" ? parkingItem.convertedTo : {}),
+              type: nextSourceKey === "repeating" ? "repeatable" : "project",
+              id: cleanText(createResult.id, targetId),
+              tabName: cleanText(createResult.tabName, ""),
+              rowNumber: createResult.rowNumber,
+              sheetSource: nextSourceKey,
+            };
+            parkingItem.color = nextSourceKey === "repeating" ? DEFAULT_COLORS.repeatable : DEFAULT_COLORS.project;
+            await storage.upsertParkingItem(parkingItem);
+          }
+
+          close();
+        } catch (error) {
+          status.textContent = cleanText(error && error.message, "Unable to move project to the new list.");
+        }
+        return;
+      }
 
       const nextProject = {
         ...project,
@@ -711,7 +823,7 @@
 
       host.querySelector("[data-action='dialog-delete']").addEventListener("click", async () => {
         if (state.activeEditId) {
-          await storage.deleteParkingItem(state.activeEditId);
+          await storage.deleteParkingItem(state.activeEditId, { hardDelete: true });
         }
         closeDialog();
       });
@@ -814,8 +926,45 @@
       openDialog();
     }
 
+    // Remove whatever record the item was previously converted to when re-converting to a different type.
+    async function removePreviousConversion(previousConversion, targetType) {
+      const previousType = cleanText(previousConversion && previousConversion.type, "");
+      if (!previousType || previousType === targetType) {
+        return;
+      }
+
+      try {
+        if (previousType === "task-manager") {
+          await storage.deleteTaskManagerTask(previousConversion.id);
+          return;
+        }
+
+        if (previousType === "project" || previousType === "repeatable") {
+          if (!window.SheetsService || typeof window.SheetsService.deleteProject !== "function") {
+            return;
+          }
+
+          await window.SheetsService.deleteProject({
+            id: previousConversion.id,
+            source: sourceFromConvertedType(previousType),
+            tabName: cleanText(previousConversion.tabName, ""),
+            metadata: { sheetRowNumber: Number(previousConversion.rowNumber || 0) },
+          });
+          return;
+        }
+
+        if (previousType === "weekly") {
+          await storage.deleteWeeklyTask(previousConversion.id, { hardDelete: false });
+        }
+      } catch (error) {
+        console.warn("Unable to remove previous parking lot conversion", error);
+      }
+    }
+
     async function convertItemDirectly(item, convertTo) {
       const nextItem = parseParkingItem(item);
+      const previousConversion = nextItem.convertedTo && typeof nextItem.convertedTo === "object" ? { ...nextItem.convertedTo } : null;
+      await removePreviousConversion(previousConversion, convertTo);
 
       if (convertTo === "task-manager") {
         const converted = await storage.upsertTaskManagerTask({
@@ -871,6 +1020,35 @@
       nextItem.color = convertTo === "repeatable" ? DEFAULT_COLORS.repeatable : DEFAULT_COLORS.project;
       await storage.upsertParkingItem(nextItem);
       return nextItem;
+    }
+
+    // Delete the underlying Project List_A/B/C row without touching the Parking Lot item itself.
+    async function removeParkingItemFromProjectList(item) {
+      const convertedTo = item && item.convertedTo && typeof item.convertedTo === "object" ? item.convertedTo : null;
+      const convertedType = cleanText(convertedTo && convertedTo.type, "");
+      if (!convertedTo || (convertedType !== "project" && convertedType !== "repeatable")) {
+        return;
+      }
+
+      if (!window.SheetsService || typeof window.SheetsService.deleteProject !== "function") {
+        return;
+      }
+
+      try {
+        await window.SheetsService.deleteProject({
+          id: cleanText(convertedTo.id, item.id),
+          source: sourceFromConvertedType(convertedType),
+          tabName: cleanText(convertedTo.tabName, ""),
+          metadata: { sheetRowNumber: Number(convertedTo.rowNumber || 0) },
+        });
+
+        const nextItem = parseParkingItem(item);
+        nextItem.convertedTo = null;
+        nextItem.color = "";
+        await storage.upsertParkingItem(nextItem);
+      } catch (error) {
+        console.error("Unable to remove project from list", error);
+      }
     }
 
     async function convertParkingToDrop(detail) {
@@ -950,7 +1128,12 @@
       }
 
       if (button.dataset.action === "delete") {
-        storage.deleteParkingItem(item.id);
+        storage.deleteParkingItem(item.id, { hardDelete: true });
+        return;
+      }
+
+      if (button.dataset.action === "remove-from-projects") {
+        removeParkingItemFromProjectList(item).catch((error) => console.error(error));
         return;
       }
 

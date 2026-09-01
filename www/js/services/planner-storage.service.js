@@ -134,38 +134,63 @@
     };
   }
 
-  function getParkingLot() {
-    return Promise.resolve(getParkingLotLocal());
+  function parkingItemToSheetRow(item) {
+    const normalized = normalizeParkingItem(item);
+    const convertedTo = normalized.convertedTo && typeof normalized.convertedTo === "object" ? normalized.convertedTo : {};
+    return {
+      id: normalized.id,
+      title: normalized.title,
+      notes: normalized.notes,
+      tags: normalized.tags,
+      priority: normalized.priority,
+      color: normalized.color,
+      checklistJson: normalized.checklistJson,
+      reminderJson: normalized.reminderJson,
+      metadataJson: normalized.metadataJson,
+      convertedToType: cleanText(convertedTo.type, ""),
+      convertedToId: cleanText(convertedTo.id, ""),
+      createdAt: normalized.createdAt,
+      updatedAt: normalized.updatedAt,
+      deleted: normalized.deleted,
+    };
   }
 
-  function upsertParkingItem(item) {
-    const normalized = normalizeParkingItem(item);
+  function sheetRowToParkingItem(row) {
+    const source = row && typeof row === "object" ? row : {};
+    const convertedToType = cleanText(source.convertedToType, "");
+    const convertedToId = cleanText(source.convertedToId, "");
+    return normalizeParkingItem({
+      ...source,
+      convertedTo: convertedToType || convertedToId ? { type: convertedToType, id: convertedToId } : null,
+      deleted: source.deleted === true || String(source.deleted).toLowerCase() === "true",
+    });
+  }
+
+  function upsertParkingItemLocal(item) {
     const current = readJson(STORAGE_KEYS.parkingLot, []);
+    const existingEntry = Array.isArray(current) ? current.find((entry) => cleanText(entry.id, "") === cleanText(item && item.id, "")) : null;
+    const normalized = normalizeParkingItem({ ...(existingEntry || {}), ...item });
     const index = Array.isArray(current) ? current.findIndex((entry) => cleanText(entry.id, "") === normalized.id) : -1;
 
     if (index >= 0) {
-      current[index] = {
-        ...current[index],
-        ...normalized,
-        createdAt: cleanText(current[index].createdAt, normalized.createdAt),
-      };
+      current[index] = normalized;
     } else {
       current.push(normalized);
     }
 
     saveParkingLot(current);
     emitChange({ type: "parking-lot-upsert", item: clone(normalized) });
-    return Promise.resolve(clone(normalized));
+    return clone(normalized);
   }
 
-  function deleteParkingItem(id, options) {
+  function deleteParkingItemLocal(id, options) {
     const targetId = cleanText(id, "");
     const hardDelete = Boolean(options && options.hardDelete);
     const current = readJson(STORAGE_KEYS.parkingLot, []);
     const index = Array.isArray(current) ? current.findIndex((entry) => cleanText(entry.id, "") === targetId) : -1;
 
     if (index < 0) {
-      return Promise.resolve({ ok: false, id: targetId });
+      return { ok: false, id: targetId };
     }
 
     let updatedItem = null;
@@ -183,7 +208,132 @@
 
     saveParkingLot(current);
     emitChange({ type: "parking-lot-delete", id: targetId, hardDelete, item: clone(updatedItem) });
-    return Promise.resolve({ ok: true, id: targetId, hardDelete });
+    return { ok: true, id: targetId, hardDelete };
+  }
+
+  async function sendParkingLotBatch(mutations) {
+    const url = getSheetsEndpoint("batchApplyPlannerChanges");
+    const clientTxnId = ensureUuid();
+    const payload = {
+      action: "batchApplyPlannerChanges",
+      spreadsheetId: getSpreadsheetId(),
+      clientTxnId,
+      mutations,
+    };
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      mode: "no-cors",
+      body: JSON.stringify(payload),
+    });
+    if (response.type !== "opaque" && !response.ok) {
+      throw new Error(`Parking Lot write failed (${response.status}).`);
+    }
+    return { ok: true, clientTxnId };
+  }
+
+  // Read Parking Lot rows from Sheets and normalize the schema.
+  async function getParkingLotFromSheets() {
+    console.log("ParkingLot: calling getParkingLotState");
+    const url = getSheetsEndpoint("getParkingLotState");
+    url.searchParams.set("spreadsheetId", getSpreadsheetId());
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      throw new Error(`Parking Lot read failed (${response.status}).`);
+    }
+    const payload = await response.json();
+    if (!payload || payload.ok === false) {
+      throw new Error(cleanText(payload && payload.error, "Parking Lot read failed."));
+    }
+    if (!Array.isArray(payload.rows) || !payload.rows.length) {
+      console.warn("ParkingLot: Sheets returned empty list — sheet may not exist yet");
+    }
+    return (Array.isArray(payload.rows) ? payload.rows : []).map(sheetRowToParkingItem);
+  }
+
+  // Sheets is the source of truth; fall back to the local offline cache only when Sheets is unreachable.
+  async function getParkingLot() {
+    if (state.useSheets) {
+      try {
+        const rows = await getParkingLotFromSheets();
+        saveParkingLot(rows);
+        const items = rows.filter((item) => item.deleted !== true).map((item) => clone(item));
+        return items;
+      } catch (error) {
+        console.warn("Parking Lot Sheets read failed; using local fallback.", error);
+        emitChange({ type: "parking-lot-sync-error", error: String(error && error.message ? error.message : error) });
+      }
+    }
+    return getParkingLotLocal();
+  }
+
+  // Persist a Parking Lot item locally first, then sync its row to Planner_ParkingLot.
+  async function upsertParkingItem(item) {
+    const normalized = upsertParkingItemLocal({ ...item, updatedAt: nowIso() });
+    if (state.useSheets) {
+      try {
+        console.log("ParkingLot: upsertParkingItem \u2192 batchApplyPlannerChanges");
+        await sendParkingLotBatch([{ op: "upsert", sheet: SHEET_NAMES.parkingLot, row: parkingItemToSheetRow(normalized) }]);
+        // The optimistic emit fired before this write finished, so re-emit now that Sheets has the confirmed row.
+        emitChange({ type: "parking-lot-sync", item: clone(normalized) });
+      } catch (error) {
+        queueRetry({ op: "upsert", sheet: SHEET_NAMES.parkingLot, row: parkingItemToSheetRow(normalized) });
+        console.warn("Parking Lot Sheets write queued for retry.", error);
+        emitChange({ type: "parking-lot-sync-error", error: String(error && error.message ? error.message : error) });
+      }
+    }
+    return clone(normalized);
+  }
+
+  // The Sheets write goes out via a "no-cors" POST, so its response is always opaque — we cannot see
+  // whether the Apps Script side actually applied the delete (e.g. it may have silently no-opped from a
+  // stale updatedAt conflict check or a stale deployment). Verify with a real, readable GET and retry
+  // with a fresh timestamp if the row still shows up as not deleted.
+  async function verifyParkingLotDeleteApplied(targetId, hardDelete) {
+    try {
+      const rows = await getParkingLotFromSheets();
+      const match = rows.find((row) => cleanText(row.id, "") === targetId);
+      return hardDelete ? !match : (!match || match.deleted === true);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async function syncParkingLotDelete(targetId, hardDelete) {
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        console.log("ParkingLot: deleteParkingItem \u2192 batchApplyPlannerChanges");
+        await sendParkingLotBatch([{ op: "delete", sheet: SHEET_NAMES.parkingLot, id: targetId, hardDelete, row: { id: targetId, updatedAt: nowIso() } }]);
+      } catch (error) {
+        console.warn("Parking Lot Sheets delete request failed.", error);
+      }
+      if (await verifyParkingLotDeleteApplied(targetId, hardDelete)) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    return false;
+  }
+
+  // Soft-delete a Parking Lot item locally first, then sync the deletion to Sheets.
+  async function deleteParkingItem(id, options) {
+    const targetId = cleanText(id, "");
+    const hardDelete = Boolean(options && options.hardDelete);
+    const result = deleteParkingItemLocal(id, options);
+    // Always attempt the Sheets delete when a valid id is given, even if the item was missing from the
+    // local offline cache (e.g. a stale/never-populated cache) — the row can still exist in Sheets.
+    if (state.useSheets && targetId) {
+      const applied = await syncParkingLotDelete(targetId, hardDelete);
+      if (applied) {
+        // The optimistic emit fired before this write finished, so re-emit now that Sheets has the confirmed delete.
+        emitChange({ type: "parking-lot-sync", id: targetId });
+      } else {
+        queueRetry({ op: "delete", sheet: SHEET_NAMES.parkingLot, id: targetId, hardDelete, row: { id: targetId, updatedAt: nowIso() } });
+        console.warn("Parking Lot Sheets delete could not be verified after retries; queued for later retry.");
+        emitChange({ type: "parking-lot-sync-error", error: "Parking Lot delete could not be verified." });
+      }
+    }
+    return result.ok ? result : { ok: true, id: targetId, hardDelete };
   }
 
   function readTaskManagerLocal() {
@@ -711,11 +861,11 @@
 
         if (operation.sheet === SHEET_NAMES.parkingLot) {
           if (operation.op === "delete") {
-            results.push({ sheet: operation.sheet, result: deleteParkingItem(operation.id, { hardDelete: Boolean(operation.hardDelete) }) });
+            results.push({ sheet: operation.sheet, result: deleteParkingItemLocal(operation.id, { hardDelete: Boolean(operation.hardDelete) }) });
             return;
           }
 
-          results.push({ sheet: operation.sheet, result: upsertParkingItem(operation.row || operation.item) });
+          results.push({ sheet: operation.sheet, result: upsertParkingItemLocal(operation.row || operation.item) });
           return;
         }
 
@@ -789,6 +939,20 @@
       } catch (error) {
         taskManagerOperations.forEach(queueRetry);
         console.warn("Planner batch queued for retry.", error);
+      }
+    }
+
+    if (state.useSheets && list.some((operation) => operation && operation.sheet === SHEET_NAMES.parkingLot)) {
+      const parkingOperations = list.filter((operation) => operation && operation.sheet === SHEET_NAMES.parkingLot);
+      try {
+        await sendParkingLotBatch(parkingOperations.map((operation) => ({
+          ...operation,
+          row: operation.row ? parkingItemToSheetRow(operation.row) : operation.row,
+        })));
+      } catch (error) {
+        parkingOperations.forEach(queueRetry);
+        console.warn("Parking Lot batch queued for retry.", error);
+        emitChange({ type: "parking-lot-sync-error", error: String(error && error.message ? error.message : error) });
       }
     }
     emitChange({ type: "batch-apply", operations: list.length, results });

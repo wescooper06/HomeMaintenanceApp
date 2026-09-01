@@ -584,6 +584,38 @@
     return { ok: false, rowNumber: null };
   }
 
+  async function verifyDeletedRow(tabName, id) {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+    if (!googleSheetsWriteUrl || !tabName) {
+      return { ok: false };
+    }
+
+    const attempts = 6;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const url = new URL(googleSheetsWriteUrl);
+        url.searchParams.set("action", "projectExists");
+        url.searchParams.set("spreadsheetId", SPREADSHEET_ID);
+        url.searchParams.set("tabName", cleanCell(tabName));
+        url.searchParams.set("id", cleanCell(id));
+        url.searchParams.set("_", String(Date.now()));
+
+        const payload = await fetchJsonp(url.toString(), 12000);
+        if (payload && payload.ok !== false && payload.exists === false) {
+          return { ok: true };
+        }
+      } catch (error) {
+        // Ignore transient endpoint errors and continue retry loop.
+      }
+
+      if (attempt < attempts - 1) {
+        await delay(500);
+      }
+    }
+
+    return { ok: false };
+  }
+
   function getRowTitleValue(row, source) {
     const sourceText = cleanCell(source).toLowerCase();
     if (sourceText.includes("list_b") || sourceText.includes("vehicle")) {
@@ -927,26 +959,36 @@
       title: project ? cleanCell(project.title) : "",
     };
 
-    const response = await fetch(googleSheetsWriteUrl, {
-      method: "POST",
-      mode: "no-cors",
-      body: JSON.stringify(payload),
-    });
+    const attempts = 3;
+    let transport = "no-cors";
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const response = await fetch(googleSheetsWriteUrl, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: JSON.stringify(payload),
+      });
 
-    if (response.type === "opaque") {
-      return { ok: true, id, transport: "no-cors" };
+      transport = response.type === "opaque" ? "no-cors" : "cors";
+      if (response.type !== "opaque" && !response.ok) {
+        const reason = await response.text().catch(() => "");
+        throw new Error(`Failed to delete from Google Sheets (${response.status}). ${cleanCell(reason)}`);
+      }
+
+      if (response.type !== "opaque") {
+        const result = await response.json().catch(() => null);
+        if (result && result.ok === false) {
+          throw new Error(cleanCell(result.error) || "Delete request was rejected by Google Sheets endpoint.");
+        }
+      }
+
+      const verification = await verifyDeletedRow(payload.tabName, id);
+      if (verification.ok) {
+        return { ok: true, id, transport };
+      }
     }
 
-    if (!response.ok) {
-      const reason = await response.text().catch(() => "");
-      throw new Error(`Failed to delete from Google Sheets (${response.status}). ${cleanCell(reason)}`);
-    }
-
-    try {
-      return await response.json();
-    } catch (error) {
-      return { ok: true, id };
-    }
+    throw new Error("Unable to verify project deletion in Google Sheets.");
   }
 
   async function createProject(payload) {
