@@ -1,0 +1,27 @@
+<section class="mobile-screen" data-screen="calendar">
+	<header class="screen-header calendar-header">
+		<div>
+			<p class="eyebrow">Schedule</p>
+			<h1>Calendar</h1>
+		</div>
+		<button type="button" id="mobile-calendar-signin" class="icon-text-button">
+			<span class="material-symbols-rounded" aria-hidden="true">account_circle</span>
+			Sign in
+		</button>
+	</header>
+
+	<section class="calendar-panel">
+		<div class="month-toolbar">
+			<button type="button" id="mobile-month-prev" class="icon-button" aria-label="Previous month"><span class="material-symbols-rounded">chevron_left</span></button>
+			<h2 id="mobile-month-label"></h2>
+			<button type="button" id="mobile-month-next" class="icon-button" aria-label="Next month"><span class="material-symbols-rounded">chevron_right</span></button>
+		</div>
+		<div class="weekday-row" aria-hidden="true"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+		<div id="mobile-month-grid" class="month-grid"></div>
+	</section>
+
+	<section class="content-section">
+		<div class="section-heading"><div><h2>Agenda</h2><p id="mobile-agenda-date" class="section-note"></p></div></div>
+		<div id="mobile-agenda-list" class="card-list"><div class="empty-state">Select a day to view its agenda.</div></div>
+	</section>
+</section>

@@ -1,0 +1,32 @@
+<section class="mobile-screen" data-screen="planner">
+	<header class="screen-header">
+		<p class="eyebrow">This Week</p>
+		<h1>Planner</h1>
+	</header>
+
+	<button type="button" id="mobile-add-adhoc" class="primary-action full-width">
+		<span class="material-symbols-rounded" aria-hidden="true">add_task</span>
+		Add Ad-Hoc Task
+	</button>
+
+	<section class="content-section">
+		<div class="section-heading"><h2>Task Parking Lot</h2><span id="mobile-parking-count" class="count-badge">0</span></div>
+		<button type="button" id="mobile-add-parking" class="secondary-action full-width">
+			<span class="material-symbols-rounded" aria-hidden="true">add</span>
+			Add Parking Lot Item
+		</button>
+		<div id="mobile-parking-list" class="card-list"><div class="loading-card">Loading parking lot...</div></div>
+	</section>
+
+	<section class="content-section">
+		<div class="section-heading planner-heading">
+			<div><h2>Weekly Planner</h2><p id="mobile-week-label" class="section-note"></p></div>
+			<div class="week-nav-controls" aria-label="Week navigation">
+				<button type="button" id="mobile-week-prev" class="icon-button" aria-label="Previous week" title="Previous week"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+				<button type="button" id="mobile-week-today" class="text-button">Today</button>
+				<button type="button" id="mobile-week-next" class="icon-button" aria-label="Next week" title="Next week"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+			</div>
+		</div>
+		<div id="mobile-week-list" class="day-stack"><div class="loading-card">Loading week...</div></div>
+	</section>
+</section>

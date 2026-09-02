@@ -1,0 +1,37 @@
+<section class="mobile-screen" data-screen="workbench">
+	<header class="screen-header">
+		<p class="eyebrow">Operations</p>
+		<h1>Workbench</h1>
+	</header>
+
+	<button type="button" id="mobile-add-project" class="primary-action full-width">
+		<span class="material-symbols-rounded" aria-hidden="true">add</span>
+		Add Project
+	</button>
+
+	<section class="filter-panel" aria-label="Project filters">
+		<label class="search-field">
+			<span class="material-symbols-rounded" aria-hidden="true">search</span>
+			<input id="mobile-project-search" type="search" placeholder="Search projects" autocomplete="off">
+		</label>
+		<div class="filter-grid">
+			<label>Source<select id="mobile-source-filter"><option value="">All sources</option></select></label>
+			<label>Category<select id="mobile-category-filter"><option value="">All categories</option></select></label>
+			<label>State<select id="mobile-state-filter"><option value="">All states</option></select></label>
+		</div>
+		<fieldset class="list-filter" aria-label="Lists to display">
+			<label><input id="mobile-show-projects" type="checkbox" checked>Projects</label>
+			<label><input id="mobile-show-tasks" type="checkbox" checked>Task Manager</label>
+		</fieldset>
+	</section>
+
+	<section class="content-section" id="mobile-project-section">
+		<div class="section-heading"><h2>Projects</h2><span id="mobile-project-count" class="count-badge">0</span></div>
+		<div id="mobile-project-list" class="card-list"><div class="loading-card">Loading projects...</div></div>
+	</section>
+
+	<section class="content-section" id="mobile-task-section">
+		<div class="section-heading"><h2>Task Manager</h2><span id="mobile-task-count" class="count-badge">0</span></div>
+		<div id="mobile-task-list" class="card-list"><div class="loading-card">Loading tasks...</div></div>
+	</section>
+</section>
