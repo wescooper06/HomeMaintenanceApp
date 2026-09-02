@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="theme-color" content="#f7f9fc">
+	<title>Home Maintenance</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Material+Icons+Round&family=Nunito+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+	<link rel="stylesheet" href="mobile.css?v=20260901-8">
+</head>
+<body>
+	<div class="mobile-shell">
+		<main id="app" class="mobile-main" aria-live="polite"></main>
+		<nav id="bottom-nav" class="bottom-nav" aria-label="Primary navigation"></nav>
+	</div>
+	<div id="modal-root"></div>
+
+	<script src="https://accounts.google.com/gsi/client" async defer></script>
+	<script src="../js/app-config.js"></script>
+	<script src="../js/utils/uuid.js"></script>
+	<script src="../js/migration/weekly-planner-migration.js"></script>
+	<script src="../js/migration/weekly-planner-restore.js"></script>
+	<script src="../js/services/sheets.service.js"></script>
+	<script src="../js/services/projects.service.js"></script>
+	<script src="../js/services/planner-storage.service.js"></script>
+	<script src="../screens/calendar/calendar.js"></script>
+	<script src="mobile.js?v=20260901-10"></script>
+</body>
+</html>
