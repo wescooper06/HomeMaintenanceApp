@@ -56,13 +56,14 @@ function initPlannerScreen() {
     weatherModal: document.getElementById("weather-modal"),
     reminderModal: document.getElementById("reminder-modal"),
     seriesModal: document.getElementById("series-modal"),
+    adhocChecklistModal: document.getElementById("adhoc-checklist-modal"),
     adhocTitle: document.getElementById("adhocTaskTitle"),
     adhocDay: document.getElementById("adhocTaskDay"),
     adhocSlot: document.getElementById("adhocTaskSlot"),
     adhocAddBtn: document.getElementById("adhocTaskAddBtn"),
   };
 
-  if (!elements.status || !elements.mode || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.parkingLotHost || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.seriesModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
+  if (!elements.status || !elements.mode || !elements.curatedLeftColumn || !elements.curatedMiddleColumn || !elements.taskPoolLeft || !elements.taskPoolMiddle || !elements.repeatablePanel || !elements.parkingLotHost || !elements.miniCalendar || !elements.curatedWarning || !elements.weekPrev || !elements.weekToday || !elements.weekNext || !elements.weekRangeLabel || !elements.weekScrollContainer || !elements.weekGrid || !elements.weatherModal || !elements.reminderModal || !elements.seriesModal || !elements.adhocChecklistModal || !elements.adhocTitle || !elements.adhocDay || !elements.adhocSlot || !elements.adhocAddBtn) {
     return;
   }
 
@@ -87,6 +88,7 @@ function initPlannerScreen() {
     weekScrollLocked: false,
     parkingLotController: null,
     parkingStorageUnsubscribe: null,
+    activeAdhocChecklist: null,
   };
 
   const CURATED_TASK_LIMIT = 8;
@@ -1996,7 +1998,7 @@ function initPlannerScreen() {
   function toggleChecklistOpen(taskId, day, slot) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
       return false;
     }
 
@@ -2010,7 +2012,7 @@ function initPlannerScreen() {
   function toggleChecklistItem(taskId, day, slot, checklistId, completed) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
       return false;
     }
 
@@ -2031,7 +2033,7 @@ function initPlannerScreen() {
   function addChecklistItem(taskId, day, slot, text) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
       return false;
     }
 
@@ -2059,7 +2061,7 @@ function initPlannerScreen() {
   function removeChecklistItem(taskId, day, slot, checklistId) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
       return false;
     }
 
@@ -2112,6 +2114,97 @@ function initPlannerScreen() {
     savePlanner();
     renderWeekGrid();
     return true;
+  }
+
+  function closeAdhocChecklistModal() {
+    elements.adhocChecklistModal.hidden = true;
+    elements.adhocChecklistModal.innerHTML = "";
+    state.activeAdhocChecklist = null;
+  }
+
+  function renderAdhocChecklistModal() {
+    const context = state.activeAdhocChecklist;
+    const match = context && findSlotTask(context.day, context.slot, context.taskId);
+    if (!context || !match) {
+      closeAdhocChecklistModal();
+      return;
+    }
+
+    const task = match.item;
+    const checklist = normalizeChecklist(task.checklist);
+
+    elements.adhocChecklistModal.innerHTML = `
+      <div class="adhoc-checklist-modal-card" role="dialog" aria-modal="true" aria-labelledby="adhoc-checklist-modal-title">
+        <div class="adhoc-checklist-modal-header">
+          <div>
+            <h2 id="adhoc-checklist-modal-title">Checklist</h2>
+            <p>${escapeHtml(task.title)}</p>
+          </div>
+          <button type="button" data-action="adhoc-checklist-close" aria-label="Close checklist dialog" title="Close">X</button>
+        </div>
+        <div class="slot-checklist-body">
+          <div class="slot-checklist-list">
+            ${checklist.length
+              ? checklist.map((entry) => `
+              <div class="slot-checklist-item ${entry.completed ? "is-complete" : ""}" data-checklist-id="${escapeHtml(entry.id)}">
+                <input type="checkbox" data-action="adhoc-checklist-item-toggle" data-checklist-id="${escapeHtml(entry.id)}" ${entry.completed ? "checked" : ""} />
+                <span class="slot-checklist-text">${escapeHtml(entry.text)}</span>
+                <button type="button" class="slot-checklist-remove" data-action="adhoc-checklist-item-remove" data-checklist-id="${escapeHtml(entry.id)}">X</button>
+              </div>
+              `).join("")
+              : '<div class="slot-checklist-empty">No sub-tasks yet.</div>'}
+          </div>
+          <div class="slot-checklist-add">
+            <input type="text" data-action="adhoc-checklist-add-input" placeholder="Add sub-task" aria-label="Add sub-task" />
+            <button type="button" data-action="adhoc-checklist-item-add">Add</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    elements.adhocChecklistModal.querySelector("[data-action='adhoc-checklist-close']").addEventListener("click", closeAdhocChecklistModal);
+    elements.adhocChecklistModal.querySelector("[data-action='adhoc-checklist-item-add']").addEventListener("click", () => {
+      const input = elements.adhocChecklistModal.querySelector("[data-action='adhoc-checklist-add-input']");
+      if (!input) {
+        return;
+      }
+      if (addChecklistItem(context.taskId, context.day, context.slot, input.value)) {
+        renderAdhocChecklistModal();
+      }
+    });
+    elements.adhocChecklistModal.querySelectorAll("[data-action='adhoc-checklist-item-remove']").forEach((button) => {
+      button.addEventListener("click", () => {
+        removeChecklistItem(context.taskId, context.day, context.slot, cleanText(button.dataset.checklistId, ""));
+        renderAdhocChecklistModal();
+      });
+    });
+    elements.adhocChecklistModal.querySelectorAll("input[data-action='adhoc-checklist-item-toggle']").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        toggleChecklistItem(context.taskId, context.day, context.slot, cleanText(checkbox.dataset.checklistId, ""), checkbox.checked);
+        renderAdhocChecklistModal();
+      });
+    });
+    elements.adhocChecklistModal.querySelector("input[data-action='adhoc-checklist-add-input']").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      if (addChecklistItem(context.taskId, context.day, context.slot, event.target.value)) {
+        renderAdhocChecklistModal();
+      }
+    });
+  }
+
+  function openAdhocChecklistModal(taskId, day, slot) {
+    const match = findSlotTask(day, slot, taskId);
+    if (!match) {
+      elements.status.textContent = "Unable to locate that task.";
+      return;
+    }
+
+    state.activeAdhocChecklist = { taskId, day, slot };
+    elements.adhocChecklistModal.hidden = false;
+    renderAdhocChecklistModal();
   }
 
   function buildAssignmentMap() {
@@ -2563,7 +2656,7 @@ function initPlannerScreen() {
     const weekPickerMenu = `
       <div class="slot-task-week-picker">
         <button type="button" class="slot-task-week-button" data-action="task-week-picker" aria-label="Move task to week" title="Move task to week">
-          <span class="slot-task-week-icon" aria-hidden="true"></span>
+          <span class="material-symbols-rounded slot-task-week-icon" aria-hidden="true">calendar_month</span>
         </button>
         <div class="slot-task-week-menu" data-role="task-week-menu" hidden>
           <button type="button" class="slot-task-week-menu-item" data-action="task-week-shift" data-week-offset="-1">Last Week</button>
@@ -2572,6 +2665,11 @@ function initPlannerScreen() {
         </div>
       </div>
     `;
+    // Ad-hoc tasks open their checklist in a modal (see openAdhocChecklistModal) rather than the
+    // curated/project inline expand-in-card section.
+    const checklistIconButton = taskType === "adhoc"
+      ? `<button type="button" class="slot-task-checklist-button" data-action="adhoc-checklist-open" aria-label="Open checklist" title="Checklist"><span class="material-symbols-rounded">checklist</span></button>`
+      : "";
     const cardClass = taskType === "repeatable"
       ? "slot-task slot-task-repeatable"
       : taskType === "adhoc"
@@ -2643,6 +2741,7 @@ function initPlannerScreen() {
               <div class="slot-task-header-actions">
                 ${resourceLinksButton}
                 ${reminderButton}
+                ${checklistIconButton}
                 ${weekPickerMenu}
                 <input type="checkbox" class="slot-task-complete" data-action="task-complete-toggle" aria-label="Mark task complete" ${taskCompleted ? "checked" : ""} />
                 <button type="button" class="slot-task-remove" data-action="remove" aria-label="Remove task" title="Remove task">X</button>
@@ -3435,6 +3534,12 @@ function initPlannerScreen() {
       }
     }, { signal: controller.signal });
 
+    elements.adhocChecklistModal.addEventListener("click", (event) => {
+      if (event.target === elements.adhocChecklistModal) {
+        closeAdhocChecklistModal();
+      }
+    }, { signal: controller.signal });
+
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !elements.weatherModal.hidden) {
         closeWeatherModal();
@@ -3444,6 +3549,9 @@ function initPlannerScreen() {
       }
       if (event.key === "Escape" && !elements.seriesModal.hidden) {
         closeSeriesEditModal();
+      }
+      if (event.key === "Escape" && !elements.adhocChecklistModal.hidden) {
+        closeAdhocChecklistModal();
       }
     }, { signal: controller.signal });
 
@@ -3537,6 +3645,12 @@ function initPlannerScreen() {
         if (action === "remove") {
           closeWeekMenus();
           removeTask(taskId);
+          return;
+        }
+
+        if (action === "adhoc-checklist-open") {
+          closeWeekMenus();
+          openAdhocChecklistModal(taskId, day, slot);
           return;
         }
 

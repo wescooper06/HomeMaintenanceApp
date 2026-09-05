@@ -794,6 +794,9 @@
 		const tone = weeklyTaskTone(task);
 		const timeSlot = weeklyTimeSlot(task);
 		const timeBadge = `<span class="time-badge time-badge-${timeSlot}">${timeSlot[0].toUpperCase() + timeSlot.slice(1)}</span>`;
+		if (tone === "adhoc") {
+			return renderMobileAdhocTask(task, taskId, timeBadge);
+		}
 		if (!isWeeklyProjectTask(task)) {
 			return `<article class="week-task week-task-${tone}${task.completed ? " is-complete" : ""}">
 				<div class="task-title-row"><h3>${escapeHtml(task.title || "Untitled task")}</h3>${timeBadge}</div>${task.category ? `<div class="card-meta"><span>${escapeHtml(task.category)}</span></div>` : ""}
@@ -820,6 +823,28 @@
 			<div class="mobile-checklist">
 				<button type="button" class="checklist-toggle" data-week-action="checklist-toggle" data-week-id="${taskId}">Checklist ${checklistOpen ? "▲" : "▼"}</button>
 				${checklistOpen ? `<div class="checklist-body">${checklist.length ? checklist.map((entry) => `<div class="checklist-item${entry.completed ? " is-complete" : ""}"><input type="checkbox" data-week-action="checklist-check" data-week-id="${taskId}" data-check-id="${escapeHtml(entry.id)}" ${entry.completed ? "checked" : ""}><span>${escapeHtml(entry.text)}</span><button type="button" data-week-action="checklist-remove" data-week-id="${taskId}" data-check-id="${escapeHtml(entry.id)}" aria-label="Remove ${escapeHtml(entry.text)}"><span class="material-symbols-rounded">close</span></button></div>`).join("") : '<div class="empty-state">No sub-tasks yet.</div>'}<div class="checklist-add"><input type="text" data-checklist-input placeholder="Add sub-task" aria-label="Add sub-task"><button type="button" data-week-action="checklist-add" data-week-id="${taskId}">Add</button></div></div>` : ""}
+			</div>
+		</article>`;
+	}
+
+	// Ad-hoc tasks get their own icon row (mirroring curated/project cards, minus the resource-links
+	// button since ad-hoc has no linked project) plus a checklist icon that opens a modal instead of
+	// the inline expand section, and a calendar icon (reused from curated/project) for rescheduling.
+	function renderMobileAdhocTask(task, taskId, timeBadge) {
+		const reminderActive = Boolean(task.reminder && task.reminder.active && task.reminder.sendAt);
+		const checklistCount = normalizedChecklist(task).length;
+		return `<article class="week-task week-task-adhoc weekly-project-task${task.completed ? " is-complete" : ""}" data-week-card="${taskId}">
+			<div class="project-task-header">
+				<button type="button" class="project-drag-button" data-week-action="edit" data-week-id="${taskId}" title="Edit task" aria-label="Edit task"><span aria-hidden="true">⋮⋮</span></button>
+				<h3>${escapeHtml(task.title || "Untitled task")}</h3>
+				${timeBadge}
+				<div class="project-icon-actions">
+					<button type="button" class="${reminderActive ? "is-active" : ""}" data-week-action="reminder" data-week-id="${taskId}" title="${reminderActive ? "Reminder active" : "Send Reminder"}" aria-label="${reminderActive ? "Edit active reminder" : "Set reminder"}"><span class="material-symbols-rounded">${reminderActive ? "notifications_active" : "notifications_off"}</span></button>
+					<button type="button" data-week-action="adhoc-checklist" data-week-id="${taskId}" title="Checklist${checklistCount ? ` (${checklistCount})` : ""}" aria-label="Open checklist"><span class="material-symbols-rounded">checklist</span></button>
+					<button type="button" data-week-action="week" data-week-id="${taskId}" title="Move task to week" aria-label="Move task to week"><span class="material-symbols-rounded">calendar_month</span></button>
+					<label class="project-complete-control" title="Mark task complete"><input type="checkbox" data-week-action="complete" data-week-id="${taskId}" ${task.completed ? "checked" : ""}><span class="material-symbols-rounded">check_box_outline_blank</span></label>
+					<button type="button" class="danger-icon" data-week-action="delete" data-week-id="${taskId}" title="Remove task" aria-label="Remove task"><span class="material-symbols-rounded">close</span></button>
+				</div>
 			</div>
 		</article>`;
 	}
@@ -861,6 +886,7 @@
 		if (weekButton.dataset.weekAction === "links") openWeeklyResourceLinks(task);
 		if (weekButton.dataset.weekAction === "reminder") openWeeklyReminder(task);
 		if (weekButton.dataset.weekAction === "week") openWeekMove(task);
+		if (weekButton.dataset.weekAction === "adhoc-checklist") openAdhocChecklistModal(task);
 		if (weekButton.dataset.weekAction === "checklist-toggle") updateWeeklyChecklist(task, (checklist) => ({ checklist, checklistOpen: !task.checklistOpen }));
 		if (weekButton.dataset.weekAction === "checklist-check") updateWeeklyChecklist(task, (checklist) => ({ checklist: checklist.map((entry) => entry.id === weekButton.dataset.checkId ? { ...entry, completed: weekButton.checked } : entry), checklistOpen: true }));
 		if (weekButton.dataset.weekAction === "checklist-remove") updateWeeklyChecklist(task, (checklist) => ({ checklist: checklist.filter((entry) => entry.id !== weekButton.dataset.checkId), checklistOpen: true }));
@@ -1100,6 +1126,51 @@
 				form.querySelector("[data-modal-status]").textContent = cleanText(error.message, "Unable to move task.");
 			}
 		});
+	}
+
+	function openAdhocChecklistModal(task) {
+		const renderContent = () => {
+			const checklist = normalizedChecklist(task);
+			return `<h2 id="mobile-modal-title">Checklist</h2><p>${escapeHtml(task.title)}</p><div class="checklist-body">${checklist.length ? checklist.map((entry) => `<div class="checklist-item${entry.completed ? " is-complete" : ""}"><input type="checkbox" data-checklist-toggle data-check-id="${escapeHtml(entry.id)}" ${entry.completed ? "checked" : ""}><span>${escapeHtml(entry.text)}</span><button type="button" data-checklist-remove data-check-id="${escapeHtml(entry.id)}" aria-label="Remove ${escapeHtml(entry.text)}"><span class="material-symbols-rounded">close</span></button></div>`).join("") : '<div class="empty-state">No sub-tasks yet.</div>'}<div class="checklist-add"><input type="text" data-checklist-input placeholder="Add sub-task" aria-label="Add sub-task"><button type="button" data-checklist-add-button>Add</button></div></div><div class="modal-actions"><button type="button" class="secondary-action" data-modal-cancel>Close</button></div>`;
+		};
+
+		const content = openModal(renderContent());
+
+		const bindHandlers = () => {
+			content.querySelector("[data-modal-cancel]").addEventListener("click", closeModal);
+			const refresh = () => {
+				if (!content.isConnected) return;
+				content.innerHTML = renderContent();
+				bindHandlers();
+			};
+			content.querySelectorAll("[data-checklist-toggle]").forEach((checkbox) => {
+				checkbox.addEventListener("change", async () => {
+					await updateWeeklyChecklist(task, (checklist) => ({ checklist: checklist.map((entry) => entry.id === checkbox.dataset.checkId ? { ...entry, completed: checkbox.checked } : entry) }));
+					refresh();
+				});
+			});
+			content.querySelectorAll("[data-checklist-remove]").forEach((button) => {
+				button.addEventListener("click", async () => {
+					await updateWeeklyChecklist(task, (checklist) => ({ checklist: checklist.filter((entry) => entry.id !== button.dataset.checkId) }));
+					refresh();
+				});
+			});
+			const input = content.querySelector("[data-checklist-input]");
+			const addItem = async () => {
+				const text = cleanText(input && input.value);
+				if (!text) return;
+				await updateWeeklyChecklist(task, (checklist) => ({ checklist: [...checklist, { id: makeId("check"), text, completed: false }] }));
+				refresh();
+			};
+			content.querySelector("[data-checklist-add-button]").addEventListener("click", addItem);
+			input.addEventListener("keydown", (event) => {
+				if (event.key !== "Enter") return;
+				event.preventDefault();
+				addItem();
+			});
+		};
+
+		bindHandlers();
 	}
 
 
