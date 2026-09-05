@@ -183,6 +183,7 @@
 			project_list_a: "Home",
 			project_list_b: "Vehicle/Small Engine",
 			project_list_c: "Repeatable",
+			project_list_d: "Miscellaneous",
 		};
 		const source = cleanText(value);
 		const key = source.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
@@ -201,6 +202,7 @@
 		const value = cleanText(source).toLowerCase();
 		if (value.includes("vehicle") || value.includes("list_b")) return "#d97706";
 		if (value.includes("repeat") || value.includes("list_c")) return "#7c3aed";
+		if (value.includes("misc") || value.includes("list_d")) return "#2563eb";
 		return "#087f73";
 	}
 
@@ -258,10 +260,10 @@
 				<p>Choose the destination list and project details.</p>
 				<form class="modal-form" data-add-project-form>
 					<label>Title<input name="title" type="text" required autocomplete="off"></label>
-					<label>Source<select name="source" required><option value="home">Home</option><option value="vehicle">Vehicle / Small Engine</option><option value="repeating">Repeating Household</option></select></label>
+					<label>Source<select name="source" required><option value="home">Home</option><option value="vehicle">Vehicle / Small Engine</option><option value="repeating">Repeating Household</option><option value="misc">Miscellaneous</option></select></label>
 					<label>Category<select name="category"></select></label>
 					<label>State<select name="state"></select></label>
-					<label>Area<select name="area"></select></label>
+					<label data-area-field>Area<select name="area"></select></label>
 					<div class="status-message" data-modal-status></div>
 					<div class="modal-actions"><button type="button" class="secondary-action" data-modal-cancel>Cancel</button><button type="submit" class="primary-action">Submit</button></div>
 				</form>
@@ -269,7 +271,20 @@
 
 			const form = content.querySelector("[data-add-project-form]");
 			const sourceSelect = form.querySelector("[name='source']");
-			const updateDropdowns = () => {
+			const updateDropdowns = async () => {
+				const areaField = form.querySelector("[data-area-field]");
+				if (areaField) areaField.hidden = sourceSelect.value === "misc";
+				if (sourceSelect.value === "misc") {
+					form.querySelector("[name='category']").innerHTML = '<option value="">Loading categories...</option>';
+					form.querySelector("[name='state']").innerHTML = optionMarkup((dropdowns.misc || {}).state || [], "", "Select state");
+					try {
+						const categories = await window.SheetsService.fetchCategoriesForTab(window.SheetsService.TABS.misc);
+						form.querySelector("[name='category']").innerHTML = optionMarkup(categories, "", "Select category");
+					} catch (error) {
+						form.querySelector("[name='category']").innerHTML = optionMarkup((dropdowns.misc || {}).category || [], "", "Select category");
+					}
+					return;
+				}
 				const sourceOptions = dropdowns[sourceSelect.value] || {};
 				form.querySelector("[name='category']").innerHTML = optionMarkup(sourceOptions.category || [], "", "Select category");
 				form.querySelector("[name='state']").innerHTML = optionMarkup(sourceOptions.state || [], "", "Select state");
@@ -867,6 +882,90 @@
 		}
 	}
 
+	function parseResourceLinkEntries(value) {
+		const toEntry = (entry) => {
+			if (entry && typeof entry === "object") {
+				const url = cleanText(entry.url || entry.href || entry.link);
+				return url ? { url, title: cleanText(entry.title || entry.name || entry.label) } : null;
+			}
+			const url = cleanText(entry);
+			return url ? { url, title: "" } : null;
+		};
+
+		if (Array.isArray(value)) return value.map(toEntry).filter(Boolean);
+
+		const text = cleanText(value);
+		if (!text) return [];
+
+		if (text.startsWith("[") || text.startsWith("{")) {
+			try {
+				const parsed = JSON.parse(text);
+				const entries = (Array.isArray(parsed) ? parsed : [parsed]).map(toEntry).filter(Boolean);
+				if (entries.length) return entries;
+			} catch (error) {
+				// Fall through to delimiter parsing.
+			}
+		}
+
+		return text.split(/[\n,]+/g).map((entry) => toEntry(entry.trim())).filter(Boolean);
+	}
+
+	function getYouTubeVideoId(url) {
+		try {
+			const parsed = new URL(cleanText(url));
+			const host = parsed.hostname.toLowerCase();
+			if (host.includes("youtu.be")) return cleanText(parsed.pathname.split("/").filter(Boolean)[0]);
+			if (!host.includes("youtube.com")) return "";
+			const fromQuery = cleanText(parsed.searchParams.get("v"));
+			if (fromQuery) return fromQuery;
+			const segments = parsed.pathname.split("/").filter(Boolean);
+			const index = segments.findIndex((segment) => segment === "shorts" || segment === "embed");
+			return index >= 0 ? cleanText(segments[index + 1]) : "";
+		} catch (error) {
+			return "";
+		}
+	}
+
+	function getYouTubeCanonicalUrl(url) {
+		const safeUrl = cleanText(url);
+		const videoId = getYouTubeVideoId(safeUrl);
+		return videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}` : safeUrl;
+	}
+
+	async function fetchTitleFromOembed(endpoint, targetUrl) {
+		const response = await fetch(`${endpoint}?url=${encodeURIComponent(targetUrl)}&format=json`, { method: "GET" });
+		if (!response.ok) return "";
+		const payload = await response.json();
+		return cleanText(payload && payload.title);
+	}
+
+	async function resolveLinkTitle(url) {
+		const safeUrl = cleanText(url);
+		if (!safeUrl) return "";
+		const canonicalUrl = getYouTubeCanonicalUrl(safeUrl);
+		const endpoints = ["https://noembed.com/embed", "https://www.youtube.com/oembed", "https://www.youtube-nocookie.com/oembed"];
+
+		for (let i = 0; i < endpoints.length; i += 1) {
+			try {
+				const title = await fetchTitleFromOembed(endpoints[i], canonicalUrl);
+				if (title) return title;
+			} catch (error) {
+				// Try next endpoint.
+			}
+		}
+
+		try {
+			const response = await fetch(canonicalUrl, { method: "GET" });
+			if (!response.ok) return safeUrl;
+			const html = await response.text();
+			const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+			return cleanText(match && match[1]).replace(/\s*-\s*YouTube\s*$/i, "") || safeUrl;
+		} catch (error) {
+			const videoId = getYouTubeVideoId(canonicalUrl);
+			return videoId ? `YouTube Video ${videoId}` : safeUrl;
+		}
+	}
+
 	function weeklyProjectIdentity(task) {
 		const taskId = cleanText(task && (task.id || task.taskId));
 		const type = cleanText(task && (task.taskType || task.type), "curated");
@@ -892,12 +991,17 @@
 				return sameId && (!identity.sourceKey || source.includes(identity.sourceKey) || source.includes(`list_${identity.sourceKey === "home" ? "a" : identity.sourceKey === "vehicle" ? "b" : "c"}`));
 			}) || state.projects.find((item) => cleanText(item.title) === cleanText(task.title));
 			const rawLinks = project && (project.resourceLinkEntries || project.resourceLinks || project.metadata?.resourceLinks);
-			const links = (Array.isArray(rawLinks) ? rawLinks : cleanText(rawLinks) ? [rawLinks] : []).map((entry) => {
-				if (entry && typeof entry === "object") return { url: cleanText(entry.url || entry.href), label: cleanText(entry.title || entry.label || entry.url || entry.href) };
-				return { url: cleanText(entry), label: cleanText(entry) };
-			}).filter((entry) => entry.url);
-			content.innerHTML = `<h2 id="mobile-modal-title">Resource Links</h2><p>${escapeHtml(task.title)}</p>${links.length ? `<div class="resource-link-list">${links.map((link) => `<a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded">open_in_new</span>${escapeHtml(link.label)}</a>`).join("")}</div>` : '<div class="empty-state">No resource links are attached to this project.</div>'}<div class="modal-actions"><button type="button" class="primary-action" data-modal-cancel>Close</button></div>`;
-			content.querySelector("[data-modal-cancel]").addEventListener("click", closeModal);
+			const links = parseResourceLinkEntries(rawLinks);
+			const renderLinks = (labels) => {
+				content.innerHTML = `<h2 id="mobile-modal-title">Resource Links</h2><p>${escapeHtml(task.title)}</p>${links.length ? `<div class="resource-link-list">${links.map((link, index) => `<a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded">open_in_new</span>${escapeHtml(cleanText(labels[index], link.url))}</a>`).join("")}</div>` : '<div class="empty-state">No resource links are attached to this project.</div>'}<div class="modal-actions"><button type="button" class="primary-action" data-modal-cancel>Close</button></div>`;
+				content.querySelector("[data-modal-cancel]").addEventListener("click", closeModal);
+			};
+
+			renderLinks(links.map((link) => cleanText(link.title, link.url)));
+
+			const resolved = await Promise.all(links.map((link) => (link.title ? Promise.resolve(link.title) : resolveLinkTitle(link.url))));
+			if (!content.isConnected) return;
+			renderLinks(resolved);
 		} catch (error) {
 			closeModal();
 			showError(error);
@@ -1244,37 +1348,108 @@
 	}
 
 	function storedCalendarToken() {
-		const expiry = Number(sessionStorage.getItem(CALENDAR_EXPIRY_KEY) || 0);
+		let expiry = Number(sessionStorage.getItem(CALENDAR_EXPIRY_KEY) || 0);
+		let token = cleanText(sessionStorage.getItem(CALENDAR_TOKEN_KEY));
+		if (!token) {
+			// Fall back to localStorage in case the token was captured by the /oauth2callback redirect handler.
+			expiry = Number(localStorage.getItem(CALENDAR_EXPIRY_KEY) || 0);
+			token = cleanText(localStorage.getItem(CALENDAR_TOKEN_KEY));
+		}
 		if (expiry && expiry <= Date.now()) {
 			sessionStorage.removeItem(CALENDAR_TOKEN_KEY);
 			sessionStorage.removeItem(CALENDAR_EXPIRY_KEY);
+			localStorage.removeItem(CALENDAR_TOKEN_KEY);
+			localStorage.removeItem(CALENDAR_EXPIRY_KEY);
 			return "";
 		}
-		return cleanText(sessionStorage.getItem(CALENDAR_TOKEN_KEY));
+		return token;
 	}
 
-	function initTokenClient() {
-		if (state.tokenClient || !window.google?.accounts?.oauth2) return state.tokenClient;
+	function gisReady() {
+		return Boolean(window.google && window.google.accounts && window.google.accounts.oauth2);
+	}
+
+	function waitForGoogleIdentityServices(timeoutMs) {
+		return new Promise((resolve, reject) => {
+			const startedAt = Date.now();
+			const check = () => {
+				if (gisReady()) return resolve();
+				if (Date.now() - startedAt > (timeoutMs || 8000)) return reject(new Error("Google Identity Services failed to load."));
+				window.setTimeout(check, 120);
+			};
+			check();
+		});
+	}
+
+	async function ensureGoogleIdentityServices() {
+		if (gisReady()) return;
+
+		try {
+			await waitForGoogleIdentityServices(8000);
+			return;
+		} catch (error) {
+			// Re-inject the script below in case the deferred tag never loaded.
+		}
+
+		await new Promise((resolve, reject) => {
+			const existing = document.querySelector("script[data-gis-retry]");
+			if (existing) return resolve();
+			const script = document.createElement("script");
+			script.src = "https://accounts.google.com/gsi/client";
+			script.async = true;
+			script.dataset.gisRetry = "true";
+			script.onload = resolve;
+			script.onerror = () => reject(new Error("Unable to reach Google sign-in. Check the device's internet connection."));
+			document.head.appendChild(script);
+		});
+
+		await waitForGoogleIdentityServices(8000);
+	}
+
+	function storeCalendarToken(accessToken, expiresInSeconds) {
+		const expiresAt = String(Date.now() + (Number(expiresInSeconds) || 3600) * 1000);
+		sessionStorage.setItem(CALENDAR_TOKEN_KEY, accessToken);
+		sessionStorage.setItem(CALENDAR_EXPIRY_KEY, expiresAt);
+		localStorage.setItem(CALENDAR_TOKEN_KEY, accessToken);
+		localStorage.setItem(CALENDAR_EXPIRY_KEY, expiresAt);
+	}
+
+	async function initTokenClient() {
+		if (state.tokenClient) return state.tokenClient;
 		const clientId = cleanText(window.APP_CONFIG?.GOOGLE_CLIENT_ID);
 		if (!clientId) throw new Error("Google Calendar client ID is not configured.");
+		await ensureGoogleIdentityServices();
+		// redirect_uri keeps the consent screen inside the WebView (via onCreateWindow) instead of relying on a popup window.
 		state.tokenClient = window.google.accounts.oauth2.initTokenClient({
 			client_id: clientId,
 			scope: CALENDAR_SCOPES,
-			callback: () => {},
+			response_type: "token",
+			redirect_uri: "https://localhost/oauth2callback",
+			callback: (response) => {
+				if (!response || response.error) return;
+				const accessToken = cleanText(response.access_token);
+				if (!accessToken) return;
+				storeCalendarToken(accessToken, response.expires_in);
+			},
+			error_callback: (error) => {
+				console.warn("Google sign-in was cancelled or blocked.", error);
+			},
 		});
 		return state.tokenClient;
 	}
 
-	function requestCalendarToken() {
+	async function requestCalendarToken() {
+		const client = await initTokenClient();
 		return new Promise((resolve, reject) => {
+			client.callback = (response) => {
+				if (!response || response.error) return reject(new Error(cleanText(response && (response.error_description || response.error), "Google authentication failed.")));
+				const accessToken = cleanText(response.access_token);
+				if (!accessToken) return reject(new Error("Google authentication returned no access token."));
+				storeCalendarToken(accessToken, response.expires_in);
+				resolve(accessToken);
+			};
+			client.error_callback = (error) => reject(new Error(cleanText(error && (error.message || error.type), "Google sign-in was cancelled or blocked.")));
 			try {
-				const client = initTokenClient();
-				client.callback = (response) => {
-					if (response.error) return reject(new Error(response.error_description || response.error));
-					sessionStorage.setItem(CALENDAR_TOKEN_KEY, response.access_token);
-					sessionStorage.setItem(CALENDAR_EXPIRY_KEY, String(Date.now() + (Number(response.expires_in) || 3600) * 1000));
-					resolve(response.access_token);
-				};
 				client.requestAccessToken({ prompt: storedCalendarToken() ? "" : "consent" });
 			} catch (error) {
 				reject(error);
@@ -1417,6 +1592,28 @@
 		await loadScreen(SCREEN_NAMES.includes(requested) ? requested : "workbench");
 	}
 
+	// Handles the GIS redirect back from the consent screen (window.location.pathname === "/oauth2callback").
+	// Must run before any UI renders so the WebView never shows a blank page after "Continue".
+	function handleOAuthRedirect() {
+		if (window.location.pathname !== "/oauth2callback") return false;
+		try {
+			const fragment = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+			const params = new URLSearchParams(fragment || window.location.search.replace(/^\?/, ""));
+			const accessToken = cleanText(params.get("access_token"));
+			const error = params.get("error");
+			if (accessToken) {
+				storeCalendarToken(accessToken, params.get("expires_in"));
+			} else if (error) {
+				console.warn("Google sign-in redirect returned an error:", error);
+			}
+		} catch (error) {
+			console.warn("Failed to parse the Google sign-in redirect response.", error);
+		} finally {
+			window.location.replace("/mobile/index.html#calendar");
+		}
+		return true;
+	}
+
 	window.loadScreen = loadScreen;
 	window.openModal = openModal;
 	window.closeModal = closeModal;
@@ -1425,5 +1622,5 @@
 		if (SCREEN_NAMES.includes(requested) && requested !== state.screen) loadScreen(requested);
 	});
 
-	start();
+	if (!handleOAuthRedirect()) start();
 })();

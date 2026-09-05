@@ -13,15 +13,23 @@ function initProjectsScreen() {
       category: [],
       projectState: [],
     },
+    // Tracks every value ever offered per filter so brand-new values (a project's first-ever
+    // category/source/state) are auto-selected instead of being silently excluded by a narrowed filter.
+    filterKnownOptions: {
+      source: new Set(),
+      category: new Set(),
+      projectState: new Set(),
+    },
     sortBy: "order",
     searchTerm: "",
     retryQueue: [],
     retryInProgress: false,
-    sheetCounts: { home: 0, vehicle: 0, repeating: 0 },
+    sheetCounts: { home: 0, vehicle: 0, repeating: 0, misc: 0 },
     sheetDropdowns: {
       home: {},
       vehicle: {},
       repeating: {},
+      misc: {},
     },
     addProjectOptions: {
       properties: [],
@@ -159,6 +167,10 @@ function initProjectsScreen() {
       return "repeating";
     }
 
+    if (text.includes("list_d") || text.includes("misc")) {
+      return "misc";
+    }
+
     return text;
   }
 
@@ -270,15 +282,16 @@ function initProjectsScreen() {
     const home = Number(state.sheetCounts.home || 0);
     const vehicle = Number(state.sheetCounts.vehicle || 0);
     const repeating = Number(state.sheetCounts.repeating || 0);
+    const misc = Number(state.sheetCounts.misc || 0);
 
     elements.summary.innerHTML = `
       <div>${escapeHtml(cleanText(primaryText, ""))}</div>
-      <div class="projects-summary-meta">Home: ${home} | Vehicle: ${vehicle} | Repeating: ${repeating}</div>
+      <div class="projects-summary-meta">Home: ${home} | Vehicle: ${vehicle} | Repeating: ${repeating} | Miscellaneous: ${misc}</div>
     `;
   }
 
   function deriveCountsFromProjects(projects) {
-    const counts = { home: 0, vehicle: 0, repeating: 0 };
+    const counts = { home: 0, vehicle: 0, repeating: 0, misc: 0 };
 
     (projects || []).forEach((project) => {
       const key = sourceTag(project.source);
@@ -803,15 +816,15 @@ function initProjectsScreen() {
 
   async function refreshSheetDropdowns() {
     if (!window.SheetsService || typeof window.SheetsService.fetchProjectDropdownOptions !== "function") {
-      state.sheetDropdowns = { home: {}, vehicle: {}, repeating: {} };
+      state.sheetDropdowns = { home: {}, vehicle: {}, repeating: {}, misc: {} };
       return;
     }
 
     try {
       const options = await window.SheetsService.fetchProjectDropdownOptions();
-      const next = { home: {}, vehicle: {}, repeating: {} };
+      const next = { home: {}, vehicle: {}, repeating: {}, misc: {} };
 
-      ["home", "vehicle", "repeating"].forEach((source) => {
+      ["home", "vehicle", "repeating", "misc"].forEach((source) => {
         const sourceOptions = options && typeof options === "object" ? options[source] : null;
         if (!sourceOptions || typeof sourceOptions !== "object") {
           return;
@@ -832,7 +845,7 @@ function initProjectsScreen() {
       state.sheetDropdowns = next;
     } catch (error) {
       console.warn("Unable to load sheet dropdown metadata.", error);
-      state.sheetDropdowns = { home: {}, vehicle: {}, repeating: {} };
+      state.sheetDropdowns = { home: {}, vehicle: {}, repeating: {}, misc: {} };
     }
   }
 
@@ -1561,7 +1574,15 @@ function initProjectsScreen() {
   function normalizeSelectedValues(filterKey, selectedValues, availableValues) {
     const available = normalizeArrayValues(availableValues);
     const availableSet = new Set(available.map((value) => value.toLowerCase()));
-    const selected = normalizeArrayValues(selectedValues).filter((value) => availableSet.has(value.toLowerCase()));
+    // A value the filter has never offered before (e.g. the first-ever "misc" project or a brand
+    // new category) must be auto-selected — otherwise a previously-narrowed filter would silently
+    // hide it forever, since the user could never have deliberately unchecked something unseen.
+    const knownOptions = state.filterKnownOptions[filterKey];
+    const newlySeen = available.filter((value) => !knownOptions.has(value.toLowerCase()));
+    available.forEach((value) => knownOptions.add(value.toLowerCase()));
+
+    const stillValidSelected = normalizeArrayValues(selectedValues).filter((value) => availableSet.has(value.toLowerCase()));
+    const selected = [...new Set([...stillValidSelected, ...newlySeen])];
 
     if (selected.length) {
       return selected;
@@ -1582,6 +1603,10 @@ function initProjectsScreen() {
 
     if (key === "repeating") {
       return "Repeating";
+    }
+
+    if (key === "misc") {
+      return "Miscellaneous";
     }
 
     return cleanText(value, "");
@@ -1651,7 +1676,7 @@ function initProjectsScreen() {
 
   function getFilterAvailableValues(filterKey) {
     if (filterKey === "source") {
-      return ["home", "vehicle", "repeating"];
+      return [...new Set(state.allProjects.map((project) => sourceTag(project.source)).filter(Boolean))].sort();
     }
 
     const container = getFilterContainer(filterKey);
@@ -1748,7 +1773,7 @@ function initProjectsScreen() {
   }
 
   function updateFilters() {
-    const sources = ["home", "vehicle", "repeating"];
+    const sources = [...new Set(state.allProjects.map((p) => sourceTag(p.source)).filter(Boolean))].sort();
     const categories = [...new Set(state.allProjects.map((p) => p.category).filter(Boolean))].sort();
     const states = [...new Set(state.allProjects.map((p) => p.state).filter(Boolean))].sort();
 

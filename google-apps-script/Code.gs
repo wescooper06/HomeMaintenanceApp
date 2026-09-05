@@ -5,6 +5,7 @@
 const TAB_HOME = 'Project List_A (Home Maintenance)';
 const TAB_VEHICLE = 'Project List_B (Vehicle/Small Engine)';
 const TAB_REPEATING = 'Project List_C (Repeating Household)';
+const TAB_MISC = 'Project List_D (Miscellaneous)';
 const SCRIPT_VERSION = '20260811-2';
 const PLANNER_TASK_MANAGER = 'Planner_TaskManager';
 const PLANNER_TASK_MANAGER_HEADERS = [
@@ -38,6 +39,68 @@ const FIXED_HOME_HEADERS = [
   'State',
   'Date Completed',
 ];
+
+const FIXED_MISC_HEADERS = [
+  'ID',
+  'Category',
+  'Title',
+  'Priority',
+  'Order',
+  'ResourceLinks',
+  'State',
+];
+
+// Sheet-specific ID prefixes: new rows get PA0001/PB0001/PC0001/PD0001 style IDs.
+// Keyed by the real sheet tab names above so lookups by sheet.getName() match directly.
+const SHEET_PREFIX = {
+  [TAB_HOME]: 'PA',
+  [TAB_VEHICLE]: 'PB',
+  [TAB_REPEATING]: 'PC',
+  [TAB_MISC]: 'PD',
+};
+
+// Only Home and Misc have a truly fixed, hard-coded column schema in this sheet; Vehicle and
+// Repeating use dynamic header-name discovery (appendHeaderSchemaCreateRow) because their column
+// sets vary too much to hard-code, so they intentionally are not listed here.
+const FIXED_HEADERS_MAP = {
+  [TAB_HOME]: FIXED_HOME_HEADERS,
+  [TAB_MISC]: FIXED_MISC_HEADERS,
+};
+
+// Generates the next sheet-prefixed ID (e.g. PD0007) by scanning the ID column for the highest
+// existing numeric suffix under that sheet's prefix.
+function generateNextId(sheetName, sheet) {
+  const prefix = SHEET_PREFIX[sheetName];
+  if (!prefix) {
+    throw new Error('Unknown sheet prefix for ' + sheetName);
+  }
+
+  const data = sheet.getDataRange().getValues();
+  const headerRow = data[0] || [];
+  const idColIndex = headerRow.indexOf('ID');
+  if (idColIndex === -1) {
+    throw new Error('ID column missing in ' + sheetName);
+  }
+
+  var maxNumeric = 0;
+
+  for (var i = 1; i < data.length; i += 1) {
+    const rawId = text(data[i][idColIndex]);
+    if (!rawId || rawId.indexOf(prefix) !== 0) {
+      continue;
+    }
+
+    const numPart = rawId.substring(prefix.length);
+    const parsed = parseInt(numPart, 10);
+    if (!isNaN(parsed) && parsed > maxNumeric) {
+      maxNumeric = parsed;
+    }
+  }
+
+  const nextNumber = maxNumeric + 1;
+  const padded = String(nextNumber).padStart(4, '0');
+  return prefix + padded;
+}
 
 function normalizeKey(value) {
   return String(value == null ? '' : value)
@@ -113,6 +176,31 @@ function doGet(e) {
       return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
     }
 
+    if (action === 'categories') {
+      const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
+      const tabName = text(e && e.parameter && e.parameter.tab);
+
+      if (!spreadsheetId) {
+        throw new Error('Missing spreadsheetId for categories.');
+      }
+
+      if (!tabName) {
+        throw new Error('Missing tab for categories.');
+      }
+
+      const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      const categories = extractDropdownsForTab(spreadsheet, tabName, { category: ['Category'] }).category || [];
+      const payload = {
+        ok: true,
+        version: SCRIPT_VERSION,
+        action: 'categories',
+        tab: tabName,
+        categories: categories,
+      };
+
+      return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+    }
+
     if (action === 'projectExists') {
       const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
       const tabName = text(e && e.parameter && e.parameter.tabName);
@@ -157,7 +245,7 @@ function doGet(e) {
       service: 'home-maintenance-sheet-writer',
       version: SCRIPT_VERSION,
       methods: ['GET', 'POST'],
-      actions: ['projectDropdownOptions', 'getTaskManagerState', 'batchTaskManagerMutations', 'getWeeklyPlannerState', 'batchWeeklyPlannerMutations', 'getParkingLotState', 'upsertParkingItem', 'deleteParkingItem', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
+      actions: ['projectDropdownOptions', 'categories', 'getTaskManagerState', 'batchTaskManagerMutations', 'getWeeklyPlannerState', 'batchWeeklyPlannerMutations', 'getParkingLotState', 'upsertParkingItem', 'deleteParkingItem', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
     };
 
     return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
@@ -579,12 +667,21 @@ function buildProjectDropdownOptionsPayload(spreadsheetId) {
         property: ['Property'],
       },
     },
+    misc: {
+      tabName: TAB_MISC,
+      fields: {
+        category: ['Category'],
+        state: ['State'],
+        priority: ['Priority'],
+      },
+    },
   };
 
   const options = {
     home: {},
     vehicle: {},
     repeating: {},
+    misc: {},
   };
 
   Object.keys(perTabConfig).forEach(function (sourceKey) {
@@ -937,6 +1034,7 @@ function resolveSheetByTabName(spreadsheet, tabName) {
     const hasListA = requestedNormalized.indexOf('projectlista') >= 0 || requestedNormalized.indexOf('lista') >= 0 || requestedNormalized.indexOf('home') >= 0;
     const hasListB = requestedNormalized.indexOf('projectlistb') >= 0 || requestedNormalized.indexOf('listb') >= 0 || requestedNormalized.indexOf('vehicle') >= 0;
     const hasListC = requestedNormalized.indexOf('projectlistc') >= 0 || requestedNormalized.indexOf('listc') >= 0 || requestedNormalized.indexOf('repeating') >= 0;
+    const hasListD = requestedNormalized.indexOf('projectlistd') >= 0 || requestedNormalized.indexOf('listd') >= 0 || requestedNormalized.indexOf('misc') >= 0;
 
     if (hasListA && (normalized.indexOf('projectlista') >= 0 || normalized.indexOf('lista') >= 0 || normalized.indexOf('home') >= 0)) {
       score += 300;
@@ -947,6 +1045,10 @@ function resolveSheetByTabName(spreadsheet, tabName) {
     }
 
     if (hasListC && (normalized.indexOf('projectlistc') >= 0 || normalized.indexOf('listc') >= 0 || normalized.indexOf('repeating') >= 0)) {
+      score += 300;
+    }
+
+    if (hasListD && (normalized.indexOf('projectlistd') >= 0 || normalized.indexOf('listd') >= 0 || normalized.indexOf('misc') >= 0)) {
       score += 300;
     }
 
@@ -1162,6 +1264,17 @@ function doPost(e) {
       return jsonResponse({ ok: true, requestId: requestId, version: SCRIPT_VERSION, mode: 'header-schema', ...result });
     }
 
+    if (resolvedTabName === TAB_MISC || normalizeKey(resolvedTabName).indexOf('projectlistd') >= 0) {
+      const result = updateMiscSchemaRow(sheet, project);
+      logEvent('info', 'save_request_success', {
+        requestId: requestId,
+        mode: 'misc-schema',
+        rowNumber: result.rowNumber,
+        updatedColumns: result.updatedColumns,
+      });
+      return jsonResponse({ ok: true, requestId: requestId, version: SCRIPT_VERSION, mode: 'misc-schema', ...result });
+    }
+
     throw new Error('Unsupported tab: ' + resolvedTabName);
   } catch (error) {
     logEvent('error', 'write_request_failed', {
@@ -1313,7 +1426,7 @@ function createProject(spreadsheet, body) {
 
   let id = text(body && body.id);
   if (!id) {
-    id = String(getNextProjectId(spreadsheet, resolvedTabName));
+    id = generateNextId(resolvedTabName, sheet);
   }
 
   let rowNumber = 0;
@@ -1535,6 +1648,10 @@ function sourceToTabName(source) {
     return TAB_REPEATING;
   }
 
+  if (normalized.indexOf('list_d') >= 0 || normalized.indexOf('misc') >= 0) {
+    return TAB_MISC;
+  }
+
   return '';
 }
 
@@ -1551,6 +1668,10 @@ function sheetTypeFromName(tabName) {
 
   if (normalized.indexOf('projectlistc') >= 0 || normalized.indexOf('listc') >= 0 || normalized.indexOf('repeating') >= 0) {
     return 'repeating';
+  }
+
+  if (normalized.indexOf('projectlistd') >= 0 || normalized.indexOf('listd') >= 0 || normalized.indexOf('misc') >= 0) {
+    return 'misc';
   }
 
   return '';
@@ -1589,7 +1710,7 @@ function deleteProjectByIdentity(spreadsheet, payload) {
     candidates.push(sourceTab);
   }
 
-  [TAB_HOME, TAB_VEHICLE, TAB_REPEATING].forEach(function (tab) {
+  [TAB_HOME, TAB_VEHICLE, TAB_REPEATING, TAB_MISC].forEach(function (tab) {
     if (candidates.indexOf(tab) === -1) {
       candidates.push(tab);
     }
@@ -1736,6 +1857,10 @@ function findDeleteRowInTab(sheet, tabName, id, rowHint, titleHint) {
     return findDeleteRowInVehicleSheet(sheet, id, rowHint, titleHint);
   }
 
+  if (sheetType === 'misc') {
+    return findDeleteRowInHeaderSheet(sheet, id, rowHint, titleHint, 'Title');
+  }
+
   return NaN;
 }
 
@@ -1774,6 +1899,10 @@ function findDeleteRowInFixedSheet(sheet, id, rowHint, titleHint) {
 }
 
 function findDeleteRowInVehicleSheet(sheet, id, rowHint, titleHint) {
+  return findDeleteRowInHeaderSheet(sheet, id, rowHint, titleHint, 'Service Description');
+}
+
+function findDeleteRowInHeaderSheet(sheet, id, rowHint, titleHint, titleHeaderName) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   if (lastRow < 2 || lastCol < 1) {
@@ -1787,7 +1916,7 @@ function findDeleteRowInVehicleSheet(sheet, id, rowHint, titleHint) {
   }
 
   const idCol = headerMap[normalizeKey('ID')] || 1;
-  const titleCol = headerMap[normalizeKey('Service Description')] || 0;
+  const titleCol = headerMap[normalizeKey(titleHeaderName)] || 0;
 
   if (Number.isFinite(rowHint) && rowHint >= 2 && rowHint <= lastRow) {
     const hintedId = text(sheet.getRange(rowHint, idCol).getDisplayValue());
@@ -2250,5 +2379,97 @@ function mapProjectToHeaderUpdates(project) {
     'A/C Refrigerant': text(metadata.acRefrigerant),
     'MAF': text(metadata.maf),
     'Throttle Body': text(metadata.throttleBody),
+  };
+}
+
+function updateMiscSchemaRow(sheet, project) {
+  const metadata = project.metadata || {};
+  const dataRange = sheet.getDataRange();
+  const values = dataRange.getValues();
+
+  if (!values || values.length < 2) {
+    throw new Error('Miscellaneous tab has no data rows.');
+  }
+
+  const headerRow = values[0].map(function (h) { return text(h); });
+  const headerMap = {};
+
+  for (var i = 0; i < headerRow.length; i += 1) {
+    headerMap[normalizeKey(headerRow[i])] = i + 1;
+  }
+
+  var rowNumber = Number(metadata.sheetRowNumber);
+  if (!Number.isFinite(rowNumber) || rowNumber < 2) {
+    rowNumber = findMiscRowNumber(values, project, headerMap);
+  }
+
+  if (!Number.isFinite(rowNumber) || rowNumber < 2) {
+    throw new Error('Could not locate target row for miscellaneous tab update.');
+  }
+
+  const updates = mapProjectToMiscUpdates(project);
+  const keys = Object.keys(updates);
+
+  keys.forEach(function (key) {
+    const col = headerMap[normalizeKey(key)];
+    if (!col) {
+      return;
+    }
+
+    const value = updates[key];
+    sheet.getRange(rowNumber, col).setValue(value == null ? '' : value);
+  });
+
+  return {
+    rowNumber: rowNumber,
+    updatedColumns: keys.length,
+  };
+}
+
+function findMiscRowNumber(values, project, headerMap) {
+  const idCol = headerMap[normalizeKey('ID')];
+  const titleCol = headerMap[normalizeKey('Title')];
+  const categoryCol = headerMap[normalizeKey('Category')];
+
+  const projectId = text(project.id);
+  const title = text(project.title);
+  const category = text(project.category);
+
+  for (var r = 1; r < values.length; r += 1) {
+    const row = values[r];
+
+    const rowId = idCol ? text(row[idCol - 1]) : '';
+    const rowTitle = titleCol ? text(row[titleCol - 1]) : '';
+    const rowCategory = categoryCol ? text(row[categoryCol - 1]) : '';
+
+    if (projectId && rowId && rowId === projectId) {
+      return r + 1;
+    }
+
+    if (title && rowTitle && title === rowTitle) {
+      if (!category || !rowCategory || rowCategory === category) {
+        return r + 1;
+      }
+    }
+  }
+
+  return NaN;
+}
+
+function mapProjectToMiscUpdates(project) {
+  const metadata = project.metadata || {};
+
+  const linksValue = Array.isArray(metadata.resourceLinks)
+    ? JSON.stringify(metadata.resourceLinks)
+    : text(metadata.resourceLinks);
+
+  return {
+    'ID': text(project.id),
+    'Category': text(project.category),
+    'Title': text(project.title),
+    'Priority': text(metadata.priority),
+    'Order': text(metadata.order),
+    'ResourceLinks': linksValue,
+    'State': text(project.state),
   };
 }

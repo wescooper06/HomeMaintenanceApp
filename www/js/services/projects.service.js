@@ -6,7 +6,11 @@
     home: "Project List_A",
     vehicle: "Project List_B",
     repeating: "Project List_C",
+    misc: "Project List_D",
   };
+
+  // Categories that live on the Miscellaneous sheet; used to auto-route Add Project submissions.
+  const MISC_CATEGORIES = ["sar", "travel", "family", "miscellaneous"];
 
   const SCHEMAS = {
     listA: {
@@ -64,12 +68,25 @@
         notes: ["notes", "description", "details"],
       },
     },
+    listD: {
+      source: SOURCE.misc,
+      id: ["id", "projectid", "project_id", "taskid"],
+      title: ["title", "taskdescription", "task description", "project", "item", "description"],
+      category: ["category", "type"],
+      state: ["state", "status", "phase"],
+      metadata: {
+        priority: ["priority"],
+        order: ["order"],
+        resourceLinks: ["resourcelinks", "resource_links", "links", "resources"],
+        notes: ["notes", "description", "details"],
+      },
+    },
   };
 
   let UnifiedProjectList = [];
   let LastLoadStats = {
-    raw: { home: 0, vehicle: 0, repeating: 0 },
-    effective: { home: 0, vehicle: 0, repeating: 0 },
+    raw: { home: 0, vehicle: 0, repeating: 0, misc: 0 },
+    effective: { home: 0, vehicle: 0, repeating: 0, misc: 0 },
     repeatingMirrorFiltered: false,
     repeatingMirroredRowsFiltered: 0,
     total: 0,
@@ -88,6 +105,10 @@
 
     if (text.includes("list_c") || text.includes("repeating")) {
       return "repeating";
+    }
+
+    if (text.includes("list_d") || text.includes("misc")) {
+      return "misc";
     }
 
     return "home";
@@ -554,20 +575,27 @@
     return normalizeProjects(result.rows, SCHEMAS.listC);
   }
 
+  async function loadMiscProjects() {
+    const sheets = getSheetsService();
+    const result = await sheets.fetchMiscSheet();
+    return normalizeProjects(result.rows, SCHEMAS.listD);
+  }
+
   async function loadAllProjects() {
-    const [home, vehicle, repeating] = await Promise.all([
+    const [home, vehicle, repeating, misc] = await Promise.all([
       loadHomeProjects(),
       loadVehicleProjects(),
       loadRepeatingProjects(),
+      loadMiscProjects(),
     ]);
 
     const repeatingSplit = splitRepeatingMirrorRows(home, repeating);
     const repeatingMirrorFiltered = repeatingSplit.mirrored.length > 0;
     const repeatingEffective = repeatingSplit.unique;
 
-    UnifiedProjectList = dedupeProjects([...home, ...vehicle, ...repeatingEffective]);
+    UnifiedProjectList = dedupeProjects([...home, ...vehicle, ...repeatingEffective, ...misc]);
 
-    const effectiveCounts = { home: 0, vehicle: 0, repeating: 0 };
+    const effectiveCounts = { home: 0, vehicle: 0, repeating: 0, misc: 0 };
     UnifiedProjectList.forEach((project) => {
       const key = sourceKey(project.source);
       if (Object.prototype.hasOwnProperty.call(effectiveCounts, key)) {
@@ -580,6 +608,7 @@
         home: home.length,
         vehicle: vehicle.length,
         repeating: repeating.length,
+        misc: misc.length,
       },
       effective: effectiveCounts,
       repeatingMirrorFiltered,
@@ -638,6 +667,21 @@
     };
   }
 
+  function buildMiscCreateFields(payload) {
+    return {
+      Category: cleanString(payload.category),
+      Title: cleanString(payload.title),
+      Priority: cleanString(payload.priority),
+      Order: cleanString(payload.order),
+      ResourceLinks: cleanString(payload.resourceLinks),
+      State: cleanString(payload.state),
+    };
+  }
+
+  function isMiscCategory(category) {
+    return MISC_CATEGORIES.includes(cleanString(category).toLowerCase());
+  }
+
   async function createProject(payload) {
     const sheets = getSheetsService();
     if (!sheets || typeof sheets.createProject !== "function" || typeof sheets.getNextProjectId !== "function") {
@@ -648,7 +692,8 @@
     const explicitSourceKey = explicitSource ? sourceKey(explicitSource) : "";
     const isVehicle = cleanString(payload.vehicle) !== "";
     const isProperty = cleanString(payload.property) !== "";
-    const hasExplicitSupportedSource = explicitSourceKey === "home" || explicitSourceKey === "vehicle" || explicitSourceKey === "repeating";
+    const isMisc = explicitSourceKey === "misc" || isMiscCategory(payload.category);
+    const hasExplicitSupportedSource = explicitSourceKey === "home" || explicitSourceKey === "vehicle" || explicitSourceKey === "repeating" || isMisc;
 
     if (!isVehicle && !isProperty && !hasExplicitSupportedSource) {
       throw new Error("Select Property or Vehicle/Engine before creating a project.");
@@ -678,6 +723,12 @@
         source: SOURCE.repeating,
         tabName: sheets.TABS.repeating,
         fields: buildRepeatingCreateFields(payload),
+      };
+    } else if (explicitSourceKey === "misc" || isMiscCategory(payload.category)) {
+      destination = {
+        source: SOURCE.misc,
+        tabName: sheets.TABS.misc,
+        fields: buildMiscCreateFields(payload),
       };
     } else if (isVehicle) {
       destination = {
@@ -760,6 +811,7 @@
     loadHomeProjects,
     loadVehicleProjects,
     loadRepeatingProjects,
+    loadMiscProjects,
     loadAllProjects,
     createProject,
     deleteProject,
@@ -769,6 +821,7 @@
   window.loadHomeProjects = loadHomeProjects;
   window.loadVehicleProjects = loadVehicleProjects;
   window.loadRepeatingProjects = loadRepeatingProjects;
+  window.loadMiscProjects = loadMiscProjects;
   window.loadAllProjects = loadAllProjects;
   window.createProjectInSheets = createProject;
   window.deleteProjectFromUnifiedList = deleteProject;
