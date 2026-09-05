@@ -11,6 +11,23 @@
   box-sizing: border-box;
 }
 
+.material-symbols-rounded {
+  direction: ltr;
+  display: inline-block;
+  font-family: "Material Icons Round";
+  font-style: normal;
+  font-weight: normal;
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  word-wrap: normal;
+  -webkit-font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "liga";
+}
+
 body {
   margin: 0;
   font-family: "Segoe UI", Tahoma, sans-serif;
