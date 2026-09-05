@@ -18,6 +18,14 @@
     return text || fallback;
   }
 
+  // Other screens (Workbench, Projects) cache the unified project list for up to 5 minutes;
+  // invalidate it after any create/update/delete here so they don't keep showing stale data.
+  function invalidateProjectsCache() {
+    if (window.PlannerStorage && typeof window.PlannerStorage.invalidateCache === "function") {
+      window.PlannerStorage.invalidateCache(["projects"]);
+    }
+  }
+
   // Reuse the same Sheets-backed dropdown metadata the Projects screen uses (Category/State/Priority/Area).
   async function getProjectDropdownOptions() {
     if (cachedDropdownOptions) {
@@ -25,23 +33,36 @@
     }
 
     if (!window.SheetsService || typeof window.SheetsService.fetchProjectDropdownOptions !== "function") {
-      return { home: {}, vehicle: {}, repeating: {} };
+      return { home: {}, vehicle: {}, repeating: {}, misc: {} };
     }
 
     if (!cachedDropdownOptionsPromise) {
       cachedDropdownOptionsPromise = window.SheetsService.fetchProjectDropdownOptions()
         .then((options) => {
-          cachedDropdownOptions = options && typeof options === "object" ? options : { home: {}, vehicle: {}, repeating: {} };
+          cachedDropdownOptions = options && typeof options === "object" ? options : { home: {}, vehicle: {}, repeating: {}, misc: {} };
           return cachedDropdownOptions;
         })
         .catch((error) => {
           console.warn("Unable to load project dropdown options for Parking Lot edit dialog", error);
           cachedDropdownOptionsPromise = null;
-          return { home: {}, vehicle: {}, repeating: {} };
+          return { home: {}, vehicle: {}, repeating: {}, misc: {} };
         });
     }
 
     return cachedDropdownOptionsPromise;
+  }
+
+  // Used when the backend's projectDropdownOptions returns an empty list for a field (e.g. the
+  // Misc sheet has no data validation rule and no existing rows yet to derive values from).
+  const FALLBACK_DROPDOWN_OPTIONS = {
+    category: ["Repair", "Maintenance", "Build", "Organize", "Install", "Clean", "SAR", "Travel", "Family", "Miscellaneous"],
+    state: ["Not Started", "In Progress", "Recommended", "Completed"],
+    priority: ["Low", "Medium", "High"],
+  };
+
+  function dropdownValuesFor(dropdowns, field) {
+    const values = dropdowns && Array.isArray(dropdowns[field]) ? dropdowns[field] : [];
+    return values.length ? values : (FALLBACK_DROPDOWN_OPTIONS[field] || []);
   }
 
   function buildSelectOptions(values, currentValue, options) {
@@ -213,6 +234,16 @@
     return convertedType === "repeatable" ? "repeating" : "home";
   }
 
+  // Maps any raw sheet source string (e.g. "Project List_D (Miscellaneous)") to a normalized key.
+  function normalizedSourceKey(source) {
+    const normalized = cleanText(source, "").toLowerCase();
+    if (normalized.includes("list_b") || normalized.includes("vehicle")) return "vehicle";
+    if (normalized.includes("list_c") || normalized.includes("repeating")) return "repeating";
+    if (normalized.includes("list_d") || normalized.includes("misc")) return "misc";
+    if (normalized.includes("list_a") || normalized.includes("home")) return "home";
+    return "";
+  }
+
   function sourceMatchesConvertType(source, convertType) {
     const normalized = cleanText(source, "").toLowerCase();
     if (convertType === "repeatable") {
@@ -252,64 +283,71 @@
     return matches[0];
   }
 
-  async function finalizeConvertedProjectRecord(item, createResult, convertType) {
-    if (!item || !createResult || !window.SheetsService || typeof window.SheetsService.updateProjectInSheet !== "function") {
+  // createProject() already verifies the row exists with the correct id/rowNumber before it
+  // resolves, so this only needs to reconcile convertedTo — no extra sheet reload/rewrite required.
+  function finalizeConvertedProjectRecord(item, createResult, convertType) {
+    if (!item || !createResult) {
       return;
     }
 
-    if (typeof window.loadAllProjects !== "function") {
-      return;
+    if (!item.convertedTo || typeof item.convertedTo !== "object") {
+      item.convertedTo = { type: convertType };
     }
 
-    try {
-      const allProjects = await window.loadAllProjects();
-      if (!Array.isArray(allProjects)) {
-        return;
-      }
-
-      const createdId = cleanText(createResult.id, "");
-      const targetRow = Number(createResult.rowNumber || 0);
-      let project = allProjects.find((entry) => cleanText(entry && entry.id, "") === createdId
-        && sourceMatchesConvertType(entry && entry.source, convertType)
-        && Number(entry && entry.metadata && entry.metadata.sheetRowNumber || 0) === targetRow);
-
-      if (!project) {
-        project = allProjects.find((entry) => cleanText(entry && entry.id, "") === createdId
-          && sourceMatchesConvertType(entry && entry.source, convertType));
-      }
-
-      if (!project) {
-        return;
-      }
-
-      const metadata = project.metadata && typeof project.metadata === "object" ? { ...project.metadata } : {};
-      const normalizedProject = {
-        ...project,
-        title: cleanText(item.title, cleanText(project.title, "Untitled Project")),
-        category: cleanText(project.category, "uncategorized"),
-        state: cleanText(project.state, "unknown"),
-        metadata: {
-          ...metadata,
-          _originalTitle: cleanText(metadata._originalTitle, ""),
-          _originalId: cleanText(project.id, ""),
-          priority: cleanText(metadata.priority, "3"),
-          sheetRowNumber: Number(metadata.sheetRowNumber || createResult.rowNumber || 0) || undefined,
-        },
-      };
-
-      await window.SheetsService.updateProjectInSheet(normalizedProject);
-
-      if (!item.convertedTo || typeof item.convertedTo !== "object") {
-        item.convertedTo = { type: convertType };
-      }
-
-      item.convertedTo.id = cleanText(project.id, cleanText(item.convertedTo.id, item.id));
-      if (Number(metadata.sheetRowNumber || 0) > 0) {
-        item.convertedTo.rowNumber = Number(metadata.sheetRowNumber);
-      }
-    } catch (error) {
-      console.warn("Unable to finalize converted project record", error);
+    const createdId = cleanText(createResult.id, "");
+    if (createdId) {
+      item.convertedTo.id = createdId;
     }
+
+    const rowNumber = Number(createResult.rowNumber || 0);
+    if (rowNumber > 0) {
+      item.convertedTo.rowNumber = rowNumber;
+    }
+  }
+
+
+  // Searches an already-loaded project list for a match; returns null (never throws) if nothing fits.
+  function searchProjectsList(projects, targetId, sourceMatches, rowHint, titleHint) {
+    if (!Array.isArray(projects) || !projects.length) {
+      return null;
+    }
+
+    const matchingSource = projects.find((project) => cleanText(project && project.id, "") === targetId
+      && sourceMatches(project));
+    if (matchingSource) {
+      return matchingSource;
+    }
+
+    const anyMatch = projects.find((project) => cleanText(project && project.id, "") === targetId);
+    if (anyMatch) {
+      return anyMatch;
+    }
+
+    if (rowHint > 0) {
+      const rowMatch = projects.find((project) => Number(project && project.metadata && project.metadata.sheetRowNumber || 0) === rowHint
+        && sourceMatches(project));
+      if (rowMatch) {
+        return rowMatch;
+      }
+    }
+
+    if (titleHint) {
+      const titleMatches = projects.filter((project) => cleanText(project && project.title, "") === titleHint
+        && sourceMatches(project));
+      const titleMatch = pickBestProjectMatch(titleMatches, rowHint);
+      if (titleMatch) {
+        return titleMatch;
+      }
+
+      const propertyMatches = projects.filter((project) => cleanText(project && project.metadata && project.metadata.property, "") === titleHint
+        && sourceMatches(project));
+      const propertyMatch = pickBestProjectMatch(propertyMatches, rowHint);
+      if (propertyMatch) {
+        return propertyMatch;
+      }
+    }
+
+    return null;
   }
 
   async function findProjectById(projectId, expectedSource, options) {
@@ -329,95 +367,34 @@
         return true;
       }
 
-      if (expectedSourceKey === "repeating") {
-        return sourceMatchesConvertType(source, "repeatable");
+      if (expectedSourceKey === "home" || expectedSourceKey === "repeating") {
+        return expectedSourceKey === "repeating"
+          ? sourceMatchesConvertType(source, "repeatable")
+          : sourceMatchesConvertType(source, "project");
       }
 
-      return sourceMatchesConvertType(source, "project");
+      return normalizedSourceKey(source) === expectedSourceKey;
     };
+
+    // Prefer the already-loaded cache (Planner/Projects already fetched it) to avoid re-fetching
+    // every project sheet just to open this dialog; only reload from Sheets if the cache misses.
+    if (window.ProjectsService && Array.isArray(window.ProjectsService.UnifiedProjectList)) {
+      const cached = searchProjectsList(window.ProjectsService.UnifiedProjectList, targetId, sourceMatches, rowHint, titleHint);
+      if (cached) {
+        return cached;
+      }
+    }
 
     if (typeof window.loadAllProjects === "function") {
       try {
         const projects = await window.loadAllProjects();
-        if (Array.isArray(projects)) {
-          const matchingSource = projects.find((project) => cleanText(project && project.id, "") === targetId
-            && sourceMatches(project));
-          if (matchingSource) {
-            return matchingSource;
-          }
-
-          const anyMatch = projects.find((project) => cleanText(project && project.id, "") === targetId);
-          if (anyMatch) {
-            return anyMatch;
-          }
-
-          if (rowHint > 0) {
-            const rowMatch = projects.find((project) => Number(project && project.metadata && project.metadata.sheetRowNumber || 0) === rowHint
-              && sourceMatches(project));
-            if (rowMatch) {
-              return rowMatch;
-            }
-          }
-
-          if (titleHint) {
-            const titleMatches = projects.filter((project) => cleanText(project && project.title, "") === titleHint
-              && sourceMatches(project));
-            const titleMatch = pickBestProjectMatch(titleMatches, rowHint);
-            if (titleMatch) {
-              return titleMatch;
-            }
-
-            const propertyMatches = projects.filter((project) => cleanText(project && project.metadata && project.metadata.property, "") === titleHint
-              && sourceMatches(project));
-            const propertyMatch = pickBestProjectMatch(propertyMatches, rowHint);
-            if (propertyMatch) {
-              return propertyMatch;
-            }
-          }
+        const match = searchProjectsList(projects, targetId, sourceMatches, rowHint, titleHint);
+        if (match) {
+          return match;
         }
       } catch (error) {
         console.error("Unable to load projects for in-place edit", error);
       }
-    }
-
-    if (window.ProjectsService && Array.isArray(window.ProjectsService.UnifiedProjectList)) {
-      const list = window.ProjectsService.UnifiedProjectList;
-      const matchingSource = list.find((project) => cleanText(project && project.id, "") === targetId
-        && sourceMatches(project));
-      if (matchingSource) {
-        return matchingSource;
-      }
-
-      const anyMatch = list.find((project) => cleanText(project && project.id, "") === targetId);
-      if (anyMatch) {
-        return anyMatch;
-      }
-
-      if (rowHint > 0) {
-        const rowMatch = list.find((project) => Number(project && project.metadata && project.metadata.sheetRowNumber || 0) === rowHint
-          && sourceMatches(project));
-        if (rowMatch) {
-          return rowMatch;
-        }
-      }
-
-      if (titleHint) {
-        const titleMatches = list.filter((project) => cleanText(project && project.title, "") === titleHint
-          && sourceMatches(project));
-        const titleMatch = pickBestProjectMatch(titleMatches, rowHint);
-        if (titleMatch) {
-          return titleMatch;
-        }
-
-        const propertyMatches = list.filter((project) => cleanText(project && project.metadata && project.metadata.property, "") === titleHint
-          && sourceMatches(project));
-        const propertyMatch = pickBestProjectMatch(propertyMatches, rowHint);
-        if (propertyMatch) {
-          return propertyMatch;
-        }
-      }
-
-      return null;
     }
 
     return null;
@@ -443,6 +420,12 @@
       return false;
     }
 
+    // findProjectById can fall back to a title/property heuristic match when the exact ID isn't
+    // found yet (e.g. Sheets read lag right after creation). Trusting that unrelated row's
+    // category/state/area/etc. would show misleading data, so only trust those fields when the
+    // resolved project's ID actually matches the one we asked for.
+    const identityConfirmed = cleanText(project.id, "") === targetId;
+
     if (parkingItem && parkingItem.convertedTo && typeof parkingItem.convertedTo === "object") {
       const normalizedId = cleanText(project.id, targetId);
       const normalizedRow = Number(project && project.metadata && project.metadata.sheetRowNumber || 0);
@@ -457,7 +440,11 @@
       }
     }
 
-    const metadata = project.metadata && typeof project.metadata === "object" ? { ...project.metadata } : {};
+    const metadata = identityConfirmed && project.metadata && typeof project.metadata === "object" ? { ...project.metadata } : {};
+    if (!identityConfirmed) {
+      project.category = "";
+      project.state = "";
+    }
     const host = parkingItem && parkingItem._parkingRoot
       ? parkingItem._parkingRoot.querySelector("[data-role='parking-modal-host']")
       : null;
@@ -467,7 +454,7 @@
     }
 
     const dropdownOptions = await getProjectDropdownOptions();
-    const dropdownSourceKey = expectedSource === "repeating" ? "repeating" : "home";
+    const dropdownSourceKey = ["repeating", "vehicle", "misc"].includes(expectedSource) ? expectedSource : "home";
     const sourceDropdowns = (dropdownOptions && dropdownOptions[dropdownSourceKey]) || {};
 
     host.hidden = false;
@@ -482,11 +469,11 @@
         </div>
         <div class="parking-lot-modal-body">
           <form class="parking-lot-form-grid">
-            <label>Title<input name="title" type="text" required value="${escapeHtml(cleanText(project.title, titleFallback || "Untitled Project"))}" /></label>
-            <label>Source<select name="source">${["home", "vehicle", "repeating"].map((value) => `<option value="${value}"${value === cleanText(expectedSource, "home") ? " selected" : ""}>${value === "home" ? "Home" : value === "vehicle" ? "Vehicle" : "Repeating"}</option>`).join("")}</select></label>
-            <label>Category<select name="category">${buildSelectOptions(sourceDropdowns.category, cleanText(project.category, "uncategorized"))}</select></label>
-            <label>State<select name="state">${buildSelectOptions(sourceDropdowns.state, cleanText(project.state, "unknown"))}</select></label>
-            <label>Priority<select name="priority">${buildSelectOptions(sourceDropdowns.priority, cleanText(metadata.priority, ""))}</select></label>
+            <label>Title<input name="title" type="text" required value="${escapeHtml(cleanText(titleFallback, cleanText(project.title, "Untitled Project")))}" /></label>
+            <label>Source<select name="source">${["home", "vehicle", "repeating", "misc"].map((value) => `<option value="${value}"${value === cleanText(expectedSource, "home") ? " selected" : ""}>${value === "home" ? "Home" : value === "vehicle" ? "Vehicle" : value === "misc" ? "Miscellaneous" : "Repeating"}</option>`).join("")}</select></label>
+            <label>Category<select name="category">${buildSelectOptions(dropdownValuesFor(sourceDropdowns, "category"), cleanText(project.category, "uncategorized"))}</select></label>
+            <label>State<select name="state">${buildSelectOptions(dropdownValuesFor(sourceDropdowns, "state"), cleanText(project.state, "unknown"))}</select></label>
+            <label>Priority<select name="priority">${buildSelectOptions(dropdownValuesFor(sourceDropdowns, "priority"), cleanText(metadata.priority, ""))}</select></label>
             <label>Order<input name="order" type="text" value="${escapeHtml(cleanText(metadata.order, ""))}" /></label>
             <label>Area<select name="area">${buildSelectOptions(sourceDropdowns.area, cleanText(metadata.area, ""))}</select></label>
             <label>Property<select name="property">${buildSelectOptions(sourceDropdowns.property, cleanText(metadata.property, ""), { allowEmpty: true })}</select></label>
@@ -509,6 +496,33 @@
 
     host.querySelectorAll("[data-action='dialog-close']").forEach((button) => {
       button.addEventListener("click", close);
+    });
+
+    // Category/State/Priority/Area/Property options are schema-specific per source (e.g. Misc only
+    // has SAR/Travel/Family/Miscellaneous categories); rebuild them whenever Source changes instead
+    // of leaving the originally-loaded source's options in place.
+    const sourceSelect = host.querySelector("[name='source']");
+    const categorySelect = host.querySelector("[name='category']");
+    const stateSelect = host.querySelector("[name='state']");
+    const prioritySelect = host.querySelector("[name='priority']");
+    const areaSelect = host.querySelector("[name='area']");
+    const propertySelect = host.querySelector("[name='property']");
+
+    sourceSelect.addEventListener("change", () => {
+      const selectedSourceKey = ["repeating", "vehicle", "misc"].includes(sourceSelect.value) ? sourceSelect.value : "home";
+      const nextDropdowns = (dropdownOptions && dropdownOptions[selectedSourceKey]) || {};
+
+      const keepIfValid = (select, values) => (Array.isArray(values) && values.includes(select.value) ? select.value : "");
+
+      const nextCategoryValues = dropdownValuesFor(nextDropdowns, "category");
+      const nextStateValues = dropdownValuesFor(nextDropdowns, "state");
+      const nextPriorityValues = dropdownValuesFor(nextDropdowns, "priority");
+
+      categorySelect.innerHTML = buildSelectOptions(nextCategoryValues, keepIfValid(categorySelect, nextCategoryValues), { allowEmpty: true });
+      stateSelect.innerHTML = buildSelectOptions(nextStateValues, keepIfValid(stateSelect, nextStateValues), { allowEmpty: true });
+      prioritySelect.innerHTML = buildSelectOptions(nextPriorityValues, keepIfValid(prioritySelect, nextPriorityValues), { allowEmpty: true });
+      areaSelect.innerHTML = buildSelectOptions(nextDropdowns.area, keepIfValid(areaSelect, nextDropdowns.area), { allowEmpty: true });
+      propertySelect.innerHTML = buildSelectOptions(nextDropdowns.property, keepIfValid(propertySelect, nextDropdowns.property), { allowEmpty: true });
     });
 
     host.querySelector("[data-action='project-edit-save']").addEventListener("click", async () => {
@@ -567,6 +581,7 @@
             await storage.upsertParkingItem(parkingItem);
           }
 
+          invalidateProjectsCache();
           close();
         } catch (error) {
           status.textContent = cleanText(error && error.message, "Unable to move project to the new list.");
@@ -606,6 +621,7 @@
           await storage.upsertParkingItem(parkingItem);
         }
 
+        invalidateProjectsCache();
         close();
       } catch (error) {
         const reason = cleanText(error && error.message, "Unable to save project details.");
@@ -896,6 +912,7 @@
         }
 
         await storage.upsertParkingItem(item);
+        invalidateProjectsCache();
         closeDialog();
       });
     }
@@ -1019,6 +1036,7 @@
       await finalizeConvertedProjectRecord(nextItem, result, convertTo);
       nextItem.color = convertTo === "repeatable" ? DEFAULT_COLORS.repeatable : DEFAULT_COLORS.project;
       await storage.upsertParkingItem(nextItem);
+      invalidateProjectsCache();
       return nextItem;
     }
 
@@ -1046,6 +1064,7 @@
         nextItem.convertedTo = null;
         nextItem.color = "";
         await storage.upsertParkingItem(nextItem);
+        invalidateProjectsCache();
       } catch (error) {
         console.error("Unable to remove project from list", error);
       }

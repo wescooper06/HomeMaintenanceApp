@@ -1,6 +1,9 @@
 function initWorkbenchScreen() {
   const SERVICE_VERSION = "20260822-13";
   const state = { projects: [], tasks: [], taskSort: "asc", projectSort: "order", search: "", source: [], category: [], projectState: [] };
+  // Tracks every value ever offered per filter so brand-new values (a project's first-ever
+  // category/source/state) are auto-selected instead of being silently excluded by a narrowed filter.
+  const filterKnownOptions = { source: new Set(), category: new Set(), projectState: new Set() };
   const elements = {
     status: document.getElementById("workbenchStatus"),
     projectCount: document.getElementById("workbenchProjectsCount"),
@@ -73,6 +76,7 @@ function initWorkbenchScreen() {
     if (source.includes("vehicle") || source.includes("list_b")) return "vehicle";
     if (source.includes("repeating") || source.includes("list_c")) return "repeating";
     if (source.includes("home") || source.includes("list_a")) return "home";
+    if (source.includes("misc") || source.includes("list_d")) return "misc";
     return source;
   };
   const number = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -125,7 +129,11 @@ function initWorkbenchScreen() {
   function setProjectFilterOptions(filterKey, select, summary, values, allLabel) {
     const options = [...new Set(values.map((value) => clean(value)).filter(Boolean))]
       .sort((left, right) => left.localeCompare(right));
-    const selected = state[filterKey].filter((value) => options.includes(value));
+    const knownOptions = filterKnownOptions[filterKey];
+    const newOptions = options.filter((value) => !knownOptions.has(value));
+    const stillValidSelected = state[filterKey].filter((value) => options.includes(value));
+    const selected = [...new Set([...stillValidSelected, ...newOptions])];
+    options.forEach((value) => knownOptions.add(value));
     state[filterKey] = selected.length ? selected : options;
     const selectedSet = new Set(state[filterKey]);
     select.innerHTML = options.map((value) => `<label><input type="checkbox" value="${escape(value)}"${selectedSet.has(value) ? " checked" : ""} />${escape(value)}</label>`).join("");
@@ -137,7 +145,7 @@ function initWorkbenchScreen() {
   }
 
   function refreshProjectFilters() {
-    setProjectFilterOptions("source", elements.source, elements.sourceSummary, ["home", "vehicle", "repeating"], "All sources");
+    setProjectFilterOptions("source", elements.source, elements.sourceSummary, state.projects.map((project) => sourceTag(project.source)), "All sources");
     setProjectFilterOptions("category", elements.category, elements.categorySummary, state.projects.map((project) => project.category), "All categories");
     setProjectFilterOptions("projectState", elements.projectState, elements.projectStateSummary, state.projects.map((project) => project.state), "All states");
   }
@@ -354,7 +362,7 @@ function initWorkbenchScreen() {
 
   function openAddProject() {
     const fields = [
-      ["title", "Title"], ["source", "Source (home, vehicle, or repeating)"],
+      ["title", "Title"], ["source", "Source (home, vehicle, repeating, or misc)"],
       ["category", "Category"], ["state", "State"], ["priority", "Priority"],
       ["order", "Order"], ["area", "Area"], ["property", "Property"],
       ["vehicle", "Vehicle / Engine"], ["cost", "Cost"], ["resourceLinks", "Resource Links"],
@@ -376,8 +384,8 @@ function initWorkbenchScreen() {
       elements.addFields.innerHTML = regularFields.map(([key, label]) => {
         const multiline = key === "notes" || key === "resourceLinks";
         const optionsByField = {
-          source: ["home", "vehicle", "repeating"],
-          category: ["Repair", "Maintenance", "Build", "Organize", "Install", "Clean"],
+          source: ["home", "vehicle", "repeating", "misc"],
+          category: ["Repair", "Maintenance", "Build", "Organize", "Install", "Clean", "SAR", "Travel", "Family", "Miscellaneous"],
           state: ["Not Started", "In Progress", "Recommended", "Completed"],
           priority: ["Low", "Medium", "High", "1", "2", "3", "4", "5"],
           area: ["Apartment", "Garage", "Yard", "Kitchen", "Bathroom", "Exterior"],
@@ -434,7 +442,7 @@ function initWorkbenchScreen() {
     Array.from(elements.addForm.elements).forEach((field) => { if (field.name) values[field.name] = field.type === "checkbox" ? field.checked : field.value; });
 
     const source = sourceTag(values.source);
-    if (!["home", "vehicle", "repeating"].includes(source)) {
+    if (!["home", "vehicle", "repeating", "misc"].includes(source)) {
       elements.status.textContent = "Select a project source.";
       return;
     }

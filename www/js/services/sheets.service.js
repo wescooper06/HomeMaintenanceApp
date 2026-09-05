@@ -22,6 +22,15 @@
     home: "Project List_A (Home Maintenance)",
     vehicle: "Project List_B (Vehicle/Small Engine)",
     repeating: "Project List_C (Repeating Household)",
+    misc: "Project List_D (Miscellaneous)",
+  };
+  // Mirrors the backend's SHEET_PREFIX map in Code.gs so client-generated IDs (PA0001, PB0001, ...)
+  // match exactly what the server would generate for the same tab.
+  const SHEET_PREFIX = {
+    [TABS.home]: "PA",
+    [TABS.vehicle]: "PB",
+    [TABS.repeating]: "PC",
+    [TABS.misc]: "PD",
   };
   const TAB_GIDS = {
     home: "128609528",
@@ -435,17 +444,23 @@
     return fetchTab(TABS.repeating);
   }
 
+  function fetchMiscSheet() {
+    return fetchTab(TABS.misc);
+  }
+
   async function fetchAllSheets() {
-    const [home, vehicle, repeating] = await Promise.all([
+    const [home, vehicle, repeating, misc] = await Promise.all([
       fetchHomeSheet(),
       fetchVehicleSheet(),
       fetchRepeatingSheet(),
+      fetchMiscSheet(),
     ]);
 
     return {
       home,
       vehicle,
       repeating,
+      misc,
     };
   }
 
@@ -464,17 +479,16 @@
       return TABS.repeating;
     }
 
+    if (normalized.includes("list_d") || normalized.includes("misc")) {
+      return TABS.misc;
+    }
+
     return TABS.home;
   }
 
+  // IDs are opaque strings (e.g. "PD0007") — never parse a numeric portion out of them here.
   function parseProjectId(value) {
-    const text = cleanCell(value);
-    if (!text) {
-      return null;
-    }
-
-    const num = Number(text);
-    return Number.isFinite(num) ? num : null;
+    return cleanCell(value) || null;
   }
 
   function getRowId(row) {
@@ -622,6 +636,10 @@
       return cleanCell((row && row["Service Description"]) || (row && row.serviceDescription) || (row && row["Task Description"]) || (row && row.title));
     }
 
+    if (sourceText.includes("list_d") || sourceText.includes("misc")) {
+      return cleanCell((row && row["Title"]) || (row && row.title));
+    }
+
     return cleanCell((row && row["Task Description"]) || (row && row.taskDescription) || (row && row["Service Description"]) || (row && row.title));
   }
 
@@ -752,18 +770,28 @@
       throw new Error("getNextProjectId requires a tabName.");
     }
 
+    const prefix = SHEET_PREFIX[resolvedTab] || "";
+    if (!prefix) {
+      throw new Error(`Unknown sheet prefix for "${resolvedTab}".`);
+    }
+
     const tab = await fetchTab(resolvedTab);
     const rows = tab && Array.isArray(tab.rows) ? tab.rows : [];
 
-    let maxId = 0;
+    let maxNumeric = 0;
     rows.forEach((row) => {
       const rowId = getRowId(row);
-      if (rowId != null && rowId > maxId) {
-        maxId = rowId;
+      if (!rowId || !rowId.startsWith(prefix)) {
+        return;
+      }
+
+      const parsed = Number.parseInt(rowId.slice(prefix.length), 10);
+      if (Number.isFinite(parsed) && parsed > maxNumeric) {
+        maxNumeric = parsed;
       }
     });
 
-    return maxId + 1;
+    return `${prefix}${String(maxNumeric + 1).padStart(4, "0")}`;
   }
 
   async function fetchProjectDropdownOptions() {
@@ -796,6 +824,7 @@
     const home = incoming.home && typeof incoming.home === "object" ? incoming.home : {};
     const vehicle = incoming.vehicle && typeof incoming.vehicle === "object" ? incoming.vehicle : {};
     const repeating = incoming.repeating && typeof incoming.repeating === "object" ? incoming.repeating : {};
+    const misc = incoming.misc && typeof incoming.misc === "object" ? incoming.misc : {};
 
     const recurranceValues = normalizeOptionList([
       ...(Array.isArray(repeating.recurrance) ? repeating.recurrance : []),
@@ -816,7 +845,34 @@
         recurrance: recurranceValues,
         recurrence: recurranceValues,
       },
+      misc: {
+        ...misc,
+        category: normalizeOptionList(misc.category),
+        state: normalizeOptionList(misc.state),
+      },
     };
+  }
+
+  async function fetchCategoriesForTab(tabName) {
+    const googleSheetsWriteUrl = getGoogleSheetsWriteUrl();
+
+    if (!googleSheetsWriteUrl) {
+      throw new Error(
+        "Sheet write endpoint is not configured. Set window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL (or GOOGLE_APPS_SCRIPT_WEB_APP_URL)."
+      );
+    }
+
+    const url = new URL(googleSheetsWriteUrl);
+    url.searchParams.set("action", "categories");
+    url.searchParams.set("spreadsheetId", SPREADSHEET_ID);
+    url.searchParams.set("tab", cleanCell(tabName));
+
+    const payload = await fetchJsonp(url.toString());
+    if (!payload || payload.ok === false) {
+      throw new Error(cleanCell(payload && payload.error) || "Categories request failed.");
+    }
+
+    return normalizeOptionList(payload.categories);
   }
 
   async function updateProjectInSheet(project) {
@@ -1060,9 +1116,11 @@
     fetchHomeSheet,
     fetchVehicleSheet,
     fetchRepeatingSheet,
+    fetchMiscSheet,
     fetchAllSheets,
     getNextProjectId,
     fetchProjectDropdownOptions,
+    fetchCategoriesForTab,
     createProject,
     updateProjectInSheet,
     repairProjectTitle,
