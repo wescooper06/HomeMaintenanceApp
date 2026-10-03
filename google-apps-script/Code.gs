@@ -125,6 +125,132 @@ function jsonpResponse(callback, payload) {
     .setMimeType(ContentService.MimeType.JAVASCRIPT);
 }
 
+function tripSheetTable(spreadsheetId, sheetName) {
+  const id = text(spreadsheetId);
+  if (!id) {
+    throw new Error('Missing spreadsheetId for ' + sheetName + '.');
+  }
+
+  const sheet = SpreadsheetApp.openById(id).getSheetByName(sheetName);
+  if (!sheet) {
+    throw new Error('Sheet not found: ' + sheetName);
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const headers = (values[0] || []).map(text);
+  if (headers.indexOf('tripId') === -1) {
+    throw new Error('Missing tripId header in ' + sheetName + '.');
+  }
+
+  const records = values.slice(1).map(function (row, index) {
+    const record = {};
+    headers.forEach(function (header, column) {
+      record[header] = row[column];
+    });
+    record._rowNumber = index + 2;
+    return record;
+  }).filter(function (record) {
+    return text(record.tripId);
+  });
+
+  return { sheet: sheet, headers: headers, records: records };
+}
+
+function getTrips(spreadsheetId) {
+  const table = tripSheetTable(spreadsheetId, 'Trips');
+  return table.records.map(function (record) {
+    const trip = {};
+    table.headers.forEach(function (header) {
+      trip[header] = record[header];
+    });
+    return trip;
+  });
+}
+
+function getWorkflowMetadata(spreadsheetId, tripId) {
+  const id = text(tripId);
+  if (!id) {
+    throw new Error('Missing tripId for getWorkflowMetadata.');
+  }
+
+  const table = tripSheetTable(spreadsheetId, 'Workflow Metadata');
+  const record = table.records.find(function (row) {
+    return text(row.tripId) === id;
+  });
+
+  if (!record) {
+    return { tripId: id, stage: 'Define', stageNotes: '' };
+  }
+
+  const workflow = {};
+  table.headers.forEach(function (header) {
+    workflow[header] = record[header];
+  });
+  workflow.stage = text(workflow.stageStatus || workflow.stage) || 'Define';
+  workflow.stageNotes = text(workflow.stageNotes);
+  return workflow;
+}
+
+function createTrip(spreadsheetId, tripData) {
+  const table = tripSheetTable(spreadsheetId, 'Trips');
+  const trip = tripData || {};
+  const tripId = text(trip.tripId);
+  if (!tripId) {
+    throw new Error('Missing tripId for createTrip.');
+  }
+
+  if (table.records.some(function (record) {
+    return text(record.tripId) === tripId;
+  })) {
+    throw new Error('Trip already exists: ' + tripId);
+  }
+
+  table.sheet.appendRow(table.headers.map(function (header) {
+    return trip[header] == null ? '' : trip[header];
+  }));
+  return { ok: true, tripId: tripId };
+}
+
+function updateWorkflowMetadata(spreadsheetId, updates) {
+  const values = updates || {};
+  const tripId = text(values.tripId);
+  if (!tripId) {
+    throw new Error('Missing tripId for updateWorkflowMetadata.');
+  }
+
+  const table = tripSheetTable(spreadsheetId, 'Workflow Metadata');
+  const tripIdColumn = table.headers.indexOf('tripId');
+  const stageStatusColumn = table.headers.indexOf('stageStatus');
+  const stageColumn = stageStatusColumn === -1 ? table.headers.indexOf('stage') : stageStatusColumn;
+  const notesColumn = table.headers.indexOf('stageNotes');
+  if (stageColumn === -1 || notesColumn === -1) {
+    throw new Error('Workflow Metadata requires stageStatus and stageNotes headers.');
+  }
+
+  const existing = table.records.find(function (record) {
+    return text(record.tripId) === tripId;
+  });
+  const row = table.headers.map(function (header) {
+    return existing && existing[header] != null ? existing[header] : '';
+  });
+  row[tripIdColumn] = tripId;
+  row[stageColumn] = text(values.stageStatus || values.stage) || 'Define';
+  row[notesColumn] = text(values.stageNotes);
+
+  if (existing) {
+    table.sheet.getRange(existing._rowNumber, 1, 1, table.headers.length).setValues([row]);
+  } else {
+    table.sheet.appendRow(row);
+  }
+
+  return {
+    ok: true,
+    tripId: tripId,
+    stage: row[stageColumn],
+    stageNotes: row[notesColumn],
+  };
+}
+
 function makeRequestId() {
   return Utilities.getUuid();
 }
@@ -240,12 +366,25 @@ function doGet(e) {
       return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
     }
 
+    if (action === 'getTrips') {
+      const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
+      const payload = getTrips(spreadsheetId);
+      return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+    }
+
+    if (action === 'getWorkflowMetadata') {
+      const spreadsheetId = text(e && e.parameter && e.parameter.spreadsheetId);
+      const tripId = text(e && e.parameter && e.parameter.tripId);
+      const payload = getWorkflowMetadata(spreadsheetId, tripId);
+      return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
+    }
+
     const payload = {
       ok: true,
       service: 'home-maintenance-sheet-writer',
       version: SCRIPT_VERSION,
       methods: ['GET', 'POST'],
-      actions: ['projectDropdownOptions', 'categories', 'getTaskManagerState', 'batchTaskManagerMutations', 'getWeeklyPlannerState', 'batchWeeklyPlannerMutations', 'getParkingLotState', 'upsertParkingItem', 'deleteParkingItem', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle'],
+      actions: ['projectDropdownOptions', 'categories', 'getTaskManagerState', 'batchTaskManagerMutations', 'getWeeklyPlannerState', 'batchWeeklyPlannerMutations', 'getParkingLotState', 'upsertParkingItem', 'deleteParkingItem', 'batchApplyPlannerChanges', 'createProject', 'projectExists', 'repairProjectTitle', 'getTrips', 'getWorkflowMetadata', 'createTrip', 'updateWorkflowMetadata'],
     };
 
     return canJsonp ? jsonpResponse(callback, payload) : jsonResponse(payload);
@@ -1089,6 +1228,16 @@ function doPost(e) {
     const bodyText = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
     const body = JSON.parse(bodyText);
     const action = text(body.action || (e && e.parameter && e.parameter.action) || 'updateProject');
+
+    if (action === 'createTrip') {
+      const spreadsheetId = text(body.spreadsheetId || (e && e.parameter && e.parameter.spreadsheetId));
+      return jsonResponse(createTrip(spreadsheetId, body.trip || body));
+    }
+
+    if (action === 'updateWorkflowMetadata') {
+      const spreadsheetId = text(body.spreadsheetId || (e && e.parameter && e.parameter.spreadsheetId));
+      return jsonResponse(updateWorkflowMetadata(spreadsheetId, body.workflow || body.updates || body));
+    }
 
     if (action === 'batchTaskManagerMutations' || action === 'batchApplyPlannerChanges') {
       const result = action === 'batchTaskManagerMutations'
