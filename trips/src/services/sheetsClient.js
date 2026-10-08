@@ -100,7 +100,8 @@ async function sheetsRequest(path, options = {}) {
 
 async function readSheet(sheetName) {
   const range = encodeURIComponent(sheetRange(sheetName, "A:ZZ"));
-  const payload = await sheetsRequest(`/values/${range}`);
+  const renderOptions = sheetName === "Trips" ? "?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER" : "";
+  const payload = await sheetsRequest(`/values/${range}${renderOptions}`);
   const values = payload.values || [];
   return { headers: values[0] || [], rows: values.slice(1) };
 }
@@ -127,10 +128,11 @@ async function appendSheetRow(sheetName, headers, row) {
 export async function getTrips() {
   const { headers, rows } = await readSheet("Trips");
   return rowsToObjects(headers, rows).map((row) => ({
-    tripId: row.tripId || "",
+    ...row,
+    tripId: String(row.tripId ?? row.id ?? ""),
     destination: row.destination || "",
-    startDate: row.startDate || "",
-    endDate: row.endDate || "",
+    startDate: tripDateValue(row.startDate),
+    endDate: tripDateValue(row.endDate),
     tripType: row.tripType || "",
     status: row.status || "",
     priorityRank: row.priorityRank || "",
@@ -140,6 +142,13 @@ export async function getTrips() {
   }));
 }
 
+function tripDateValue(value) {
+  if (typeof value === "number") {
+    return new Date(Date.UTC(1899, 11, 30) + value * 86400000).toISOString().slice(0, 10);
+  }
+  return value || "";
+}
+
 export async function getTripById(tripId) {
   const trips = await getTrips();
   return trips.find((trip) => trip.tripId === tripId) || null;
@@ -147,12 +156,75 @@ export async function getTripById(tripId) {
 
 export async function createTrip(tripData) {
   const { headers } = await readSheet("Trips");
-  if (!headers.includes("tripId")) throw new Error("Trips sheet is missing its tripId header.");
+  const sheetTrip = tripFieldsForHeaders(headers, tripData);
+  validateTripColumns(headers, sheetTrip);
   if ((await getTrips()).some((trip) => trip.tripId === tripData.tripId)) {
     throw new Error(`Trip already exists: ${tripData.tripId}`);
   }
-  const result = await appendSheetRow("Trips", headers, tripData);
+  const result = await appendSheetRow("Trips", headers, sheetTrip);
   return { tripId: tripData.tripId, result };
+}
+
+function validateTripColumns(headers, fields) {
+  const missing = Object.keys(fields).filter((field) =>
+    fields[field] !== "" && fields[field] != null && !headers.includes(field)
+  );
+  if (missing.length) {
+    throw new Error(`Trips sheet is missing columns: ${missing.join(", ")}. Add these exact headers before saving.`);
+  }
+}
+
+function tripFieldsForHeaders(headers, fields) {
+  if (headers.includes("tripId")) return fields;
+  if (!headers.includes("id")) throw new Error("Trips sheet is missing its tripId or id header.");
+  const { tripId, ...values } = fields;
+  return tripId == null ? values : { ...values, id: tripId };
+}
+
+export async function updateTrip(tripId, updates) {
+  const { headers, rows } = await readSheet("Trips");
+  const idColumn = headers.indexOf(headers.includes("tripId") ? "tripId" : "id");
+  if (idColumn < 0) throw new Error("Trips sheet is missing its tripId or id header.");
+  const rowIndex = rows.findIndex((row) => String(row[idColumn]) === String(tripId));
+  if (rowIndex < 0) throw new Error(`Trip not found: ${tripId}`);
+  const sheetUpdates = tripFieldsForHeaders(headers, updates);
+  validateTripColumns(headers, sheetUpdates);
+  const data = Object.keys(sheetUpdates).filter((field) => field !== "tripId" && field !== "id" && headers.includes(field)).map((field) => {
+    const column = columnName(headers.indexOf(field) + 1);
+    return {
+      range: sheetRange("Trips", `${column}${rowIndex + 2}`),
+      values: [[sheetUpdates[field] ?? ""]],
+    };
+  });
+  if (!data.length) return { ok: true, tripId };
+  await sheetsRequest("/values:batchUpdate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ valueInputOption: "RAW", data }),
+  });
+  return { ok: true, tripId, ...updates };
+}
+
+export async function deleteTrip(tripId) {
+  if (!String(tripId ?? "").trim()) throw new Error("Missing trip id for deletion.");
+  const metadata = await sheetsRequest("?fields=sheets(properties(sheetId,title))");
+  const sheet = metadata.sheets?.find((item) => item.properties.title === "Trips");
+  if (!sheet) throw new Error("Trips sheet not found.");
+  const { headers, rows } = await readSheet("Trips");
+  const idColumn = headers.indexOf(headers.includes("tripId") ? "tripId" : "id");
+  if (idColumn < 0) throw new Error("Trips sheet is missing its tripId or id header.");
+  const matches = rows.map((row, index) => String(row[idColumn]) === String(tripId) ? index : -1).filter((index) => index >= 0);
+  if (matches.length !== 1) throw new Error(matches.length ? "Duplicate trip ids found; deletion cancelled." : "Trip not found; refresh the list before deleting.");
+  await sheetsRequest(":batchUpdate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requests: [{ deleteDimension: { range: {
+      sheetId: sheet.properties.sheetId,
+      dimension: "ROWS",
+      startIndex: matches[0] + 1,
+      endIndex: matches[0] + 2,
+    } } }] }),
+  });
 }
 
 export async function getWorkflowMetadata(tripId) {

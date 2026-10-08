@@ -5,6 +5,10 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   base: '/trips/',
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
   build: {
     outDir: '../www/trips',
     emptyOutDir: true,
