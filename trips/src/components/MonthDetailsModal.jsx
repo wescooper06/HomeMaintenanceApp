@@ -4,11 +4,12 @@ import { TIMELINE_MONTHS, timelineColor, timelineMonthNumber, timelineTripIds } 
 import { tripPriority } from "../utils/priorityUtils.js";
 import "./MonthDetailsModal.css";
 
-export default function MonthDetailsModal({ month, tripList = [], onSave, onTripsChange, onClose, onTripClick }) {
+export default function MonthDetailsModal({ month, tripList = [], refreshVersion, onSave, onTripsChange, onClose, onTripClick }) {
   const dialog = useRef(null);
+  const previousRefresh = useRef(refreshVersion);
   const [data, setData] = useState(month);
   const [trips, setTrips] = useState(tripList);
-  const [draft, setDraft] = useState({ color: timelineColor(month.color), notes: String(month.notes || ""), blocks: String(month.blocks || "") });
+  const [draft, setDraft] = useState({ color: timelineColor(month.color), notes: String(month.notes || "") });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -52,12 +53,22 @@ export default function MonthDetailsModal({ month, tripList = [], onSave, onTrip
       if (!active) return;
       setData(entry);
       setTrips(loadedTrips);
-      setDraft({ color: timelineColor(entry.color), notes: String(entry.notes || ""), blocks: String(entry.blocks || "") });
+      setDraft({ color: timelineColor(entry.color), notes: String(entry.notes || "") });
       setLoading(false);
       setError("");
     }).catch((loadError) => { if (active) setError(loadError.message); });
     return () => { active = false; };
   }, [year, monthNumber, reload]);
+
+  useEffect(() => {
+    if (previousRefresh.current === refreshVersion) return;
+    previousRefresh.current = refreshVersion;
+    let active = true;
+    Promise.all([getTimelineMonth(year, monthNumber), getTrips()]).then(([entry, loadedTrips]) => {
+      if (active) { setData(entry); setTrips(loadedTrips); }
+    }).catch((refreshError) => { if (active) setError(refreshError.message); });
+    return () => { active = false; };
+  }, [refreshVersion, year, monthNumber]);
 
   async function save(event) {
     event.preventDefault();
@@ -106,7 +117,6 @@ export default function MonthDetailsModal({ month, tripList = [], onSave, onTrip
           <fieldset disabled={loading || saving || assigning}>
             <label>Color<select aria-label="Month color" value={draft.color} onChange={(event) => setDraft((current) => ({ ...current, color: event.target.value }))}><option value="">None</option><option value="IDEAL">Ideal</option><option value="CAUTION">Caution</option><option value="CONFLICT">Conflict</option></select></label>
             <label>Notes<textarea aria-label="Month notes" rows={3} value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
-            <label>Blocks<input aria-label="Month blocks" value={draft.blocks} onChange={(event) => setDraft((current) => ({ ...current, blocks: event.target.value }))} /></label>
           </fieldset>
           {!loading && <section className="month-modal-trips"><h2>Associated Trips</h2>{assigned.map((trip) => <article key={trip.tripId}>
             <button type="button" className="month-modal-trip-link" disabled={saving || assigning} onClick={() => onTripClick?.(trip)}>{trip.destination}</button><p>{trip.tripType || "Unspecified"}</p>

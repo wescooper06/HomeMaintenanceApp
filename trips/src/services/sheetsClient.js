@@ -278,7 +278,7 @@ export function ensureTripPriorityColumn() {
   return priorityColumnSetup;
 }
 
-const TIMELINE_COLUMNS = ["year", "month", "color", "notes", "blocks", "tripIds"];
+const TIMELINE_COLUMNS = ["year", "month", "color", "notes", "tripIds"];
 
 async function timelineTable() {
   const table = await readSheet("Timeline");
@@ -312,14 +312,15 @@ export async function getTimeline() {
 export async function getTimelineMonth(year, month) {
   validateTimelineMonth(year, month);
   const key = timelineKey(year, month);
-  return (await getTimeline()).find((entry) => timelineKey(entry.year, entry.month) === key) || {
-    year: Number(year), month: timelineMonthNumber(month), color: "", notes: "", blocks: "", tripIds: [],
+  const entry = (await getTimeline()).find((record) => timelineKey(record.year, record.month) === key);
+  return {
+    year: Number(year), month: timelineMonthNumber(month), color: entry?.color ?? "", notes: entry?.notes ?? "", tripIds: entry?.tripIds ?? [],
   };
 }
 
 export async function updateTimelineMonth(year, month, updates) {
   validateTimelineMonth(year, month);
-  const allowed = ["color", "notes", "blocks", "tripIds"];
+  const allowed = ["color", "notes", "tripIds"];
   if (Object.keys(updates).some((field) => !allowed.includes(field))) throw new Error("Unsupported Timeline field.");
   const values = { ...updates };
   if (Object.hasOwn(values, "color")) {
@@ -333,7 +334,7 @@ export async function updateTimelineMonth(year, month, updates) {
   const matches = rows.map((row, index) => Number(row[yearColumn]) === Number(year) && timelineMonthNumber(row[monthColumn]) === timelineMonthNumber(month) ? index : -1).filter((index) => index >= 0);
   if (matches.length > 1) throw new Error(`Duplicate Timeline month: ${year}-${month}.`);
   if (!matches.length) {
-    const record = { year: Number(year), month: TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(0, 1) + TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(1).toLowerCase(), color: "", notes: "", blocks: "", tripIds: "", ...values };
+    const record = { year: Number(year), month: TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(0, 1) + TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(1).toLowerCase(), color: "", notes: "", tripIds: "", ...values };
     const range = encodeURIComponent(sheetRange("Timeline", "A:ZZ"));
     await sheetsRequest(`/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
       method: "POST",
@@ -352,6 +353,17 @@ export async function updateTimelineMonth(year, month, updates) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ valueInputOption: "RAW", data }),
   });
+}
+
+export async function propagateTimelineYear(fromYear, toYear) {
+  validateTimelineMonth(fromYear, 1);
+  validateTimelineMonth(toYear, 1);
+  if (Number(fromYear) === Number(toYear)) throw new Error("Choose a different target year.");
+  const source = (await getTimeline()).filter((entry) => entry.year === Number(fromYear));
+  await initializeTimelineYear(toYear);
+  for (const entry of source) {
+    await updateTimelineMonth(toYear, entry.month, { color: entry.color ?? "", notes: entry.notes ?? "" });
+  }
 }
 
 export async function assignTripToMonth(tripId, year, month) {
