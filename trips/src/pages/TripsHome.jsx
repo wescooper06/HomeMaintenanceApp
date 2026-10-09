@@ -8,12 +8,13 @@ import { useNavigate } from "react-router-dom";
 import CaptureTrip from "../components/CaptureTrip.jsx";
 import ExpandedTripModal from "../components/ExpandedTripModal.jsx";
 import ViewTripModal from "../components/ViewTripModal.jsx";
+import { tripPriority } from "../utils/priorityUtils.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const STATUSES = ["Idea", "Shortlisted", "Active", "Paused", "Deferred"];
 const STATUS_PRIORITY = ["Active", "Shortlisted", "Idea", "Paused", "Deferred"];
 const SAVED_FILTERS_KEY = "tripsSavedFilters";
-const SORT_MODES = ["newest", "oldest", "alphabetical", "status", "timeline"];
+const SORT_MODES = ["newest", "oldest", "alphabetical", "status", "timeline", "priority"];
 
 function readSavedFilters() {
   try {
@@ -154,6 +155,9 @@ export default function TripsHome() {
       result = priority(first.trip) - priority(second.trip);
     } else if (sortMode === "timeline") {
       result = timelineOrder(first.trip) - timelineOrder(second.trip);
+    } else if (sortMode === "priority") {
+      result = (tripPriority(first.trip) ?? Infinity) - (tripPriority(second.trip) ?? Infinity);
+      if (!result) return second.index - first.index;
     }
     return result || first.index - second.index;
   }).map(({ trip }) => trip);
@@ -205,7 +209,10 @@ export default function TripsHome() {
     <main className="trips-backlog">
       <header className="trips-backlog-header">
         <div><h1>Travel Backlog</h1><p aria-live="polite">{visibleTrips.length} of {trips.length} {trips.length === 1 ? "idea" : "ideas"}</p></div>
-        <button type="button" disabled={deletingTripId !== null} onClick={() => setShowCaptureModal(true)}>+ New Trip</button>
+        <div className="trips-header-actions">
+          <button type="button" disabled={deletingTripId !== null} onClick={() => setShowCaptureModal(true)}>+ New Trip</button>
+          <button type="button" disabled={deletingTripId !== null} onClick={() => navigate("/prioritize")}>Prioritize Trips</button>
+        </div>
       </header>
       <section className="trips-filter-toolbar" aria-label="Trip filters">
         <div className="trip-status-filters" role="group" aria-label="Filter by status">
@@ -220,6 +227,7 @@ export default function TripsHome() {
             <option value="alphabetical">Alphabetical (A → Z)</option>
             <option value="status">Status priority (Active → Shortlisted → Idea → Paused → Deferred)</option>
             <option value="timeline">Timeline order</option>
+            <option value="priority">Priority order</option>
           </select></label>
           <label>Saved Filters<select aria-label="Saved Filters" value={selectedSavedFilter === null ? "" : `filter:${selectedSavedFilter}`} onChange={(event) => selectSavedFilter(event.target.value)}>
             <option value="">Select a saved filter</option>
@@ -251,10 +259,12 @@ export default function TripsHome() {
             </div>
             <div className="trip-card-summary">
               <span className="trip-type">{trip.tripType || "Unspecified"}</span>
+              {tripPriority(trip) !== null && <span className="trip-priority-badge" aria-label={`Priority ${tripPriority(trip)}`}>#{tripPriority(trip)}</span>}
               <span>{[MONTHS[Number(trip.timelineMonth) - 1] || trip.timelineMonth, trip.timelineYear].filter(Boolean).join(" ")}</span>
             </div>
             <p className="trip-card-notes">{trip.notes || "No notes yet."}</p>
             <div className="trip-card-actions">
+              <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => navigate(`/prioritize?tripId=${encodeURIComponent(trip.tripId)}`)}>Prioritize</button>
               <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => { setSelectedTripForView(trip); setShowViewModal(true); }}>View</button>
               <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => { setSelectedTrip(trip); setShowExpandedModal(true); }}>Edit</button>
               <button type="button" className="trip-edit trip-delete" disabled={deletingTripId !== null} onClick={() => removeTrip(trip)}>{deletingTripId === trip.tripId ? "Deleting..." : "Delete"}</button>
