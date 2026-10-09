@@ -4,9 +4,10 @@
 // Allows opening a trip and adding a new one.
 import { useEffect, useRef, useState } from "react";
 import { deleteTrip, getTrips } from "../services/sheetsClient";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { CalendarDays, ListOrdered } from "lucide-react";
 import CaptureTrip from "../components/CaptureTrip.jsx";
-import ExpandedTripModal from "../components/ExpandedTripModal.jsx";
+import TripEditorPanel from "../components/TripEditorPanel.jsx";
 import ViewTripModal from "../components/ViewTripModal.jsx";
 import { tripPriority } from "../utils/priorityUtils.js";
 
@@ -14,7 +15,24 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const STATUSES = ["Idea", "Shortlisted", "Active", "Paused", "Deferred"];
 const STATUS_PRIORITY = ["Active", "Shortlisted", "Idea", "Paused", "Deferred"];
 const SAVED_FILTERS_KEY = "tripsSavedFilters";
+const ACTIVE_FILTERS_KEY = "tripsActiveFilters";
 const SORT_MODES = ["newest", "oldest", "alphabetical", "status", "timeline", "priority"];
+
+function readActiveFilters() {
+  const defaults = { activeStatuses: [], searchQuery: "", sortMode: "newest", selectedSavedFilter: null };
+  try {
+    const stored = JSON.parse(localStorage.getItem(ACTIVE_FILTERS_KEY) || "null");
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return defaults;
+    return {
+      activeStatuses: Array.isArray(stored.activeStatuses) ? [...new Set(stored.activeStatuses.filter((status) => STATUSES.includes(status)))] : [],
+      searchQuery: typeof stored.searchQuery === "string" ? stored.searchQuery : "",
+      sortMode: SORT_MODES.includes(stored.sortMode) ? stored.sortMode : "newest",
+      selectedSavedFilter: readSavedFilters().some((filter) => filter.name === stored.selectedSavedFilter) ? stored.selectedSavedFilter : null,
+    };
+  } catch {
+    return defaults;
+  }
+}
 
 function readSavedFilters() {
   try {
@@ -50,27 +68,61 @@ function timelineOrder(trip) {
 }
 
 export default function TripsHome() {
+  const [initialFilters] = useState(readActiveFilters);
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCaptureModal, setShowCaptureModal] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState(null);
-  const [showExpandedModal, setShowExpandedModal] = useState(false);
+  const [editorBusy, setEditorBusy] = useState(false);
   const [selectedTripForView, setSelectedTripForView] = useState(null);
   const [showViewModal, setShowViewModal] = useState(false);
   const [deletingTripId, setDeletingTripId] = useState(null);
   const [actionError, setActionError] = useState("");
-  const [activeStatuses, setActiveStatuses] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortMode, setSortMode] = useState("newest");
+  const [activeStatuses, setActiveStatuses] = useState(initialFilters.activeStatuses);
+  const [searchQuery, setSearchQuery] = useState(initialFilters.searchQuery);
+  const [sortMode, setSortMode] = useState(initialFilters.sortMode);
   const [savedFilters, setSavedFilters] = useState(readSavedFilters);
-  const [selectedSavedFilter, setSelectedSavedFilter] = useState(null);
+  const [selectedSavedFilter, setSelectedSavedFilter] = useState(initialFilters.selectedSavedFilter);
+  const [filterPersistenceError, setFilterPersistenceError] = useState("");
   const [filterError, setFilterError] = useState("");
   const [showSaveFilterPrompt, setShowSaveFilterPrompt] = useState(false);
   const [filterName, setFilterName] = useState("");
   const saveFilterDialog = useRef(null);
+  const backlog = useRef(null);
 
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (!active) return;
+      try {
+        localStorage.setItem(ACTIVE_FILTERS_KEY, JSON.stringify({ activeStatuses, searchQuery, sortMode, selectedSavedFilter }));
+        setFilterPersistenceError("");
+      } catch {
+        setFilterPersistenceError("Unable to remember active filters. Browser storage may be unavailable or full.");
+      }
+    });
+    return () => { active = false; };
+  }, [activeStatuses, searchQuery, sortMode, selectedSavedFilter]);
+
+  useEffect(() => {
+    if (loading || !backlog.current) return;
+    function resize() {
+      let height = window.innerHeight;
+      try {
+        const bounds = window.frameElement?.getBoundingClientRect();
+        if (bounds) height = Math.max(0, Math.min(bounds.bottom, window.parent.innerHeight) - Math.max(bounds.top, 0));
+      } catch {
+        height = window.innerHeight;
+      }
+      backlog.current.style.height = `${height}px`;
+    }
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [loading]);
 
   useEffect(() => {
     if (!showSaveFilterPrompt) return;
@@ -206,13 +258,13 @@ export default function TripsHome() {
   if (error) return <p>Error: {error}</p>;
 
   return (
-    <main className="trips-backlog">
+    <main ref={backlog} className="trips-backlog trips-editor-home">
       <header className="trips-backlog-header">
         <div><h1>Travel Backlog</h1><p aria-live="polite">{visibleTrips.length} of {trips.length} {trips.length === 1 ? "idea" : "ideas"}</p></div>
         <div className="trips-header-actions">
-          <button type="button" disabled={deletingTripId !== null} onClick={() => setShowCaptureModal(true)}>+ New Trip</button>
-          <button type="button" disabled={deletingTripId !== null} onClick={() => navigate("/prioritize")}>Prioritize Trips</button>
-          <button type="button" disabled={deletingTripId !== null} onClick={() => navigate("/timeline")}>Timeline</button>
+          <button type="button" disabled={deletingTripId !== null || editorBusy} onClick={() => setShowCaptureModal(true)}>+ New Trip</button>
+          <Link to="/prioritize" aria-disabled={deletingTripId !== null || editorBusy} tabIndex={deletingTripId !== null || editorBusy ? -1 : 0} onClick={(event) => { if (deletingTripId !== null || editorBusy) event.preventDefault(); }}><ListOrdered size={16} aria-hidden="true" />Prioritize Trips</Link>
+          <Link to="/timeline" aria-disabled={deletingTripId !== null || editorBusy} tabIndex={deletingTripId !== null || editorBusy ? -1 : 0} onClick={(event) => { if (deletingTripId !== null || editorBusy) event.preventDefault(); }}><CalendarDays size={16} aria-hidden="true" />Timeline</Link>
         </div>
       </header>
       <section className="trips-filter-toolbar" aria-label="Trip filters">
@@ -238,6 +290,7 @@ export default function TripsHome() {
         </div>
         <div className="trip-filter-actions"><button type="button" className="trip-clear-filters" onClick={() => { setFilterName(selectedSavedFilter || ""); setFilterError(""); setShowSaveFilterPrompt(true); }}>Save Current Filter</button></div>
         {filterError && !showSaveFilterPrompt && <p className="trip-action-error" role="alert">{filterError}</p>}
+        {filterPersistenceError && <p className="trip-action-error" role="alert">{filterPersistenceError}</p>}
       </section>
       {showSaveFilterPrompt && <dialog ref={saveFilterDialog} className="trip-save-filter-dialog" aria-labelledby="save-filter-title" onCancel={() => { setShowSaveFilterPrompt(false); setFilterError(""); }}>
         <form onSubmit={saveCurrentFilter}>
@@ -250,33 +303,40 @@ export default function TripsHome() {
           </div>
         </form>
       </dialog>}
+      <div className="trips-workspace">
+      <section className="trips-list-column" aria-label="Trip list">
       {actionError && <p className="trip-action-error" role="alert">{actionError}</p>}
       <ul className="trip-cards">
         {visibleTrips.map((trip) => (
-          <li key={trip.tripId} className="trip-card">
+          <li key={trip.tripId} className="trip-card" data-selected={selectedTrip?.tripId === trip.tripId} tabIndex={0} onClick={(event) => { if (!editorBusy && !event.target.closest("button")) setSelectedTrip(trip); }} onKeyDown={(event) => { if (!editorBusy && event.target === event.currentTarget && ["Enter", " "].includes(event.key)) { event.preventDefault(); setSelectedTrip(trip); } }}>
             <div className="trip-card-heading">
-              <button className="trip-destination" type="button" onClick={() => navigate(`/${trip.tripId}`)}>{trip.destination}</button>
-              <span className={`trip-status trip-status-${trip.status.toLowerCase().replace(/\s/g, "-")}`}>{trip.status || "Idea"}</span>
+              <div className="trip-card-title">
+                {tripPriority(trip) !== null && <span className="trip-priority-badge" aria-label={`Priority ${tripPriority(trip)}`}>#{tripPriority(trip)}</span>}
+                <button className="trip-destination" type="button" title={trip.destination} disabled={editorBusy} aria-pressed={selectedTrip?.tripId === trip.tripId} onClick={() => setSelectedTrip(trip)}>{trip.destination}</button>
+              </div>
+              <div className="trip-card-actions">
+                <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => navigate(`/prioritize?tripId=${encodeURIComponent(trip.tripId)}`)}>Prioritize</button>
+                <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => { setSelectedTripForView(trip); setShowViewModal(true); }}>View</button>
+                <button type="button" className="trip-edit trip-delete" disabled={deletingTripId !== null} onClick={() => removeTrip(trip)}>{deletingTripId === trip.tripId ? "Deleting..." : "Delete"}</button>
+              </div>
             </div>
             <div className="trip-card-summary">
               <span className="trip-type">{trip.tripType || "Unspecified"}</span>
-              {tripPriority(trip) !== null && <span className="trip-priority-badge" aria-label={`Priority ${tripPriority(trip)}`}>#{tripPriority(trip)}</span>}
               <span>{[MONTHS[Number(trip.timelineMonth) - 1] || trip.timelineMonth, trip.timelineYear].filter(Boolean).join(" ")}</span>
+              <span className={`trip-status trip-status-${trip.status.toLowerCase().replace(/\s/g, "-")}`}>{trip.status || "Idea"}</span>
             </div>
             <p className="trip-card-notes">{trip.notes || "No notes yet."}</p>
-            <div className="trip-card-actions">
-              <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => navigate(`/prioritize?tripId=${encodeURIComponent(trip.tripId)}`)}>Prioritize</button>
-              <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => { setSelectedTripForView(trip); setShowViewModal(true); }}>View</button>
-              <button type="button" className="trip-edit" disabled={deletingTripId !== null} onClick={() => { setSelectedTrip(trip); setShowExpandedModal(true); }}>Edit</button>
-              <button type="button" className="trip-edit trip-delete" disabled={deletingTripId !== null} onClick={() => removeTrip(trip)}>{deletingTripId === trip.tripId ? "Deleting..." : "Delete"}</button>
-            </div>
           </li>
         ))}
       </ul>
       {!trips.length && <p className="trips-empty">No trip ideas yet.</p>}
       {trips.length > 0 && !visibleTrips.length && <p className="trips-empty" role="status">No trips match these filters.</p>}
+      </section>
+      <aside className="trips-editor-column" aria-label="Trip editor">
+        <TripEditorPanel key={selectedTrip?.tripId || "empty"} selectedTrip={trips.find((trip) => trip.tripId === selectedTrip?.tripId) || null} onClose={() => setSelectedTrip(null)} onSave={updateSavedTrip} onBusyChange={setEditorBusy} />
+      </aside>
+      </div>
       {showCaptureModal && <CaptureTrip onClose={closeCaptureModal} />}
-      {showExpandedModal && <ExpandedTripModal trip={selectedTrip} onClose={() => setShowExpandedModal(false)} onSave={updateSavedTrip} />}
       {showViewModal && <ViewTripModal trip={selectedTripForView} onClose={() => setShowViewModal(false)} />}
     </main>
   );

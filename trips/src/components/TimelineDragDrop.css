@@ -1,0 +1,17 @@
+.timeline-dnd { width: 100%; min-width: 0; }
+.timeline-drop-year { min-width: 0; container-type: inline-size; }
+.timeline-row { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; width: 100%; min-width: 0; overflow: hidden; }
+.timeline-drop-month { flex: 1; min-width: 0; }
+.timeline-drop-month[data-drag-over="true"], .timeline-drop-year[data-drag-over="true"] { outline: 2px solid #00847e; outline-offset: -2px; background-color: #e0f1ee; }
+.timeline-dnd .timeline-draggable-trip { touch-action: none; cursor: grab; }
+.timeline-draggable-trip[data-dragging="true"] { opacity: 0.35; }
+.timeline-drag-tooltip { display: grid; gap: 4px; box-sizing: border-box; width: 100%; max-width: 240px; max-height: 80px; overflow: hidden; padding: 8px 12px; border: 1px solid #00847e; border-radius: 4px; background: #fff; color: #19353d; font-size: 12px; line-height: 1.4; box-shadow: 0 4px 12px rgb(25 53 61 / 15%); pointer-events: none; overflow-wrap: anywhere; }
+.timeline-operation-status { font-size: 13px; color: #00847e; margin-bottom: 12px; }
+.timeline-move-error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: #ad3425; font-size: 13px; margin-bottom: 12px; }
+.timeline-move-error button, .timeline-propagate { padding: 6px 10px; min-height: 36px; border: 1px solid #c7d9da; border-radius: 4px; background: #fff; color: #19353d; font: inherit; font-size: 12px; cursor: pointer; }
+.timeline-propagate { margin-bottom: 12px; max-width: 100%; white-space: normal; }
+.timeline-propagate:disabled { opacity: 0.5; cursor: wait; }
+.priority-year-navigation > :last-child { justify-self: end; }
+.priority-year-navigation .timeline-drop-year { container-type: normal; }
+@container (min-width: 928px) { .timeline-row { grid-template-columns: repeat(12, minmax(70px, 1fr)); } }
+@container (max-width: 600px) { .timeline-row { gap: 2px; } }

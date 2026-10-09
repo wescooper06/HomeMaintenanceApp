@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ArrowLeft, GripVertical } from "lucide-react";
+import { ArrowLeft, CalendarDays, GripVertical } from "lucide-react";
 import TripDetailsPanel from "../components/TripDetailsPanel.jsx";
 import PriorityTimelinePreview from "../components/PriorityTimelinePreview.jsx";
 import { ensureTripPriorityColumn, getTrips, updateTrip } from "../services/sheetsClient.js";
@@ -46,10 +46,27 @@ export default function PrioritizeTrips() {
   const pendingOrder = useRef(null);
   const writing = useRef(false);
   const mounted = useRef(false);
+  const page = useRef(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
+
+  useEffect(() => {
+    function resize() {
+      let height = window.innerHeight;
+      try {
+        const bounds = window.frameElement?.getBoundingClientRect();
+        if (bounds) height = Math.max(0, Math.min(bounds.bottom, window.parent.innerHeight) - Math.max(bounds.top, 0));
+      } catch {
+        height = window.innerHeight;
+      }
+      page.current.style.height = `${height}px`;
+    }
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -150,11 +167,12 @@ export default function PrioritizeTrips() {
   const locked = syncStatus === "loading" || syncStatus === "saving" || syncStatus === "error";
 
   return (
-    <main className="prioritize-page">
+    <main ref={page} className="prioritize-page">
       <header className="prioritize-header">
         <div><p className="trip-eyebrow">Travel priorities</p><h1>Prioritize Trips</h1></div>
         <div className="prioritize-header-actions">
           <span role="status">{syncStatus === "loading" ? "Loading..." : syncStatus === "pending" ? "Changes pending" : syncStatus === "saving" ? "Saving..." : syncStatus === "ready" ? "Synced" : "Sync failed"}</span>
+          <Link to="/timeline" aria-disabled={syncStatus !== "ready"} tabIndex={syncStatus === "ready" ? 0 : -1} onClick={(event) => { if (syncStatus !== "ready") event.preventDefault(); }}><CalendarDays size={16} aria-hidden="true" />Timeline</Link>
           <button type="button" disabled={syncStatus !== "ready"} onClick={() => navigate("/")}><ArrowLeft size={16} aria-hidden="true" />Back to Trips</button>
         </div>
       </header>
@@ -177,7 +195,16 @@ export default function PrioritizeTrips() {
           {selectedTrip ? <TripDetailsPanel key={selectedTrip.tripId} trip={selectedTrip} titleId="priority-trip-title" resolveTitle={resolveLinkTitle} /> : <p className="priority-empty">No trip selected.</p>}
         </aside>
       </div>
-      <PriorityTimelinePreview trips={rows} onSelectTrip={(tripId, trip) => { setSelectedId(tripId); setTimelineSelectedTrip(trip || null); }} />
+      <PriorityTimelinePreview trips={rows} onSelectTrip={(tripId, trip) => { setSelectedId(tripId); setTimelineSelectedTrip(trip || null); }} onTimelineRefresh={(loadedTrips) => {
+        const freshTrips = new Map(loadedTrips.map((trip) => [trip.tripId, trip]));
+        const refreshWindow = (trip) => {
+          const fresh = freshTrips.get(trip.tripId);
+          return fresh ? { ...trip, timelineMonth: fresh.timelineMonth, timelineYear: fresh.timelineYear } : trip;
+        };
+        rowsRef.current = rowsRef.current.map(refreshWindow);
+        setRows((current) => current.map(refreshWindow));
+        setTimelineSelectedTrip((current) => current ? refreshWindow(current) : current);
+      }} />
     </main>
   );
 }
