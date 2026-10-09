@@ -227,6 +227,37 @@ export async function deleteTrip(tripId) {
   });
 }
 
+let priorityColumnSetup = null;
+
+export function ensureTripPriorityColumn() {
+  if (priorityColumnSetup) return priorityColumnSetup;
+  priorityColumnSetup = (async () => {
+    const { headers, rows } = await readSheet("Trips");
+    if (headers.includes("priority")) return;
+    const columnCount = rows.reduce((count, row) => Math.max(count, row.length), headers.length) + 1;
+    const metadata = await sheetsRequest("?fields=sheets(properties(sheetId,title,gridProperties(columnCount)))");
+    const sheet = metadata.sheets?.find((item) => item.properties.title === "Trips");
+    if (!sheet) throw new Error("Trips sheet not found.");
+    const availableColumns = sheet.properties.gridProperties.columnCount;
+    if (columnCount > availableColumns) {
+      await sheetsRequest(":batchUpdate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requests: [{ appendDimension: {
+          sheetId: sheet.properties.sheetId, dimension: "COLUMNS", length: columnCount - availableColumns,
+        } }] }),
+      });
+    }
+    const range = encodeURIComponent(sheetRange("Trips", `${columnName(columnCount)}1`));
+    await sheetsRequest(`/values/${range}?valueInputOption=RAW`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: [["priority"]] }),
+    });
+  })().finally(() => { priorityColumnSetup = null; });
+  return priorityColumnSetup;
+}
+
 export async function getWorkflowMetadata(tripId) {
   const { headers, rows } = await readSheet("Workflow Metadata");
   const workflow = rowsToObjects(headers, rows).find((row) => row.tripId === tripId);
