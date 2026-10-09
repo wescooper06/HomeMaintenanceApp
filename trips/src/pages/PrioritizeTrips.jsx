@@ -5,6 +5,7 @@ import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, GripVertical } from "lucide-react";
 import TripDetailsPanel from "../components/TripDetailsPanel.jsx";
+import PriorityTimelinePreview from "../components/PriorityTimelinePreview.jsx";
 import { ensureTripPriorityColumn, getTrips, updateTrip } from "../services/sheetsClient.js";
 import { prioritizedTrips, tripPriority } from "../utils/priorityUtils.js";
 import { resolveLinkTitle } from "../utils/resolveLinkTitle.js";
@@ -39,6 +40,7 @@ export default function PrioritizeTrips() {
   const [syncStatus, setSyncStatus] = useState("loading");
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const [timelineSelectedTrip, setTimelineSelectedTrip] = useState(null);
   const rowsRef = useRef([]);
   const timer = useRef(null);
   const pendingOrder = useRef(null);
@@ -144,7 +146,7 @@ export default function PrioritizeTrips() {
     }
   }
 
-  const selectedTrip = rows.find((trip) => trip.tripId === selectedId) || rows[0];
+  const selectedTrip = rows.find((trip) => trip.tripId === selectedId) || (timelineSelectedTrip?.tripId === selectedId ? timelineSelectedTrip : null) || rows[0];
   const locked = syncStatus === "loading" || syncStatus === "saving" || syncStatus === "error";
 
   return (
@@ -175,6 +177,7 @@ export default function PrioritizeTrips() {
           {selectedTrip ? <TripDetailsPanel key={selectedTrip.tripId} trip={selectedTrip} titleId="priority-trip-title" resolveTitle={resolveLinkTitle} /> : <p className="priority-empty">No trip selected.</p>}
         </aside>
       </div>
+      <PriorityTimelinePreview trips={rows} onSelectTrip={(tripId, trip) => { setSelectedId(tripId); setTimelineSelectedTrip(trip || null); }} />
     </main>
   );
 }

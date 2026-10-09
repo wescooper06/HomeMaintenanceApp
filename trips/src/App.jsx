@@ -4,6 +4,7 @@ import NewTrip from "./pages/NewTrip.jsx";
 import TripDetails from "./pages/TripDetails.jsx";
 import TripsHome from "./pages/TripsHome.jsx";
 import PrioritizeTrips from "./pages/PrioritizeTrips.jsx";
+import TimelineView from "./pages/TimelineView.jsx";
 import { connectGoogleSheets, hasSheetsAccess } from "./services/sheetsClient.js";
 
 export default function App() {
@@ -42,6 +43,7 @@ export default function App() {
       <Route path="/" element={<TripsHome />} />
       <Route path="/index.html" element={<TripsHome />} />
       <Route path="/prioritize" element={<PrioritizeTrips />} />
+      <Route path="/timeline" element={<TimelineView />} />
       <Route path="/new" element={<NewTrip />} />
       <Route path="/:tripId" element={<TripDetails />} />
     </Routes>
