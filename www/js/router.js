@@ -14,6 +14,12 @@ const routes = {
     js: "screens/tasks/tasks.js",
     init: "initTasksScreen",
   },
+  trips: {
+    html: "screens/trips/trips.html",
+    css: "screens/trips/trips.css",
+    js: "screens/trips/trips.js",
+    init: "initTripsScreen",
+  },
   workbench: {
     html: "screens/workbench/workbench.html",
     css: "screens/workbench/workbench.css",
