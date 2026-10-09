@@ -1,3 +1,5 @@
+import { TIMELINE_MONTHS, timelineKey, timelineMonthNumber, timelineTripIds } from "../utils/timelineUtils.js";
+
 const SPREADSHEET_ID = "18la6E47KuiFWXFSIASd8QYbvxEo-ZJ7RaxnnuxIml9k";
 const SHEETS_API_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -136,7 +138,7 @@ export async function getTrips() {
     tripType: row.tripType || "",
     status: row.status || "",
     priorityRank: row.priorityRank || "",
-    timelineMonth: row.timelineMonth || "",
+    timelineMonth: hasTimelineValue(row.timelineMonth) ? timelineMonthNumber(row.timelineMonth) || row.timelineMonth : "",
     timelineYear: row.timelineYear || "",
     notes: row.notes || "",
   }));
@@ -154,14 +156,27 @@ export async function getTripById(tripId) {
   return trips.find((trip) => trip.tripId === tripId) || null;
 }
 
+const pendingTimelineCreates = new Set();
+
 export async function createTrip(tripData) {
+  validateTripTimeline(tripData);
   const { headers } = await readSheet("Trips");
   const sheetTrip = tripFieldsForHeaders(headers, tripData);
   validateTripColumns(headers, sheetTrip);
   if ((await getTrips()).some((trip) => trip.tripId === tripData.tripId)) {
+    if (pendingTimelineCreates.has(String(tripData.tripId))) {
+      await updateTrip(tripData.tripId, tripData);
+      pendingTimelineCreates.delete(String(tripData.tripId));
+      return { tripId: tripData.tripId, result: { recovered: true } };
+    }
     throw new Error(`Trip already exists: ${tripData.tripId}`);
   }
   const result = await appendSheetRow("Trips", headers, sheetTrip);
+  if (hasTimelineValue(tripData.timelineMonth) || hasTimelineValue(tripData.timelineYear)) {
+    pendingTimelineCreates.add(String(tripData.tripId));
+    await syncSavedTripTimeline(null, tripData);
+    pendingTimelineCreates.delete(String(tripData.tripId));
+  }
   return { tripId: tripData.tripId, result };
 }
 
@@ -187,6 +202,10 @@ export async function updateTrip(tripId, updates) {
   if (idColumn < 0) throw new Error("Trips sheet is missing its tripId or id header.");
   const rowIndex = rows.findIndex((row) => String(row[idColumn]) === String(tripId));
   if (rowIndex < 0) throw new Error(`Trip not found: ${tripId}`);
+  const oldTrip = Object.fromEntries(headers.map((header, index) => [header, rows[rowIndex][index] ?? ""]));
+  const updatedTrip = { ...oldTrip, ...updates, id: rows[rowIndex][idColumn], tripId: String(tripId) };
+  const syncTimeline = Object.hasOwn(updates, "timelineMonth") || Object.hasOwn(updates, "timelineYear");
+  if (syncTimeline) validateTripTimeline(updatedTrip);
   const sheetUpdates = tripFieldsForHeaders(headers, updates);
   validateTripColumns(headers, sheetUpdates);
   const data = Object.keys(sheetUpdates).filter((field) => field !== "tripId" && field !== "id" && headers.includes(field)).map((field) => {
@@ -202,6 +221,7 @@ export async function updateTrip(tripId, updates) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ valueInputOption: "RAW", data }),
   });
+  if (syncTimeline) await syncSavedTripTimeline(oldTrip, updatedTrip);
   return { ok: true, tripId, ...updates };
 }
 
@@ -256,6 +276,198 @@ export function ensureTripPriorityColumn() {
     });
   })().finally(() => { priorityColumnSetup = null; });
   return priorityColumnSetup;
+}
+
+const TIMELINE_COLUMNS = ["year", "month", "color", "notes", "blocks", "tripIds"];
+
+async function timelineTable() {
+  const table = await readSheet("Timeline");
+  const missing = TIMELINE_COLUMNS.filter((column) => !table.headers.includes(column));
+  if (missing.length) throw new Error(`Timeline sheet is missing columns: ${missing.join(", ")}.`);
+  return table;
+}
+
+function validateTimelineMonth(year, month) {
+  if (!Number.isInteger(Number(year)) || Number(year) < 1 || Number(year) > 9999 ||
+  !Number.isInteger(timelineMonthNumber(month))) {
+    throw new Error("Timeline requires a valid year and a month from 1 to 12.");
+  }
+}
+
+export async function getTimeline() {
+  const { headers, rows } = await timelineTable();
+  const records = rowsToObjects(headers, rows);
+  const seen = new Set();
+  return records.map((record) => {
+    validateTimelineMonth(record.year, record.month);
+    const year = Number(record.year);
+    const month = timelineMonthNumber(record.month);
+    const key = `${year}-${month}`;
+    if (seen.has(key)) throw new Error(`Duplicate Timeline month: ${year}-${month}. Remove the duplicate row before editing.`);
+    seen.add(key);
+    return { ...record, year, month, tripIds: timelineTripIds(record.tripIds) };
+  });
+}
+
+export async function getTimelineMonth(year, month) {
+  validateTimelineMonth(year, month);
+  const key = timelineKey(year, month);
+  return (await getTimeline()).find((entry) => timelineKey(entry.year, entry.month) === key) || {
+    year: Number(year), month: timelineMonthNumber(month), color: "", notes: "", blocks: "", tripIds: [],
+  };
+}
+
+export async function updateTimelineMonth(year, month, updates) {
+  validateTimelineMonth(year, month);
+  const allowed = ["color", "notes", "blocks", "tripIds"];
+  if (Object.keys(updates).some((field) => !allowed.includes(field))) throw new Error("Unsupported Timeline field.");
+  const values = { ...updates };
+  if (Object.hasOwn(values, "color")) {
+    values.color = String(values.color || "").trim().toUpperCase();
+    if (values.color && !["IDEAL", "CAUTION", "CONFLICT"].includes(values.color)) throw new Error("Invalid Timeline color.");
+  }
+  if (Object.hasOwn(values, "tripIds")) values.tripIds = timelineTripIds(values.tripIds).join(",");
+  const { headers, rows } = await timelineTable();
+  const yearColumn = headers.indexOf("year");
+  const monthColumn = headers.indexOf("month");
+  const matches = rows.map((row, index) => Number(row[yearColumn]) === Number(year) && timelineMonthNumber(row[monthColumn]) === timelineMonthNumber(month) ? index : -1).filter((index) => index >= 0);
+  if (matches.length > 1) throw new Error(`Duplicate Timeline month: ${year}-${month}.`);
+  if (!matches.length) {
+    const record = { year: Number(year), month: TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(0, 1) + TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(1).toLowerCase(), color: "", notes: "", blocks: "", tripIds: "", ...values };
+    const range = encodeURIComponent(sheetRange("Timeline", "A:ZZ"));
+    await sheetsRequest(`/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: [headers.map((header) => record[header] ?? "")] }),
+    });
+    return;
+  }
+  const data = Object.keys(values).map((field) => ({
+    range: sheetRange("Timeline", `${columnName(headers.indexOf(field) + 1)}${matches[0] + 2}`),
+    values: [[values[field] ?? ""]],
+  }));
+  if (!data.length) return;
+  await sheetsRequest("/values:batchUpdate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ valueInputOption: "RAW", data }),
+  });
+}
+
+export async function assignTripToMonth(tripId, year, month) {
+  validateTimelineMonth(year, month);
+  const trip = await getTripById(String(tripId));
+  if (!trip) throw new Error(`Trip not found: ${tripId}`);
+  return updateTrip(trip.tripId, { timelineMonth: timelineMonthNumber(month), timelineYear: Number(year) });
+}
+
+export async function removeTripFromMonth(tripId, year, month) {
+  const entry = await getTimelineMonth(year, month);
+  const ids = timelineTripIds(entry.tripIds);
+  const id = String(tripId);
+  if (ids.includes(id)) {
+    await updateTimelineMonth(year, month, { tripIds: ids.filter((value) => value !== id) });
+  }
+}
+
+const timelineYearInitializations = new Map();
+let timelineSyncQueue = Promise.resolve();
+
+function hasTimelineValue(value) {
+  return value != null && String(value).trim() !== "";
+}
+
+function validateTripTimeline(trip) {
+  if (hasTimelineValue(trip.timelineYear)) validateTimelineMonth(trip.timelineYear, 1);
+  if (hasTimelineValue(trip.timelineMonth) && !Number.isInteger(timelineMonthNumber(trip.timelineMonth))) {
+    throw new Error("Trip timeline month must be Jan-Dec or a number from 1 to 12.");
+  }
+}
+
+function timelineTripId(trip) {
+  const id = String(trip.id ?? trip.tripId ?? "").trim();
+  if (!id) throw new Error("Missing trip id for Timeline sync.");
+  return id;
+}
+
+function tripHasTimeline(trip) {
+  return hasTimelineValue(trip.timelineMonth) && hasTimelineValue(trip.timelineYear);
+}
+
+export function initializeTimelineYear(year) {
+  validateTimelineMonth(year, 1);
+  const key = Number(year);
+  if (timelineYearInitializations.has(key)) return timelineYearInitializations.get(key);
+  const initialization = (async () => {
+    const { headers } = await timelineTable();
+    const existing = await getTimeline();
+    const months = new Set(existing.filter((entry) => entry.year === key).map((entry) => entry.month));
+    const missing = TIMELINE_MONTHS.flatMap((name, index) => months.has(index + 1) ? [] : [{
+      year: key, month: name.slice(0, 1) + name.slice(1).toLowerCase(),
+      color: "", notes: "", blocks: "", tripIds: "",
+    }]);
+    if (!missing.length) return;
+    const range = encodeURIComponent(sheetRange("Timeline", "A:ZZ"));
+    await sheetsRequest(`/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: missing.map((entry) => headers.map((header) => entry[header] ?? "")) }),
+    });
+  })().finally(() => timelineYearInitializations.delete(key));
+  timelineYearInitializations.set(key, initialization);
+  return initialization;
+}
+
+export async function addTripToTimeline(trip) {
+  if (!tripHasTimeline(trip)) return;
+  validateTripTimeline(trip);
+  const id = timelineTripId(trip);
+  await initializeTimelineYear(trip.timelineYear);
+  const target = (await getTimeline()).find((entry) => timelineKey(entry.year, entry.month) === timelineKey(trip.timelineYear, trip.timelineMonth));
+  const ids = timelineTripIds(target?.tripIds);
+  if (!ids.includes(id)) {
+    await updateTimelineMonth(trip.timelineYear, trip.timelineMonth, { tripIds: [...ids, id] });
+  }
+}
+
+export async function removeTripFromTimeline(trip) {
+  const id = timelineTripId(trip);
+  for (const entry of await getTimeline()) {
+    const ids = timelineTripIds(entry.tripIds);
+    if (ids.includes(id)) await updateTimelineMonth(entry.year, entry.month, { tripIds: ids.filter((value) => value !== id) });
+  }
+}
+
+export async function moveTripInTimeline(oldTrip, updatedTrip) {
+  validateTripTimeline(updatedTrip);
+  const changed = timelineKey(oldTrip.timelineYear, oldTrip.timelineMonth) !== timelineKey(updatedTrip.timelineYear, updatedTrip.timelineMonth);
+  if (changed || !tripHasTimeline(updatedTrip)) {
+    await removeTripFromTimeline(oldTrip);
+  } else {
+    const id = timelineTripId(updatedTrip);
+    const target = timelineKey(updatedTrip.timelineYear, updatedTrip.timelineMonth);
+    for (const entry of await getTimeline()) {
+      const ids = timelineTripIds(entry.tripIds);
+      if (timelineKey(entry.year, entry.month) !== target && ids.includes(id)) {
+        await updateTimelineMonth(entry.year, entry.month, { tripIds: ids.filter((value) => value !== id) });
+      }
+    }
+  }
+  await addTripToTimeline(updatedTrip);
+}
+
+async function syncSavedTripTimeline(oldTrip, updatedTrip) {
+  const operation = timelineSyncQueue.then(async () => {
+    if (hasTimelineValue(updatedTrip.timelineYear)) await initializeTimelineYear(updatedTrip.timelineYear);
+    if (oldTrip) await moveTripInTimeline(oldTrip, updatedTrip);
+    else await addTripToTimeline(updatedTrip);
+  });
+  timelineSyncQueue = operation.catch(() => undefined);
+  try {
+    await operation;
+  } catch (syncError) {
+    throw new Error(`Trip saved, but Timeline sync failed. Retry Save to finish syncing. ${syncError.message}`, { cause: syncError });
+  }
 }
 
 export async function getWorkflowMetadata(tripId) {

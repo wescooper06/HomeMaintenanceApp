@@ -1,0 +1,17 @@
+.month-modal-card { box-sizing: border-box; width: 100%; max-width: 600px; max-height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 24px; border: 2px solid #00847e; border-radius: 8px; background: #fff; box-shadow: 0 8px 28px rgb(25 53 61 / 12%); overflow: hidden; }
+.month-modal-card > header { border-bottom: 1px solid #c7d9da; padding-bottom: 12px; }
+.month-modal-card h1 { margin-top: 8px; }
+.month-modal-card form { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; margin-top: 12px; }
+.month-modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.month-modal-card fieldset { display: grid; gap: 12px; border: 0; min-width: 0; padding: 0; margin: 0; }
+.month-modal-trips { margin-top: 20px; font-size: 13px; }
+.month-modal-trips article { padding: 12px 0; border-bottom: 1px solid #dce6e6; }
+.month-modal-trips article > div { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.month-modal-trips p { margin-top: 4px; color: #5e7880; }
+.month-modal-trip-link { border: 0; padding: 0; background: none; color: #19353d; font: inherit; font-weight: 700; cursor: pointer; text-align: left; }
+.month-modal-unranked { color: #5e7880; font-size: 11px; }
+.month-modal-card .month-modal-assignment { margin-top: 20px; }
+.month-modal-assign-button { justify-self: start; min-height: 36px; padding: 8px 14px; border: 1px solid #00847e; border-radius: 4px; background: #00847e; color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.month-modal-assign-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.month-modal-assignment-notice { margin-top: 10px; color: #00847e; font-size: 13px; }
+@media (max-width: 480px) { .month-modal-card { padding: 16px; } }

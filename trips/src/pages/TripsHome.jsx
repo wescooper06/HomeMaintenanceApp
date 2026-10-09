@@ -212,6 +212,7 @@ export default function TripsHome() {
         <div className="trips-header-actions">
           <button type="button" disabled={deletingTripId !== null} onClick={() => setShowCaptureModal(true)}>+ New Trip</button>
           <button type="button" disabled={deletingTripId !== null} onClick={() => navigate("/prioritize")}>Prioritize Trips</button>
+          <button type="button" disabled={deletingTripId !== null} onClick={() => navigate("/timeline")}>Timeline</button>
         </div>
       </header>
       <section className="trips-filter-toolbar" aria-label="Trip filters">
