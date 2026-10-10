@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:activity-planner": "vite --config activity-planner.vite.config.js",
     "build": "vite build",
+    "build:activity-planner": "vite build --config activity-planner.vite.config.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },

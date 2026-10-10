@@ -2,9 +2,10 @@
   <a href="#dashboard">Dashboard</a>
   <a href="#projects">Projects</a>
   <a href="#tasks">Tasks</a>
-  <a href="#trips">Trips</a>
+  <a href="/trips" onclick="this.href = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'http://127.0.0.1:5173/trips/' : (location.pathname.startsWith('/www/') ? '/www/trips/' : '/trips');">Trips</a>
   <a href="#workbench" id="nav-workbench">Workbench</a>
-  <a href="#planner">Planner</a>
+  <a href="#planner" onclick="this.href = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'http://127.0.0.1:5500/www/#planner' : '#planner';">Planner</a>
+  <a href="/activity-planner" onclick="this.href = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'http://127.0.0.1:5174/activity-planner' : (location.pathname.startsWith('/www/') ? '/www/activity-planner/' : '/activity-planner');">Activities</a>
   <a href="#calendar">Calendar</a>
   <a href="#assets">Assets</a>
   <a href="#settings">Settings</a>
