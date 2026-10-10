@@ -121,7 +121,7 @@ export default function MonthDetailsModal({ month, tripList = [], refreshVersion
           {!loading && <section className="month-modal-trips"><h2>Associated Trips</h2>{assigned.map((trip) => <article key={trip.tripId}>
             <button type="button" className="month-modal-trip-link" disabled={saving || assigning} onClick={() => onTripClick?.(trip)}>{trip.destination}</button><p>{trip.tripType || "Unspecified"}</p>
             <div><span className={`trip-status trip-status-${String(trip.status || "Idea").toLowerCase().replace(/\s/g, "-")}`}>{trip.status || "Idea"}</span>{tripPriority(trip) !== null ? <span className="trip-priority-badge">#{tripPriority(trip)}</span> : <span className="month-modal-unranked">Not prioritized</span>}</div>
-          </article>)}{!assigned.length && <p>No assigned trips.</p>}{assigned.length < ids.length && <p className="timeline-unavailable">Some referenced trips are unavailable.</p>}</section>}
+          </article>)}{!assigned.length && <p>No assigned trips.</p>}</section>}
           <fieldset className="month-modal-assignment" disabled={loading || saving || assigning}>
             <label>Assign or move trip<select value={assignmentTripId} onChange={(event) => { setAssignmentTripId(event.target.value); setAssignmentNotice(""); }}><option value="">Choose a trip</option>{trips.map((trip) => <option key={trip.tripId} value={trip.tripId}>{trip.destination}</option>)}</select></label>
             <button type="button" className="month-modal-assign-button" disabled={!assignmentTripId} onClick={assignTrip}>{assigning ? "Assigning..." : "Assign Trip"}</button>

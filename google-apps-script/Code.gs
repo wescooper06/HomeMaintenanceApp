@@ -1229,6 +1229,10 @@ function doPost(e) {
     const body = JSON.parse(bodyText);
     const action = text(body.action || (e && e.parameter && e.parameter.action) || 'updateProject');
 
+    if (action === 'regenerate' || action === 'regenerateWeeklyGrid') {
+      return handleRegenerateWeeklyGridPost_(e);
+    }
+
     if (action === 'createTrip') {
       const spreadsheetId = text(body.spreadsheetId || (e && e.parameter && e.parameter.spreadsheetId));
       return jsonResponse(createTrip(spreadsheetId, body.trip || body));

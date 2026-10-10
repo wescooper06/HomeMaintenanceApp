@@ -1,0 +1,182 @@
+.calendar {
+  --slot-height: 22px;
+  --gutter-width: 68px;
+  --grid-line: #edebe9;
+  --grid-line-hour: #e1dfdd;
+  --ink: #323130;
+  --muted: #605e5c;
+  --accent: #0f6cbd;
+
+  position: relative;
+  height: 100%;
+  overflow: auto;
+  background: #ffffff;
+  border: 1px solid var(--grid-line-hour);
+  border-radius: 6px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--ink);
+  user-select: none;
+}
+
+.headerRow,
+.body {
+  display: grid;
+  grid-template-columns: var(--gutter-width) repeat(7, minmax(90px, 1fr));
+  min-width: calc(var(--gutter-width) + 7 * 90px);
+}
+
+.headerRow {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #faf9f8;
+  border-bottom: 1px solid var(--grid-line-hour);
+}
+
+.cornerCell {
+  border-right: 1px solid var(--grid-line);
+}
+
+.dayHeader {
+  padding: 8px 10px;
+  border-left: 1px solid var(--grid-line);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.dayShort {
+  display: none;
+}
+
+.timeGutter {
+  border-right: 1px solid var(--grid-line);
+  background: #ffffff;
+}
+
+.timeLabel {
+  height: var(--slot-height);
+  padding-right: 8px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+  transform: translateY(-7px);
+}
+
+.timeLabel:first-child {
+  transform: none;
+}
+
+.dayColumn {
+  position: relative;
+  border-left: 1px solid var(--grid-line);
+}
+
+.slot {
+  height: var(--slot-height);
+  box-sizing: border-box;
+  border-top: 1px dotted var(--grid-line);
+  cursor: cell;
+}
+
+.slot.hourStart {
+  border-top: 1px solid var(--grid-line-hour);
+}
+
+.slot:hover {
+  background: rgba(15, 108, 189, 0.05);
+}
+
+.blockFrame {
+  position: absolute;
+  top: calc(var(--start) * var(--slot-height));
+  height: calc(var(--span) * var(--slot-height));
+  z-index: 1;
+}
+
+.block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  right: 3px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 3px 6px 3px 8px;
+  overflow: hidden;
+  border: 0;
+  border-left: 4px solid rgba(0, 0, 0, 0.22);
+  border-radius: 4px;
+  background: var(--block-color);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 1px rgba(0, 0, 0, 0.1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow 120ms ease, filter 120ms ease;
+}
+
+.block:hover:not(:disabled) {
+  filter: brightness(0.96);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18);
+}
+
+.block:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.block:disabled {
+  cursor: default;
+}
+
+.blockTitle {
+  max-width: 100%;
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.blockTime {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  opacity: 0.85;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Let mouseenter reach the slots underneath blocks while a drag is in progress. */
+.selecting .blockFrame,
+.selecting .block {
+  pointer-events: none;
+}
+
+.selection {
+  position: absolute;
+  top: calc(var(--start) * var(--slot-height));
+  left: 0;
+  right: 0;
+  height: calc(var(--span) * var(--slot-height));
+  z-index: 2;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: rgba(15, 108, 189, 0.18);
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .dayLong {
+    display: none;
+  }
+
+  .dayShort {
+    display: inline;
+  }
+}

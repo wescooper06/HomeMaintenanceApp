@@ -1,0 +1,234 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: hidden;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #323130;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 8px;
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #201f1e;
+}
+
+.closeButton {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 20px;
+  color: #605e5c;
+  cursor: pointer;
+}
+
+.closeButton:hover:not(:disabled) {
+  background: #f3f2f1;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 20px 16px;
+  overflow-y: auto;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.field > span,
+.field > legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field select,
+.field input,
+.field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #8a8886;
+  border-radius: 4px;
+  background: #ffffff;
+  font: inherit;
+  color: inherit;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field select:focus,
+.field input:focus,
+.field textarea:focus {
+  outline: 2px solid #0f6cbd;
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.dayToggles {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.dayToggle {
+  padding: 6px 0;
+  border: 1px solid #c8c6c4;
+  border-radius: 4px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  color: #323130;
+  cursor: pointer;
+}
+
+.dayToggle:hover:not(:disabled) {
+  background: #f3f2f1;
+}
+
+.dayToggleOn,
+.dayToggleOn:hover:not(:disabled) {
+  border-color: #0f6cbd;
+  background: #0f6cbd;
+  color: #ffffff;
+}
+
+.switchField {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.switchField input {
+  width: 16px;
+  height: 16px;
+  accent-color: #0f6cbd;
+}
+
+.hint {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: #605e5c;
+}
+
+.error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #fde7e9;
+  color: #a4262c;
+  font-size: 13px;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid #edebe9;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.primaryButton,
+.secondaryButton,
+.deleteButton {
+  min-width: 80px;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primaryButton {
+  border: 1px solid #0f6cbd;
+  background: #0f6cbd;
+  color: #ffffff;
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: #115ea3;
+}
+
+.secondaryButton {
+  border: 1px solid #8a8886;
+  background: #ffffff;
+  color: #323130;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: #f3f2f1;
+}
+
+.deleteButton {
+  border: 1px solid #a4262c;
+  background: #ffffff;
+  color: #a4262c;
+}
+
+.deleteButton:hover:not(:disabled) {
+  background: #fde7e9;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.deleteButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
+}
