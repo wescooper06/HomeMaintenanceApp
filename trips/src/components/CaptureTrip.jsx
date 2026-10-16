@@ -5,7 +5,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 const DEFAULT_FIELDS = {
   destination: "", startDate: "", endDate: "", tripType: "", status: "Idea",
-  timelineMonth: "", timelineYear: "", notes: "", duration: "", seasonality: "",
+  purpose: "", location: "", timelineMonth: "", timelineYear: "", notes: "", duration: "", seasonality: "",
   costRange: "", considerations: "", tags: "", links: "",
 };
 
@@ -112,11 +112,18 @@ export default function CaptureTrip({ onClose, trip, onSave, expanded = false })
               <div className="capture-pair">
                 <label>Trip Type<select name="tripType" value={fields.tripType} onChange={changeField}>
                   <option value="">None</option>
-                  {[...new Set(["cruise", "road trip", "flight", "other", fields.tripType].filter(Boolean))].map((type) => <option key={type} value={type}>{type}</option>)}
+                  {[...new Set(["cruise", "road trip", "flight", "other", fields.tripType].filter(Boolean))].map((type) => <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>)}
                 </select></label>
                 <label>Status<select name="status" value={fields.status} onChange={changeField}>
                   {[...new Set(["Idea", "Shortlisted", "Active", "Paused", "Deferred", fields.status])].map((status) => <option key={status} value={status}>{status}</option>)}
                 </select></label>
+              </div>
+              <div className="capture-pair">
+                <label>Purpose<select name="purpose" value={fields.purpose} onChange={changeField}>
+                  <option value="">None</option>
+                  {[...new Set(["Business", "Vacation", "Combo", "SAR", "Running", fields.purpose].filter(Boolean))].map((purpose) => <option key={purpose} value={purpose}>{purpose}</option>)}
+                </select></label>
+                {textField("location", "Location")}
               </div>
               <div className="capture-pair">
                 {textField("startDate", "Start Date", "date")}

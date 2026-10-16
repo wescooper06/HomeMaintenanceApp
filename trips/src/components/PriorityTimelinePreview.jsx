@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { assignTripToMonth, getTimeline, getTrips, initializeTimelineYear, propagateTimelineYear } from "../services/sheetsClient.js";
 import { TIMELINE_MONTHS, timelineColor, timelineTripIds } from "../utils/timelineUtils.js";
-import { tripPriority } from "../utils/priorityUtils.js";
+import MonthBox from "./MonthBox.jsx";
 import MonthDetailsModal from "./MonthDetailsModal.jsx";
-import { TimelineDragDrop, TimelineDragTrip, TimelineDropMonth, TimelineDropYear } from "./TimelineDragDrop.jsx";
+import { TimelineDragDrop, TimelineDropMonth, TimelineDropYear } from "./TimelineDragDrop.jsx";
+import TripMarker from "./TripMarker.jsx";
+import TimelineYearRow from "./TimelineYearRow.jsx";
 import "./PriorityTimelinePreview.css";
 
-export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelineRefresh }) {
+export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelineRefresh, refreshVersion = 0 }) {
   const [timeline, setTimeline] = useState([]);
   const [allTrips, setAllTrips] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(null);
@@ -40,7 +42,7 @@ export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelin
     }
     loadYear();
     return () => { active = false; };
-  }, [currentYear, reload]);
+  }, [currentYear, reload, refreshVersion]);
 
   function changeYear(direction) {
     const nextYear = currentYear + direction;
@@ -80,8 +82,9 @@ export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelin
     const id = String(trip.tripId);
     tripMap.set(id, { ...trip, ...tripMap.get(id), priority: trip.priority });
   }
-  const rankedIds = new Set(trips.map((trip) => String(trip.tripId)));
-
+  const measurementKey = TIMELINE_MONTHS.flatMap((_, index) => timelineTripIds(months.get(index + 1)?.tripIds))
+    .map((id) => tripMap.get(id)).filter(Boolean)
+    .map((trip) => [trip.tripId, trip.destination, trip.location, trip.startDate, trip.endDate].join("|")).join(";");
   return <TimelineDragDrop disabled={loading || moving || propagating} onBusyChange={setMoving} onMove={async (tripId, year, month) => {
     await assignTripToMonth(tripId, year, month);
     await refreshData();
@@ -99,7 +102,7 @@ export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelin
     <div className="priority-year-legend" aria-label="Month color legend"><span data-state="IDEAL">Ideal</span><span data-state="CAUTION">Caution</span><span data-state="CONFLICT">Conflict</span></div>
     {loading && <p role="status">Loading timeline...</p>}
     {error && <div className="priority-year-load-error" role="alert"><p>{error}</p><button type="button" disabled={loading || moving || propagating} onClick={() => { setLoading(true); setError(""); setReload((current) => current + 1); }}>Retry year</button></div>}
-    {!loading && <TimelineDropYear year={currentYear} as="div"><div className="priority-year-months timeline-row" aria-label={`Months of ${currentYear}`}>
+    {!loading && <TimelineDropYear year={currentYear} as="div"><TimelineYearRow className="priority-year-months timeline-row" measurementKey={measurementKey} aria-label={`Months of ${currentYear}`}>
       {TIMELINE_MONTHS.map((name, index) => {
         const month = index + 1;
         const entry = months.get(month);
@@ -107,19 +110,13 @@ export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelin
         const associatedTrips = timelineTripIds(entry?.tripIds).map((id) => tripMap.get(id)).filter(Boolean);
         const selected = selectedMonth?.year === currentYear && selectedMonth?.month === month;
         return <TimelineDropMonth key={month} year={currentYear} month={month} className="priority-year-month" data-state={color} data-selected={Boolean(selected)} onClick={() => { setSelectedMonth({ year: currentYear, month }); setShowMonthModal(true); }}>
-          <button type="button" className="priority-year-month-heading" title={`${name} ${currentYear}${color ? `: ${color}` : ""}`} aria-label={`Select ${name} ${currentYear}`} aria-pressed={Boolean(selected)}>{name}</button>
+          <MonthBox month={month} year={currentYear} abbreviation={name} monthNotes={entry?.notes} selected={selected} />
           <div className="priority-year-markers">{associatedTrips.map((trip) => {
-            const status = String(trip.status || "Idea");
-            const priority = tripPriority(trip);
-            return <TimelineDragTrip key={trip.tripId} trip={trip} year={currentYear} month={month} className="priority-year-trip" title={`${trip.destination} / ${status}${priority !== null ? ` / Priority ${priority}` : ""}`} aria-label={`${rankedIds.has(String(trip.tripId)) ? "Select trip" : "Highlight month for"} ${trip.destination}`} onClick={(event) => { event.stopPropagation(); setSelectedMonth({ year: currentYear, month }); if (rankedIds.has(String(trip.tripId))) onSelectTrip(trip.tripId, trip); }}>
-              <strong>{trip.destination}</strong>
-              <span className={`trip-status priority-year-status trip-status-${status.toLowerCase().replace(/\s/g, "-")}`} title={status}><span className="priority-year-status-label">{status}</span><span className="priority-year-status-short" aria-hidden="true">{status.slice(0, 1)}</span></span>
-              {priority !== null && <span className="trip-priority-badge" aria-label={`Priority ${priority}`}>#{priority}</span>}
-            </TimelineDragTrip>;
+            return <TripMarker key={trip.tripId} trip={trip} year={currentYear} month={month} monthName={name} className="priority-year-trip" onClick={(event) => { event.stopPropagation(); setSelectedMonth({ year: currentYear, month }); onSelectTrip(trip.tripId, trip); }} />;
           })}</div>
         </TimelineDropMonth>;
       })}
-    </div></TimelineDropYear>}
+    </TimelineYearRow></TimelineDropYear>}
     {showMonthModal && selectedMonth && <MonthDetailsModal key={`${selectedMonth.year}-${selectedMonth.month}`} month={{ ...timeline.find((entry) => Number(entry.year) === selectedMonth.year && Number(entry.month) === selectedMonth.month), ...selectedMonth }} tripList={[...tripMap.values()]} refreshVersion={timeline} onSave={refreshData} onTripsChange={refreshData} onClose={() => setShowMonthModal(false)} onTripClick={(trip) => { setShowMonthModal(false); onSelectTrip(trip.tripId, trip); }} />}
   </section></TimelineDragDrop>;
 }

@@ -11,6 +11,8 @@ export default function NewTrip() {
     endDate: "",
     tripType: "",
     status: "Active",
+    purpose: "",
+    location: "",
     timelineMonth: "",
     timelineYear: "",
     notes: "",
@@ -59,6 +61,23 @@ export default function NewTrip() {
           <label>
             Trip Type:
             <input name="tripType" value={form.tripType} onChange={handleChange} />
+          </label>
+
+          <label>
+            Purpose:
+            <select name="purpose" value={form.purpose} onChange={handleChange}>
+              <option value="">None</option>
+              <option value="Business">Business</option>
+              <option value="Vacation">Vacation</option>
+              <option value="Combo">Combo</option>
+              <option value="SAR">SAR</option>
+              <option value="Running">Running</option>
+            </select>
+          </label>
+
+          <label>
+            Location:
+            <input name="location" value={form.location} onChange={handleChange} />
           </label>
 
           <label>

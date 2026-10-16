@@ -1,0 +1,8 @@
+.timeline-year-row { --year-marker-height: 56px; min-width: 0; }
+.trip-marker { box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; width: 100%; height: var(--year-marker-height, 56px); min-height: var(--year-marker-height, 56px); max-height: var(--year-marker-height, 56px); padding: 6px 8px; overflow: hidden; border: 0; border-left: 3px solid #00847e; border-bottom: 1px solid #d3e0dd; background: transparent; color: #19353d; font: inherit; text-align: left; cursor: pointer; }
+.trip-marker > span { flex: 0 0 auto; }
+.trip-marker .trip-title, .trip-marker .trip-location, .trip-marker .trip-dates { display: block; width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.trip-marker .trip-title { font-size: 0.85rem; font-weight: 600; line-height: 1.1; }
+.trip-marker .trip-location { color: #374151; font-size: 0.78rem; line-height: 1.1; }
+.trip-marker .trip-dates { color: #6b7280; font-size: 0.75rem; line-height: 1.1; }
+@media (max-width: 600px) { .trip-marker { padding: 5px 2px; } .trip-marker .trip-title { font-size: 0.75rem; } .trip-marker .trip-location { font-size: 0.65rem; } .trip-marker .trip-dates { font-size: 0.62rem; } }

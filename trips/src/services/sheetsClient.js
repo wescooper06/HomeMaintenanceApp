@@ -17,6 +17,22 @@ async function readSheet(sheetName) {
   return { headers: values[0] || [], rows: values.slice(1) };
 }
 
+async function readTripsSheet() {
+  let table = await readSheet("Trips");
+  const missingColumns = ["purpose", "location"].filter((column) => !table.headers.includes(column));
+  if (!missingColumns.length) return table;
+
+  const firstColumn = columnName(table.headers.length + 1);
+  const lastColumn = columnName(table.headers.length + missingColumns.length);
+  const range = encodeURIComponent(sheetRange("Trips", `${firstColumn}1:${lastColumn}1`));
+  await sheetsRequest(`/values/${range}?valueInputOption=RAW`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ majorDimension: "ROWS", values: [missingColumns] }),
+  });
+  return readSheet("Trips");
+}
+
 function rowsToObjects(headers, rows) {
   return rows.filter((row) => row.some((value) => value !== "" && value != null)).map((row) => {
     const record = {};
@@ -37,7 +53,7 @@ async function appendSheetRow(sheetName, headers, row) {
 }
 
 export async function getTrips() {
-  const { headers, rows } = await readSheet("Trips");
+  const { headers, rows } = await readTripsSheet();
   return rowsToObjects(headers, rows).map((row) => ({
     ...row,
     tripId: String(row.tripId ?? row.id ?? ""),
@@ -46,6 +62,8 @@ export async function getTrips() {
     endDate: tripDateValue(row.endDate),
     tripType: row.tripType || "",
     status: row.status || "",
+    purpose: row.purpose || "",
+    location: row.location || "",
     priorityRank: row.priorityRank || "",
     timelineMonth: hasTimelineValue(row.timelineMonth) ? timelineMonthNumber(row.timelineMonth) || row.timelineMonth : "",
     timelineYear: row.timelineYear || "",
@@ -69,12 +87,13 @@ const pendingTimelineCreates = new Set();
 
 export async function createTrip(tripData) {
   validateTripTimeline(tripData);
-  const { headers } = await readSheet("Trips");
-  const sheetTrip = tripFieldsForHeaders(headers, tripData);
+  const { headers } = await readTripsSheet();
+  const tripWithDetails = { ...tripData, purpose: tripData.purpose ?? "", location: tripData.location ?? "" };
+  const sheetTrip = tripFieldsForHeaders(headers, tripWithDetails);
   validateTripColumns(headers, sheetTrip);
   if ((await getTrips()).some((trip) => trip.tripId === tripData.tripId)) {
     if (pendingTimelineCreates.has(String(tripData.tripId))) {
-      await updateTrip(tripData.tripId, tripData);
+      await updateTrip(tripData.tripId, tripWithDetails);
       pendingTimelineCreates.delete(String(tripData.tripId));
       return { tripId: tripData.tripId, result: { recovered: true } };
     }
@@ -106,7 +125,7 @@ function tripFieldsForHeaders(headers, fields) {
 }
 
 export async function updateTrip(tripId, updates) {
-  const { headers, rows } = await readSheet("Trips");
+  const { headers, rows } = await readTripsSheet();
   const idColumn = headers.indexOf(headers.includes("tripId") ? "tripId" : "id");
   if (idColumn < 0) throw new Error("Trips sheet is missing its tripId or id header.");
   const rowIndex = rows.findIndex((row) => String(row[idColumn]) === String(tripId));
