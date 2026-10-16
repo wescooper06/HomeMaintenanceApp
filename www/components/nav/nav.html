@@ -1,12 +1,8 @@
 <nav class="hm-nav" aria-label="Main navigation">
-  <a href="#dashboard">Dashboard</a>
-  <a href="#projects">Projects</a>
-  <a href="#tasks">Tasks</a>
-  <a href="/trips" onclick="this.href = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'http://127.0.0.1:5173/trips/' : (location.pathname.startsWith('/www/') ? '/www/trips/' : '/trips');">Trips</a>
-  <a href="#workbench" id="nav-workbench">Workbench</a>
-  <a href="#planner" onclick="this.href = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'http://127.0.0.1:5500/www/#planner' : '#planner';">Planner</a>
-  <a href="/activity-planner" onclick="this.href = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'http://127.0.0.1:5174/activity-planner' : (location.pathname.startsWith('/www/') ? '/www/activity-planner/' : '/activity-planner');">Activities</a>
-  <a href="#calendar">Calendar</a>
-  <a href="#assets">Assets</a>
-  <a href="#settings">Settings</a>
+  <a id="nav-dashboard" href="#dashboard">Dashboard</a>
+  <a id="nav-workbench" href="#workbench">Workbench</a>
+  <a id="nav-planner" href="#planner">Planner</a>
+  <a id="nav-calendar" href="#calendar">Calendar</a>
+  <a id="nav-activities" href="#activities">Daily Activities</a>
+  <a id="nav-trips" href="/trips" onclick="this.href = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) ? 'http://localhost:5173/trips/' : (location.pathname.startsWith('/www/') ? '/www/trips/' : '/trips');">Trips</a>
 </nav>

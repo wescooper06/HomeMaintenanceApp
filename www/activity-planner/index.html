@@ -4,11 +4,29 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Daily Activity Planner</title>
-    <script type="module" crossorigin src="/activity-planner/assets/index-DXFde7vl.js"></script>
-    <link rel="stylesheet" crossorigin href="/activity-planner/assets/index-BaH6HTpu.css">
+    <script type="module" crossorigin src="/activity-planner/assets/index-DMTqPLGc.js"></script>
+    <link rel="stylesheet" crossorigin href="/activity-planner/assets/index-TjR1Imoe.css">
   </head>
   <body>
+    <div data-main-nav></div>
     <div id="root"></div>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+      (() => {
+        const navBase = ["5173", "5174"].includes(location.port)
+          ? "/components/nav/"
+          : location.pathname.startsWith("/www/") ? "/www/components/nav/" : "/components/nav/";
+        window.HM_NAV_BASE = navBase;
+        const stylesheet = document.createElement("link");
+        stylesheet.rel = "stylesheet";
+        stylesheet.href = `${navBase}nav.css?v=20260727-10`;
+        document.head.appendChild(stylesheet);
+        const script = document.createElement("script");
+        script.src = `${navBase}nav.js?v=20260727-10`;
+        script.onload = () => window.NavComponent.mount("activities").catch((error) => console.error(error));
+        script.onerror = () => console.error("Failed to load shared navigation.");
+        document.head.appendChild(script);
+      })();
+    </script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </body>
 </html>
