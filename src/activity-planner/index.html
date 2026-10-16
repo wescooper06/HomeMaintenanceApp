@@ -6,7 +6,25 @@
     <title>Daily Activity Planner</title>
   </head>
   <body>
+    <div data-main-nav></div>
     <div id="root"></div>
+    <script>
+      (() => {
+        const navBase = ["5173", "5174"].includes(location.port)
+          ? "/components/nav/"
+          : location.pathname.startsWith("/www/") ? "/www/components/nav/" : "/components/nav/";
+        window.HM_NAV_BASE = navBase;
+        const stylesheet = document.createElement("link");
+        stylesheet.rel = "stylesheet";
+        stylesheet.href = `${navBase}nav.css?v=20260727-10`;
+        document.head.appendChild(stylesheet);
+        const script = document.createElement("script");
+        script.src = `${navBase}nav.js?v=20260727-10`;
+        script.onload = () => window.NavComponent.mount("activities").catch((error) => console.error(error));
+        script.onerror = () => console.error("Failed to load shared navigation.");
+        document.head.appendChild(script);
+      })();
+    </script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script type="module" src="./main.jsx"></script>
   </body>

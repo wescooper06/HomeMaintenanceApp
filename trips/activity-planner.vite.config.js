@@ -2,6 +2,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { sharedNavPlugin } from "./shared-nav-plugin.js";
 
 const location = (path) => fileURLToPath(new URL(path, import.meta.url));
 const require = createRequire(import.meta.url);
@@ -9,7 +10,7 @@ const require = createRequire(import.meta.url);
 export default defineConfig(({ command }) => ({
   root: location("../src/activity-planner/"),
   envDir: location("./"),
-  plugins: [react()],
+  plugins: [react(), sharedNavPlugin()],
   base: command === "serve" ? "/" : "/activity-planner/",
   resolve: {
     alias: [

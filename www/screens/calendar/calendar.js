@@ -3,8 +3,6 @@ function initCalendarScreen() {
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
   ].join(" ");
-  const TOKEN_STORAGE_KEY = "hm_google_access_token";
-  const TOKEN_EXPIRY_STORAGE_KEY = "hm_google_access_token_expires_at";
 
   const container = document.getElementById("calendarEvents");
   const statusLabel = document.getElementById("calendarStatus");
@@ -70,102 +68,20 @@ function initCalendarScreen() {
     return ids.size;
   }
 
-  function restoreGoogleTokenFromStorage() {
-    const token = cleanText(window.sessionStorage.getItem(TOKEN_STORAGE_KEY), "");
-    const expiresAt = Number(window.sessionStorage.getItem(TOKEN_EXPIRY_STORAGE_KEY));
-    if (!token) {
-      return;
-    }
-
-    if (Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
-      window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-      window.sessionStorage.removeItem(TOKEN_EXPIRY_STORAGE_KEY);
-      return;
-    }
-
-    window.GOOGLE_ACCESS_TOKEN = token;
-  }
-
-  function persistGoogleToken(token, expiresInSeconds) {
-    if (!token) {
-      return;
-    }
-
-    const seconds = Number(expiresInSeconds);
-    const expiresAt = Number.isFinite(seconds) ? Date.now() + (seconds * 1000) : Date.now() + (50 * 60 * 1000);
-    window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
-    window.sessionStorage.setItem(TOKEN_EXPIRY_STORAGE_KEY, String(expiresAt));
-  }
-
   async function ensureGoogleAccessToken() {
-    const existing = cleanText(window.GOOGLE_ACCESS_TOKEN, "");
-    if (existing) {
-      return existing;
+    try {
+      return await window.Auth.ensureAuthenticated(SCOPES);
+    } catch (error) {
+      return window.Auth.signIn(SCOPES);
     }
-
-    return signInWithGoogle();
   }
 
   function clearGoogleAccessToken() {
-    window.GOOGLE_ACCESS_TOKEN = "";
-    window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-    window.sessionStorage.removeItem(TOKEN_EXPIRY_STORAGE_KEY);
+    window.Auth.signOut();
   }
 
-  function waitForGoogleIdentityServices() {
-    return new Promise((resolve, reject) => {
-      const startedAt = Date.now();
-
-      const check = () => {
-        if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-          resolve();
-          return;
-        }
-
-        if (Date.now() - startedAt > 12000) {
-          reject(new Error("Google Identity Services failed to load."));
-          return;
-        }
-
-        window.setTimeout(check, 120);
-      };
-
-      check();
-    });
-  }
-
-  async function signInWithGoogle() {
-    const clientId = cleanText(window.APP_CONFIG && window.APP_CONFIG.GOOGLE_CLIENT_ID, "");
-    if (!clientId) {
-      throw new Error("Missing GOOGLE_CLIENT_ID in APP_CONFIG.");
-    }
-
-    await waitForGoogleIdentityServices();
-
-    return new Promise((resolve, reject) => {
-      const tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: SCOPES,
-        callback: (tokenResponse) => {
-          if (!tokenResponse || tokenResponse.error) {
-            reject(new Error(cleanText(tokenResponse && tokenResponse.error, "Google authentication failed.")));
-            return;
-          }
-
-          const accessToken = cleanText(tokenResponse.access_token, "");
-          if (!accessToken) {
-            reject(new Error("Google authentication returned no access token."));
-            return;
-          }
-
-          window.GOOGLE_ACCESS_TOKEN = accessToken;
-          persistGoogleToken(accessToken, tokenResponse.expires_in);
-          resolve(accessToken);
-        },
-      });
-
-      tokenClient.requestAccessToken({ prompt: "consent" });
-    });
+  function signInWithGoogle() {
+    return window.Auth.signIn(SCOPES);
   }
 
   function buildMonthRange(monthDate) {
@@ -178,10 +94,7 @@ function initCalendarScreen() {
   }
 
   async function getCalendarEvents(monthDate) {
-    const token = cleanText(window.GOOGLE_ACCESS_TOKEN, "");
-    if (!token) {
-      throw new Error("Missing Google access token.");
-    }
+    const token = await ensureGoogleAccessToken();
 
     const targetMonth = monthDate instanceof Date
       ? monthDate
@@ -204,9 +117,7 @@ function initCalendarScreen() {
     });
 
     if (response.status === 401) {
-      window.GOOGLE_ACCESS_TOKEN = "";
-      window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
-      window.sessionStorage.removeItem(TOKEN_EXPIRY_STORAGE_KEY);
+      clearGoogleAccessToken();
       throw new Error("Google Calendar token expired. Please sign in again.");
     }
 
@@ -1473,9 +1384,7 @@ function initCalendarScreen() {
   }
 
   async function refreshCalendar() {
-    if (!cleanText(window.GOOGLE_ACCESS_TOKEN, "")) {
-      await signInWithGoogle();
-    }
+    await ensureGoogleAccessToken();
 
     await loadGoogleCalendarIntoPage();
     state.lastUpdatedAt = new Date();
@@ -1484,12 +1393,7 @@ function initCalendarScreen() {
   }
 
   async function initializeCalendarPage() {
-    restoreGoogleTokenFromStorage();
-
-    if (!cleanText(window.GOOGLE_ACCESS_TOKEN, "")) {
-      await signInWithGoogle();
-    }
-
+    await ensureGoogleAccessToken();
     await refreshCalendar();
   }
 

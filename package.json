@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node tests/misc-sheet.test.js"
+    "dev": "npm --prefix trips run dev",
+    "test": "node tests/misc-sheet.test.js",
+    "dev:activity-planner": "npm --prefix trips run dev:activity-planner"
   },
   "keywords": [],
   "author": "",

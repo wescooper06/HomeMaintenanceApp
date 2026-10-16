@@ -1,5 +1,5 @@
 // test
-const BUILD_VERSION = "20260822-13";
+const BUILD_VERSION = "20261015-1";
 
 const routes = {
   dashboard: {
@@ -32,29 +32,14 @@ const routes = {
     js: "screens/planner/planner.js",
     init: "initPlannerScreen",
   },
-  projects: {
-    html: "screens/projects/projects.html",
-    css: "screens/projects/projects.css",
-    js: "screens/projects/projects.js",
-    init: "initProjectsScreen",
-  },
   calendar: {
     html: "screens/calendar/calendar.html",
     css: "screens/calendar/calendar.css",
     js: "screens/calendar/calendar.js",
     init: "initCalendarScreen",
   },
-  assets: {
-    html: "screens/assets/assets.html",
-    css: "screens/assets/assets.css",
-    js: "screens/assets/assets.js",
-    init: "initAssetsScreen",
-  },
-  settings: {
-    html: "screens/settings/settings.html",
-    css: "screens/settings/settings.css",
-    js: "screens/settings/settings.js",
-    init: "initSettingsScreen",
+  activities: {
+    redirectTo: "activity-planner/",
   },
 };
 
@@ -70,6 +55,11 @@ function getRouteName() {
 }
 
 function setActiveNav(routeName) {
+  if (window.NavComponent && typeof window.NavComponent.highlightNav === "function") {
+    window.NavComponent.highlightNav(routeName);
+    return;
+  }
+
   document.querySelectorAll(".hm-nav a").forEach((link) => {
     const href = link.getAttribute("href") || "";
     if (href === `#${routeName}`) {
@@ -216,6 +206,17 @@ async function renderRoute() {
         <p><a href="#dashboard">Go to Dashboard</a></p>
       </section>
     `;
+    return;
+  }
+
+  if (route.redirectTo) {
+    if (["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)
+      && window.location.port !== "5174") {
+      window.location.assign(`http://localhost:5174/${route.redirectTo}`);
+      return;
+    }
+    const rootPath = window.location.pathname.startsWith("/www/") ? "/www/" : "/";
+    window.location.assign(`${rootPath}${route.redirectTo}`);
     return;
   }
 
