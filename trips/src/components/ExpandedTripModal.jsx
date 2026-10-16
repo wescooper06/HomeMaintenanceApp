@@ -105,7 +105,7 @@ export default function ExpandedTripModal({ trip, onClose, onSave }) {
             <div role="tabpanel" id="edit-panel-details" aria-labelledby="edit-tab-details" hidden={tab !== "details"}>
               <label>Destination (required)<input name="destination" type="text" value={fields.destination} onChange={changeField} aria-required="true" /></label>
               <div className="capture-pair">
-                <label>Trip Type<select name="tripType" value={fields.tripType} onChange={changeField}><option value="">None</option>{[...new Set(["cruise", "road trip", "flight", "other", fields.tripType].filter(Boolean))].map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+                <label>Trip Type<select name="tripType" value={fields.tripType} onChange={changeField}><option value="">None</option>{[...new Set(["cruise", "road trip", "flight", "other", fields.tripType].filter(Boolean))].map((type) => <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>)}</select></label>
                 <label>Status<select name="status" value={fields.status} onChange={changeField}>{[...new Set(["Idea", "Shortlisted", "Active", "Paused", "Deferred", fields.status])].map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
               </div>
               <div className="capture-pair">{textField("startDate", "Start Date", "date")}{textField("endDate", "End Date", "date")}</div>

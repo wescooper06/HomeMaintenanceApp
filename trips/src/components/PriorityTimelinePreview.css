@@ -19,13 +19,7 @@
 .priority-year-month[data-state="CAUTION"] { border-top-color: #facc15; background: #fefce8; }
 .priority-year-month[data-state="CONFLICT"] { border-top-color: #ef4444; background: #fff1f2; }
 .priority-year-month[data-selected="true"] { outline: 2px solid #00847e; outline-offset: -2px; }
-.priority-year-month-heading { display: block; width: 100%; padding: 0; border: 0; background: none; color: #19353d; font: inherit; font-size: 12px; font-weight: 700; text-align: center; cursor: pointer; }
 .priority-year-markers { display: grid; gap: 6px; min-height: 110px; margin-top: 10px; align-content: start; }
-.priority-year-trip { position: relative; display: grid; justify-items: start; gap: 5px; min-width: 0; width: 100%; padding: 6px 2px; border: 0; border-bottom: 1px solid #d3e0dd; background: none; color: #19353d; font: inherit; font-size: 10px; text-align: left; cursor: pointer; }
-.priority-year-trip strong { display: block; width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.priority-year-trip .trip-status { box-sizing: border-box; max-width: 100%; padding: 3px 4px; font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.priority-year-trip .trip-priority-badge { box-sizing: border-box; max-width: 100%; padding: 2px 4px; font-size: 9px; }
-.priority-year-status-short { display: none; }
 .priority-year-timeline button:focus-visible { outline: 2px solid #00847e; outline-offset: 1px; }
 .prioritize-page > .timeline-dnd { flex: 0 0 clamp(220px, 38%, 280px); min-height: 0; display: flex; flex-direction: column; }
 .prioritize-page .priority-year-timeline { display: flex; flex-direction: column; height: 100%; min-height: 0; margin-top: 0; line-height: 1.3; }
@@ -37,18 +31,14 @@
 .prioritize-page .priority-year-timeline > .timeline-drop-year { flex: 1; min-height: 0; }
 .prioritize-page .priority-year-months { height: 100%; min-height: 0; }
 .prioritize-page .priority-year-month { display: flex; flex-direction: column; min-height: 0; }
-.prioritize-page .priority-year-month-heading { flex-shrink: 0; }
+.prioritize-page .priority-year-month > .month-box-container { flex-shrink: 0; }
 .prioritize-page .priority-year-markers { flex: 1; min-height: 0; margin-top: 6px; overflow-y: auto; overscroll-behavior: contain; }
 @media (max-width: 600px) {
   .priority-year-months { gap: 2px; }
   .priority-year-month { padding: 6px 1px; border-radius: 4px; }
-  .priority-year-month-heading { font-size: 9px; }
+  .priority-year-month .month-abbrev { font-size: 0.7rem; }
+  .priority-year-month .month-notes { font-size: 0.55rem; }
   .priority-year-navigation { gap: 6px; }
   .priority-year-navigation button { font-size: 11px; padding: 6px 4px; gap: 2px; }
   .priority-year-navigation button svg { width: 12px; height: 12px; flex-shrink: 0; }
-  .priority-year-trip { padding: 5px 0; font-size: 9px; }
-  .priority-year-status-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .priority-year-status-short { display: inline; }
-  .priority-year-trip .trip-status { padding: 2px 3px; }
-  .priority-year-trip .trip-priority-badge { padding: 1px 2px; font-size: 8px; }
 }

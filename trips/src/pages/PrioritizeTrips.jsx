@@ -4,11 +4,10 @@ import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, CalendarDays, GripVertical } from "lucide-react";
-import TripDetailsPanel from "../components/TripDetailsPanel.jsx";
+import TripEditorPanel from "../components/TripEditorPanel.jsx";
 import PriorityTimelinePreview from "../components/PriorityTimelinePreview.jsx";
 import { ensureTripPriorityColumn, getTrips, updateTrip } from "../services/sheetsClient.js";
 import { prioritizedTrips, tripPriority } from "../utils/priorityUtils.js";
-import { resolveLinkTitle } from "../utils/resolveLinkTitle.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -41,6 +40,8 @@ export default function PrioritizeTrips() {
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const [timelineSelectedTrip, setTimelineSelectedTrip] = useState(null);
+  const [timelineRefreshVersion, setTimelineRefreshVersion] = useState(0);
+  const [editorBusy, setEditorBusy] = useState(false);
   const rowsRef = useRef([]);
   const timer = useRef(null);
   const pendingOrder = useRef(null);
@@ -67,6 +68,18 @@ export default function PrioritizeTrips() {
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, []);
+
+  useEffect(() => {
+    if (!selectedId || editorBusy) return undefined;
+    function closeOnEscape(event) {
+      if (event.key === "Escape") {
+        setSelectedId(null);
+        setTimelineSelectedTrip(null);
+      }
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selectedId, editorBusy]);
 
   useEffect(() => {
     mounted.current = true;
@@ -163,8 +176,21 @@ export default function PrioritizeTrips() {
     }
   }
 
-  const selectedTrip = rows.find((trip) => trip.tripId === selectedId) || (timelineSelectedTrip?.tripId === selectedId ? timelineSelectedTrip : null) || rows[0];
-  const locked = syncStatus === "loading" || syncStatus === "saving" || syncStatus === "error";
+  const selectedTrip = rows.find((trip) => trip.tripId === selectedId) || (timelineSelectedTrip?.tripId === selectedId ? timelineSelectedTrip : null);
+  const locked = syncStatus === "loading" || syncStatus === "saving" || syncStatus === "error" || editorBusy;
+
+  async function refreshAfterEditorSave(savedTrip) {
+    const loadedTrips = await getTrips();
+    const freshTrips = new Map(loadedTrips.map((trip) => [trip.tripId, trip]));
+    const updatedRows = rowsRef.current.map((trip) => {
+      const fresh = freshTrips.get(trip.tripId);
+      return fresh ? { ...trip, ...fresh, priority: trip.priority } : trip;
+    });
+    rowsRef.current = updatedRows;
+    setRows(updatedRows);
+    setTimelineSelectedTrip((current) => current?.tripId === savedTrip.tripId ? freshTrips.get(savedTrip.tripId) || savedTrip : current);
+    setTimelineRefreshVersion((current) => current + 1);
+  }
 
   return (
     <main ref={page} className="prioritize-page">
@@ -191,11 +217,11 @@ export default function PrioritizeTrips() {
           </DndContext>
           {syncStatus === "ready" && !rows.length && <p className="priority-empty">No prioritized trips.</p>}
         </section>
-        <aside className="priority-details" aria-label="Selected trip details">
-          {selectedTrip ? <TripDetailsPanel key={selectedTrip.tripId} trip={selectedTrip} titleId="priority-trip-title" resolveTitle={resolveLinkTitle} /> : <p className="priority-empty">No trip selected.</p>}
+        <aside className="priority-details" aria-label="Trip editor">
+          <TripEditorPanel key={selectedTrip?.tripId || "empty"} selectedTrip={selectedTrip || null} onClose={() => { if (!editorBusy) { setSelectedId(null); setTimelineSelectedTrip(null); } }} onSave={refreshAfterEditorSave} onBusyChange={setEditorBusy} />
         </aside>
       </div>
-      <PriorityTimelinePreview trips={rows} onSelectTrip={(tripId, trip) => { setSelectedId(tripId); setTimelineSelectedTrip(trip || null); }} onTimelineRefresh={(loadedTrips) => {
+      <PriorityTimelinePreview trips={rows} refreshVersion={timelineRefreshVersion} onSelectTrip={(tripId, trip) => { setSelectedId(tripId); setTimelineSelectedTrip(trip || null); }} onTimelineRefresh={(loadedTrips) => {
         const freshTrips = new Map(loadedTrips.map((trip) => [trip.tripId, trip]));
         const refreshWindow = (trip) => {
           const fresh = freshTrips.get(trip.tripId);

@@ -6,7 +6,7 @@ import "./TripEditorPanel.css";
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DEFAULT_FIELDS = {
   destination: "", startDate: "", endDate: "", tripType: "", status: "Idea",
-  timelineMonth: "", timelineYear: "", notes: "", duration: "", seasonality: "",
+  purpose: "", location: "", timelineMonth: "", timelineYear: "", notes: "", duration: "", seasonality: "",
   costRange: "", considerations: "", tags: "", links: "",
 };
 
@@ -72,7 +72,7 @@ export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyC
       if (!savedTrip) throw new Error("Trip no longer exists.");
       setLoadedTrip(savedTrip);
       setFields(tripFields(savedTrip));
-      onSave?.(savedTrip);
+      await onSave?.(savedTrip);
       setNotice("Trip saved.");
     } catch (saveError) {
       setError(saveError.message || "Unable to save trip.");
@@ -99,8 +99,12 @@ export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyC
         <div role="tabpanel" id="trip-editor-fields-details" aria-labelledby="trip-editor-tab-details" hidden={tab !== "details"}>
           <label>Destination (required)<input name="destination" type="text" value={fields.destination} onChange={changeField} aria-required="true" /></label>
           <div className="capture-pair">
-            <label>Trip Type<select name="tripType" value={fields.tripType} onChange={changeField}><option value="">None</option>{[...new Set(["cruise", "road trip", "flight", "other", fields.tripType].filter(Boolean))].map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+            <label>Trip Type<select name="tripType" value={fields.tripType} onChange={changeField}><option value="">None</option>{[...new Set(["cruise", "road trip", "flight", "other", fields.tripType].filter(Boolean))].map((type) => <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>)}</select></label>
             <label>Status<select name="status" value={fields.status} onChange={changeField}>{[...new Set(["Idea", "Shortlisted", "Active", "Paused", "Deferred", fields.status])].map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
+          </div>
+          <div className="capture-pair">
+            <label>Purpose<select name="purpose" value={fields.purpose} onChange={changeField}><option value="">None</option>{[...new Set(["Business", "Vacation", "Combo", "SAR", "Running", fields.purpose].filter(Boolean))].map((purpose) => <option key={purpose} value={purpose}>{purpose}</option>)}</select></label>
+            {textField("location", "Location")}
           </div>
           <div className="capture-pair">{textField("startDate", "Start Date", "date")}{textField("endDate", "End Date", "date")}</div>
           <div className="capture-pair"><label>Timeline Month<select name="timelineMonth" value={fields.timelineMonth} onChange={changeField}><option value="">None</option>{MONTHS.map((month, index) => <option key={month} value={index + 1}>{month}</option>)}</select></label>{textField("timelineYear", "Timeline Year", "number")}</div>

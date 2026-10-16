@@ -93,10 +93,11 @@ export function TimelineDropYear({ year, children, className = "", as: Element =
   return <Element {...props} ref={setNodeRef} className={`${className} timeline-drop-year`} data-drag-over={isOver} data-drop-year={year}>{children}</Element>;
 }
 
-export function TimelineDropMonth({ year, month, children, className = "", onClick, ...props }) {
+export function TimelineDropMonth({ year, month, children, className = "", onClick, disabled: monthDisabled = false, ...props }) {
   const { disabled } = useContext(TimelineInteraction);
-  const { setNodeRef, isOver } = useDroppable({ id: `month:${timelineKey(year, month)}`, data: { year, month }, disabled });
-  return <section {...props} ref={setNodeRef} className={`${className} timeline-drop-month`} data-drag-over={isOver} data-drop-year={year} data-drop-month={month} onClick={(event) => { if (!disabled) onClick?.(event); }}>{children}</section>;
+  const dropDisabled = disabled || monthDisabled;
+  const { setNodeRef, isOver } = useDroppable({ id: `month:${timelineKey(year, month)}`, data: { year, month }, disabled: dropDisabled });
+  return <section {...props} ref={setNodeRef} className={`${className} timeline-drop-month`} data-drag-over={isOver} data-drop-disabled={monthDisabled} data-drop-year={year} data-drop-month={month} onClick={(event) => { if (!dropDisabled) onClick?.(event); }}>{children}</section>;
 }
 
 export function TimelineDragTrip({ trip, year, month, children, className = "", onClick, ...props }) {
