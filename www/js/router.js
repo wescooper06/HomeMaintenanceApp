@@ -8,12 +8,6 @@ const routes = {
     js: "screens/dashboard/dashboard.js",
     init: "initDashboardScreen",
   },
-  tasks: {
-    html: "screens/tasks/tasks.html",
-    css: "screens/tasks/tasks.css",
-    js: "screens/tasks/tasks.js",
-    init: "initTasksScreen",
-  },
   trips: {
     html: "screens/trips/trips.html",
     css: "screens/trips/trips.css",

@@ -1,5 +1,23 @@
 # React + Vite
 
+## Shared Trips source
+
+Trips pages, components, and assets now live in `../src/pages/Trips/`.
+The Trips Sheets service is `../src/services/tripsService.js`, and its shared
+utilities live in `../src/utils/`. The existing `trips/` package still supplies
+the app entry point, dependencies, and Vite configuration. Run `npm run dev`
+or `npm run build` here as before; its entry imports the relocated source.
+Vite resolves React and Trips UI dependencies from this package for those files.
+
+## Shared Activity Planner source
+
+The standalone Activity Planner entry remains in `../src/activity-planner/`.
+Its page and components now live in `../src/pages/ActivityPlanner/`, its Sheets
+hook and regeneration helper are combined in
+`../src/services/activityPlannerService.js`, and its utilities live in
+`../src/utils/plannerUtils.js`. Run `npm run dev:activity-planner` or
+`npm run build:activity-planner` here as before.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

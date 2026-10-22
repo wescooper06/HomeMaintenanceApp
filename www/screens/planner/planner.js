@@ -68,6 +68,7 @@ function initPlannerScreen() {
   }
 
   const controller = new AbortController();
+  let closeMoveModal = null;
   const state = {
     curatedTasks: [],
     repeatableTasks: [],
@@ -960,6 +961,11 @@ function initPlannerScreen() {
       return "";
     }
 
+    const projectId = cleanText(task.projectId, "");
+    if (projectId) {
+      return projectId;
+    }
+
     const match = id.match(/^(curated|repeatable)-(.+)-(\d{4}-\d{2}-\d{2})-\d+(?:-\d+)?$/);
     if (!match) {
       return cleanText(task.projectId, "");
@@ -1626,20 +1632,17 @@ function initPlannerScreen() {
     return true;
   }
 
-  function shiftTaskWeek(taskId, offsetWeeks) {
+  function moveTaskToDate(taskId, targetDate) {
+    if (!(targetDate instanceof Date) || Number.isNaN(targetDate.getTime())) {
+      return false;
+    }
+
     const existing = findWeeklyTaskById(taskId);
-    const weekOffset = parseNumber(offsetWeeks, 0);
     if (!existing) {
       return false;
     }
 
-    if (!weekOffset) {
-      renderWeekGrid();
-      return true;
-    }
-
-    const newDate = addDaysToDateKey(existing.item.date, weekOffset * 7);
-    const newWeekStartDate = getWeekStartISO(parseDateKey(newDate) || newDate);
+    const newDate = toDateKey(targetDate);
 
     existing.item.date = newDate;
     if (cleanText(existing.item.parentRepeatableId, "")) {
@@ -1650,29 +1653,11 @@ function initPlannerScreen() {
       existing.item.id = buildWeeklyTaskId(taskType, sourceId, newDate);
       existing.item.taskId = existing.item.id;
     }
-    state.planner.weekStartDate = newWeekStartDate;
-    state.selectedCalendarDate = newDate;
-    state.calendarMonthDate = toMonthStartDateKey(newDate);
-
     savePlanner();
     renderTaskPool();
     renderWeekGrid();
-    elements.status.textContent = `Moved "${existing.item.title}" ${weekOffset > 0 ? "forward" : "back"} one week.`;
+    elements.status.textContent = `Moved "${existing.item.title}" to ${newDate} ${existing.item.timeSlot}.`;
     return true;
-  }
-
-  function closeWeekMenus(exceptPicker) {
-    elements.weekGrid.querySelectorAll(".slot-task-week-picker.is-open").forEach((picker) => {
-      if (exceptPicker && picker === exceptPicker) {
-        return;
-      }
-
-      picker.classList.remove("is-open");
-      const menu = picker.querySelector("[data-role='task-week-menu']");
-      if (menu) {
-        menu.hidden = true;
-      }
-    });
   }
 
   function removeTask(taskId) {
@@ -1993,6 +1978,315 @@ function initPlannerScreen() {
       item: state.planner.tasks[index],
       index,
     };
+  }
+
+  function startInlineTextEdit(element, initialValue, label, onSave) {
+    if (element.querySelector("input")) {
+      return;
+    }
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "planner-inline-edit";
+    input.value = initialValue;
+    input.setAttribute("aria-label", label);
+    let finished = false;
+
+    function finish(save) {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      const text = save ? cleanText(input.value, initialValue) : initialValue;
+      element.textContent = text;
+      if (save && cleanText(input.value, "")) {
+        onSave(text);
+      }
+    }
+
+    input.addEventListener("blur", () => finish(true));
+    input.addEventListener("keydown", event => {
+      if (event.isComposing) {
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        finish(event.key === "Enter");
+      }
+    });
+    element.replaceChildren(input);
+    input.focus();
+    input.select();
+  }
+
+  function handleInlineEditDoubleClick(event) {
+    const element = event.target.closest(".slot-task-title, .slot-checklist-text");
+    if (!element) {
+      return;
+    }
+
+    const card = element.closest(".slot-task[data-task-id]");
+    const taskId = card ? card.dataset.taskId : state.activeAdhocChecklist && state.activeAdhocChecklist.taskId;
+    const match = taskId && findWeeklyTaskById(taskId);
+    if (!match) {
+      return;
+    }
+
+    event.preventDefault();
+    if (element.classList.contains("slot-task-title")) {
+      startInlineTextEdit(element, match.item.title, "Task title", title => saveTaskTitleEdit(taskId, title));
+      return;
+    }
+
+    const row = element.closest("[data-checklist-id]");
+    const checklist = Array.isArray(match.item.checklist) ? match.item.checklist : [];
+    const item = row && checklist.find(entry => cleanText(entry.id, "") === row.dataset.checklistId);
+    if (item) {
+      startInlineTextEdit(element, item.text, "Sub-task name", text => updateChecklistItem(taskId, item.id, text));
+    }
+  }
+
+  async function saveTaskTitleEdit(taskId, newTitle) {
+    const match = findWeeklyTaskById(taskId);
+    if (!match) {
+      return false;
+    }
+    const taskType = getWeeklyTaskType(match.item);
+    const isProject = taskType === "project" || taskType === "curated" || match.item.source === "project";
+    const projectId = cleanText(match.item.projectId, "") || parseWeeklySourceId(match.item);
+    const title = cleanText(newTitle, "");
+    if (!title) {
+      return false;
+    }
+    if (isProject) {
+      elements.status.textContent = "Saving master project title...";
+      try {
+        const resolvedId = await resolveTaskMasterProjectId(match.item);
+        if (!resolvedId) {
+          renderWeekGrid();
+          elements.status.textContent = "Project title edit canceled.";
+          return false;
+        }
+        await updateProjectMasterTitle(resolvedId, title);
+        if (resolvedId !== projectId) {
+          match.item.projectId = resolvedId;
+          if (match.item.title === title) {
+            savePlanner();
+            renderWeekGrid();
+          }
+        }
+      } catch (error) {
+        renderWeekGrid();
+        elements.status.textContent = `Title was not saved. ${error.message} Double-click the title to retry.`;
+        console.warn("Master project title update failed", error);
+        return false;
+      }
+    }
+    const saved = updateTaskTitle(taskId, title);
+    if (saved && isProject) {
+      elements.status.textContent = "Project title saved to Planner and master project.";
+    }
+    return saved;
+  }
+
+  function updateTaskTitle(taskId, newTitle) {
+    const match = findWeeklyTaskById(taskId);
+    const title = cleanText(newTitle, "");
+    if (!match || !title) {
+      return false;
+    }
+
+    if (match.item.title === title) {
+      return true;
+    }
+    match.item.title = title;
+    savePlanner();
+    renderWeekGrid();
+    if (state.activeAdhocChecklist) {
+      renderAdhocChecklistModal();
+    }
+    return true;
+  }
+
+  async function resolveTaskMasterProjectId(task) {
+    const id = cleanText(task.projectId, "") || parseWeeklySourceId(task);
+    let projects = window.PlannerStorage.getCachedProjects
+      ? window.PlannerStorage.getCachedProjects()
+      : null;
+    if (!Array.isArray(projects) || !projects.some(project => cleanText(project.id, "") === id)) {
+      projects = await window.loadAllProjects();
+      window.PlannerStorage.setCachedProjects(projects);
+    }
+    if (projects.some(project => cleanText(project.id, "") === id)) {
+      return id;
+    }
+    return selectTaskMasterProject(task, projects);
+  }
+
+  function selectTaskMasterProject(task, projects) {
+    return new Promise(resolve => {
+      const overlay = document.createElement("div");
+      overlay.className = "planner-move-overlay";
+      overlay.innerHTML = `
+        <section class="planner-move-modal" role="dialog" aria-modal="true" aria-labelledby="planner-link-project-title">
+          <header class="planner-move-header">
+            <h2 id="planner-link-project-title">Link Project</h2>
+            <button type="button" class="planner-move-close" data-action="cancel" aria-label="Cancel" title="Cancel">&#215;</button>
+          </header>
+          <p class="planner-link-task-title"></p>
+          <label for="planner-link-project">Master Project</label>
+          <select id="planner-link-project" class="planner-link-project-select"></select>
+          <div class="planner-link-project-actions">
+            <button type="button" data-action="cancel">Cancel</button>
+            <button type="button" data-action="link" disabled>Link and Save</button>
+          </div>
+        </section>
+      `;
+      overlay.querySelector("p").textContent = task.title;
+      const select = overlay.querySelector("select");
+      select.appendChild(new Option("Select a project", ""));
+      const source = normalizeSource(task.source);
+      const candidates = projects.filter(project => !["home", "vehicle", "repeating", "misc"].includes(source)
+        || normalizeSource(project.source) === source);
+      candidates.sort((first, second) => first.title.localeCompare(second.title)).forEach(project => {
+        select.appendChild(new Option(`${project.title} (ID: ${project.id})`, project.id));
+      });
+      const saveButton = overlay.querySelector("[data-action='link']");
+      select.addEventListener("change", () => { saveButton.disabled = !select.value; });
+      let closed = false;
+      const previousFocus = document.activeElement;
+      function close(id) {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        overlay.remove();
+        document.removeEventListener("keydown", onKeyDown, true);
+        window.removeEventListener("hashchange", cancel);
+        if (previousFocus && previousFocus.isConnected) {
+          previousFocus.focus();
+        }
+        resolve(id);
+      }
+      function cancel() {
+        close(null);
+      }
+      function onKeyDown(event) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          cancel();
+        }
+        if (event.key === "Tab") {
+          const controls = [...overlay.querySelectorAll("button:not(:disabled), select")];
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      }
+      overlay.querySelectorAll("[data-action='cancel']").forEach(button => button.addEventListener("click", cancel));
+      saveButton.addEventListener("click", () => {
+        if (select.value) {
+          close(select.value);
+        }
+      });
+      overlay.addEventListener("click", event => { if (event.target === overlay) cancel(); });
+      document.addEventListener("keydown", onKeyDown, true);
+      window.addEventListener("hashchange", cancel);
+      document.body.appendChild(overlay);
+      select.focus();
+    });
+  }
+
+  async function updateProjectMasterTitle(projectId, newTitle) {
+    const id = cleanText(projectId, "");
+    const title = cleanText(newTitle, "");
+    if (!id || !title) {
+      throw new Error("A project ID and title are required to update the master project.");
+    }
+    if (!window.SheetsService || typeof window.SheetsService.updateProjectInSheet !== "function") {
+      throw new Error("Project update service is unavailable.");
+    }
+
+    let projects = window.PlannerStorage.getCachedProjects
+      ? window.PlannerStorage.getCachedProjects()
+      : null;
+    if (!Array.isArray(projects)) {
+      projects = window.ProjectsService && window.ProjectsService.UnifiedProjectList || window.UnifiedProjectList || [];
+    }
+    let project = projects.find(entry => cleanText(entry.id, "") === id);
+    if (!project) {
+      projects = await window.loadAllProjects();
+      project = projects.find(entry => cleanText(entry.id, "") === id);
+    }
+    if (!project) {
+      throw new Error(`Unable to locate master project ${id}. Refresh Planner and retry.`);
+    }
+
+    const updated = {
+      ...project,
+      title,
+      metadata: {
+        ...(project.metadata || {}),
+        _originalTitle: project.title,
+        _originalId: id,
+      },
+    };
+    const result = await window.SheetsService.updateProjectInSheet(updated);
+    if (result && result.ok === false) {
+      throw new Error(cleanText(result.error, "Unable to save the master project title."));
+    }
+
+    const cachedProjects = window.PlannerStorage.getCachedProjects
+      ? window.PlannerStorage.getCachedProjects()
+      : null;
+    const lists = [projects, cachedProjects, window.ProjectsService && window.ProjectsService.UnifiedProjectList, window.UnifiedProjectList];
+    lists.filter(Array.isArray).forEach(list => {
+      list.forEach(entry => {
+        if (cleanText(entry.id, "") === id) {
+          entry.title = title;
+        }
+      });
+    });
+    if (window.PlannerStorage.setCachedProjects) {
+      window.PlannerStorage.setCachedProjects(Array.isArray(cachedProjects) ? cachedProjects : projects);
+    }
+    const view = getProjectById(id);
+    if (view) {
+      view.title = title;
+    }
+    if (window.location.hash.replace("#", "") === "workbench" && typeof window.loadWorkbench === "function") {
+      await window.loadWorkbench();
+    }
+    return true;
+  }
+
+  function updateChecklistItem(taskId, itemId, newText) {
+    const match = findWeeklyTaskById(taskId);
+    const text = cleanText(newText, "");
+    const checklist = match && Array.isArray(match.item.checklist) ? match.item.checklist : [];
+    const item = checklist.find(entry => cleanText(entry.id, "") === cleanText(itemId, ""));
+    if (!item || !text) {
+      return false;
+    }
+
+    if (item.text === text) {
+      return true;
+    }
+    item.text = text;
+    savePlanner();
+    renderWeekGrid();
+    if (state.activeAdhocChecklist) {
+      renderAdhocChecklistModal();
+    }
+    return true;
   }
 
   function toggleChecklistOpen(taskId, day, slot) {
@@ -2654,16 +2948,9 @@ function initPlannerScreen() {
       ? '<button type="button" class="slot-task-series-button" data-action="series-edit" aria-label="Edit recurrence series" title="Edit Series">&#8635;</button>'
       : "";
     const weekPickerMenu = `
-      <div class="slot-task-week-picker">
-        <button type="button" class="slot-task-week-button" data-action="task-week-picker" aria-label="Move task to week" title="Move task to week">
+        <button type="button" class="move-task-icon" data-action="task-move" aria-label="Move Task" title="Move Task">
           <span class="material-symbols-rounded slot-task-week-icon" aria-hidden="true">calendar_month</span>
         </button>
-        <div class="slot-task-week-menu" data-role="task-week-menu" hidden>
-          <button type="button" class="slot-task-week-menu-item" data-action="task-week-shift" data-week-offset="-1">Last Week</button>
-          <button type="button" class="slot-task-week-menu-item" data-action="task-week-shift" data-week-offset="0">This Week</button>
-          <button type="button" class="slot-task-week-menu-item" data-action="task-week-shift" data-week-offset="1">Next Week</button>
-        </div>
-      </div>
     `;
     // Ad-hoc tasks open their checklist in a modal (see openAdhocChecklistModal) rather than the
     // curated/project inline expand-in-card section.
@@ -2683,7 +2970,7 @@ function initPlannerScreen() {
             <span class="slot-task-handle" data-action="weekly-drag-handle" draggable="true" title="Drag to move" aria-label="Drag to move">⋮⋮</span>
             <div class="slot-task-main">
               <div class="slot-task-header">
-                <div class="slot-task-title">${title}</div>
+                <div class="slot-task-title">${escapeHtml(title)}</div>
                 <div class="slot-task-header-actions">
                   ${resourceLinksButton}
                   ${reminderButton}
@@ -2712,11 +2999,11 @@ function initPlannerScreen() {
             <div class="slot-checklist-list">
               ${checklist.length
                 ? checklist.map((entry) => `
-                <div class="slot-checklist-item ${entry.completed ? "is-complete" : ""}" data-checklist-id="${entry.id}">
+                <div class="slot-checklist-item ${entry.completed ? "is-complete" : ""}" data-checklist-id="${escapeHtml(entry.id)}">
                   <span class="slot-checklist-handle" data-action="checklist-drag-handle" draggable="true" aria-label="Drag sub-task" title="Drag to reorder">⋮⋮</span>
-                  <input type="checkbox" data-action="checklist-item-toggle" data-checklist-id="${entry.id}" ${entry.completed ? "checked" : ""} />
-                  <span class="slot-checklist-text">${entry.text}</span>
-                  <button type="button" class="slot-checklist-remove" data-action="checklist-item-remove" data-checklist-id="${entry.id}">X</button>
+                  <input type="checkbox" data-action="checklist-item-toggle" data-checklist-id="${escapeHtml(entry.id)}" ${entry.completed ? "checked" : ""} />
+                  <span class="slot-checklist-text">${escapeHtml(entry.text)}</span>
+                  <button type="button" class="slot-checklist-remove" data-action="checklist-item-remove" data-checklist-id="${escapeHtml(entry.id)}">X</button>
                 </div>
                 `).join("")
                 : '<div class="slot-checklist-empty">No sub-tasks yet.</div>'}
@@ -2737,7 +3024,7 @@ function initPlannerScreen() {
           <span class="slot-task-handle" data-action="weekly-drag-handle" draggable="true" title="Drag to move" aria-label="Drag to move">⋮⋮</span>
           <div class="slot-task-main">
             <div class="slot-task-header">
-              <div class="slot-task-title">${title}</div>
+              <div class="slot-task-title">${escapeHtml(title)}</div>
               <div class="slot-task-header-actions">
                 ${resourceLinksButton}
                 ${reminderButton}
@@ -3555,9 +3842,8 @@ function initPlannerScreen() {
       }
     }, { signal: controller.signal });
 
-    document.addEventListener("click", (event) => {
-      closeWeekMenus(event.target.closest(".slot-task-week-picker"));
-    }, { signal: controller.signal });
+    elements.weekGrid.addEventListener("dblclick", handleInlineEditDoubleClick, { signal: controller.signal });
+    elements.adhocChecklistModal.addEventListener("dblclick", handleInlineEditDoubleClick, { signal: controller.signal });
 
     elements.weekGrid.addEventListener("click", (event) => {
       const weatherButton = event.target.closest("button[data-action='weather-open']");
@@ -3578,7 +3864,6 @@ function initPlannerScreen() {
         const action = cleanText(actionButton.dataset.action, "");
 
         if (action === "reminder-open") {
-          closeWeekMenus();
           const match = findWeeklyTaskById(taskId);
           if (match) {
             openReminderModal(match.item);
@@ -3587,7 +3872,6 @@ function initPlannerScreen() {
         }
 
         if (action === "series-edit") {
-          closeWeekMenus();
           const match = findWeeklyTaskById(taskId);
           const master = match && (findRepeatableMaster(match.item.parentRepeatableId) || {
             id: cleanText(match.item.parentRepeatableId, ""),
@@ -3608,28 +3892,31 @@ function initPlannerScreen() {
           return;
         }
 
-        if (action === "task-week-picker") {
-          const picker = actionButton.closest(".slot-task-week-picker");
-          const menu = picker && picker.querySelector("[data-role='task-week-menu']");
-          if (!picker || !menu) {
-            return;
-          }
-
-          const nextOpen = !picker.classList.contains("is-open");
-          closeWeekMenus(nextOpen ? picker : null);
-          picker.classList.toggle("is-open", nextOpen);
-          menu.hidden = !nextOpen;
-          return;
-        }
-
-        if (action === "task-week-shift") {
-          closeWeekMenus();
-          shiftTaskWeek(taskId, parseNumber(actionButton.dataset.weekOffset, 0));
+        if (action === "task-move") {
+          actionButton.disabled = true;
+          import("./PlannerMoveTaskModal.js").then(({ PlannerMoveTaskModal }) => {
+            const match = findWeeklyTaskById(taskId);
+            if (controller.signal.aborted || !match) {
+              return;
+            }
+            if (closeMoveModal) {
+              closeMoveModal();
+            }
+            actionButton.disabled = false;
+            actionButton.focus({ preventScroll: true });
+            closeMoveModal = PlannerMoveTaskModal({
+              task: match.item,
+              onClose: () => { closeMoveModal = null; },
+              onSelectDate: date => moveTaskToDate(taskId, date),
+            });
+          }).catch(error => {
+            console.error("Unable to open move calendar", error);
+            elements.status.textContent = "Unable to open the move calendar. Please try again.";
+          }).finally(() => { actionButton.disabled = false; });
           return;
         }
 
         if (action === "open-resource-links") {
-          closeWeekMenus();
           const projectId = cleanText(actionButton.dataset.projectId, "");
           const taskIdForLinks = cleanText(actionButton.dataset.taskId, "") || taskId;
           const project = getProjectById(projectId)
@@ -3643,13 +3930,11 @@ function initPlannerScreen() {
         }
 
         if (action === "remove") {
-          closeWeekMenus();
           removeTask(taskId);
           return;
         }
 
         if (action === "adhoc-checklist-open") {
-          closeWeekMenus();
           openAdhocChecklistModal(taskId, day, slot);
           return;
         }
@@ -4008,6 +4293,9 @@ function initPlannerScreen() {
 
     const teardownIfRouteChanges = () => {
       if (window.location.hash.replace("#", "") !== "planner") {
+        if (closeMoveModal) {
+          closeMoveModal();
+        }
         if (state.parkingLotController && typeof state.parkingLotController.destroy === "function") {
           state.parkingLotController.destroy();
           state.parkingLotController = null;
@@ -4066,6 +4354,10 @@ function initPlannerScreen() {
   window.loadPlanner = loadPlanner;
   window.savePlanner = savePlanner;
   window.assignTask = assignTask;
+  window.moveTaskToDate = moveTaskToDate;
+  window.updateTaskTitle = updateTaskTitle;
+  window.updateProjectMasterTitle = updateProjectMasterTitle;
+  window.updateChecklistItem = updateChecklistItem;
   window.removeTask = removeTask;
   window.shiftPlannerWeek = shiftPlannerWeek;
   window.openReminderModal = openReminderModal;

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import DailyActivityPlanner from "./DailyActivityPlanner.jsx";
+import DailyActivityPlanner from "../pages/ActivityPlanner/DailyActivityPlanner.jsx";
 import { connectGoogleSheets, hasSheetsAccess } from "../services/googleSheetsClient.js";
-import styles from "./DailyActivityPlanner.module.css";
+import styles from "../pages/ActivityPlanner/DailyActivityPlanner.module.css";
 
 export default function App() {
   const [connected, setConnected] = useState(hasSheetsAccess);
