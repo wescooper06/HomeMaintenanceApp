@@ -710,12 +710,10 @@
         const rows = tab && Array.isArray(tab.rows) ? tab.rows : [];
 
         let row = null;
-        if (expectedRowNumber > 0) {
-          row = rows.find((entry) => Number(entry && entry._rowNumber || 0) === expectedRowNumber) || null;
-        }
-
-        if (!row && expectedId) {
+        if (expectedId) {
           row = findRowById(rows, expectedId);
+        } else if (expectedRowNumber > 0) {
+          row = rows.find((entry) => Number(entry && entry._rowNumber || 0) === expectedRowNumber) || null;
         }
 
         if (row) {

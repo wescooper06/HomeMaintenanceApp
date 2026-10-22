@@ -1,0 +1,102 @@
+.screen {
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, #dbe3ec);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+}
+
+.muted {
+  color: var(--muted, #6b7280);
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.header p {
+  margin: 0.35rem 0 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+  margin-top: 1rem;
+}
+
+.stat {
+  border: 1px solid #d8e4f2;
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+  border-radius: 12px;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.statTitle {
+  margin: 0;
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.stat h2 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.linkButton {
+  border: 1px solid #0f766e;
+  color: #0f766e;
+  background: #ffffff;
+  border-radius: 999px;
+  padding: 0.42rem 0.72rem;
+  width: fit-content;
+  font: inherit;
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  background: #eefaf8;
+}
+
+.upcoming {
+  margin-top: 1rem;
+}
+
+.upcoming h2 {
+  margin: 0 0 0.65rem;
+  font-size: 1.1rem;
+}
+
+.upcomingList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.upcomingItem {
+  border: 1px solid #dbe3ec;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.upcomingMeta {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.upcomingEmpty {
+  border: 1px dashed #c9d7e8;
+  border-radius: 10px;
+  padding: 0.7rem;
+  color: #6b7280;
+}

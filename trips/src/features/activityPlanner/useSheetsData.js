@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { SPREADSHEET_ID, columnName, sheetRange, sheetsApiRequest } from "../../services/sheetsClient.js";
+import { SPREADSHEET_ID, columnName, sheetRange, sheetsApiRequest } from "../../../../src/services/tripsService.js";
 import { createRuleId, formatDays, minutesToTime, parseDays, timeToMinutes } from "./plannerUtils.js";
 
 const ACTIVITY_SPREADSHEET_ID = import.meta.env.VITE_ACTIVITY_SPREADSHEET_ID || SPREADSHEET_ID;

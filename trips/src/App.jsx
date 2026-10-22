@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Route, Routes } from "react-router-dom";
-import NewTrip from "./pages/NewTrip.jsx";
-import TripDetails from "./pages/TripDetails.jsx";
-import TripsHome from "./pages/TripsHome.jsx";
-import PrioritizeTrips from "./pages/PrioritizeTrips.jsx";
-import TimelineView from "./pages/TimelineView.jsx";
-import { connectGoogleSheets, hasSheetsAccess } from "./services/sheetsClient.js";
+import NewTrip from "../../src/pages/Trips/NewTrip.jsx";
+import TripDetails from "../../src/pages/Trips/TripDetails.jsx";
+import TripsHome from "../../src/pages/Trips/TripsHome.jsx";
+import PrioritizeTrips from "../../src/pages/Trips/PrioritizeTrips.jsx";
+import TimelineView from "../../src/pages/Trips/TimelineView.jsx";
+import { connectGoogleSheets, hasSheetsAccess } from "../../src/services/tripsService.js";
 
 export default function App() {
   const [connected, setConnected] = useState(hasSheetsAccess);

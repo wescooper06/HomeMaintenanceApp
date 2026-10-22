@@ -1,0 +1,63 @@
+.screen { height: calc(100vh - 24px); box-sizing: border-box; overflow: auto; padding: 1rem; border: 1px solid var(--border, #dbe3ec); border-radius: 14px; background: var(--surface, #fff); box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05); }
+.muted { color: var(--muted, #64748b); }
+.header { display: flex; justify-content: space-between; gap: 20px; align-items: end; padding-bottom: 12px; }
+.header h1 { margin: 0; font-size: 2rem; }
+.kicker { margin: 0 0 4px; color: #0f766e; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
+.status, .count { color: #64748b; font-size: 0.8rem; }
+.container { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: calc(100% - 118px); min-height: 0; }
+.panel { min-width: 0; min-height: 0; overflow-y: auto; padding: 16px; border: 1px solid #dbe3ec; border-radius: 10px; background: #f8fbff; }
+.panelHeader { display: flex; justify-content: space-between; gap: 12px; align-items: center; position: sticky; top: -16px; z-index: 1; padding: 0 0 12px; background: #f8fbff; }
+.panelHeader h2 { margin: 0 0 3px; font-size: 1.1rem; }
+.filterBar { display: grid; grid-template-columns: minmax(110px, 0.8fr) repeat(4, minmax(110px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.filterBar > label, .filterField { position: relative; display: grid; gap: 3px; color: #475569; font-size: 0.75rem; }
+.filterBar input, .filterBar select { min-width: 0; min-height: 34px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px; background: #fff; font: inherit; }
+.multiSelect { position: relative; min-width: 0; }
+.multiSelect summary { display: flex; align-items: center; min-height: 34px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px; background: #fff; cursor: pointer; list-style: none; }
+.multiSelect summary::-webkit-details-marker { display: none; }
+.multiSelect summary::after { content: "\25be"; margin-left: auto; color: #64748b; }
+.multiSelect[open] summary { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.multiSelectOptions { display: none; }
+.multiSelect[open] .multiSelectOptions { position: absolute; z-index: 5; top: 100%; left: 0; right: 0; display: grid; max-height: 220px; overflow: auto; border: 1px solid #cbd5e1; border-top: 0; border-bottom-right-radius: 6px; border-bottom-left-radius: 6px; padding: 5px 8px; background: #fff; }
+.multiSelectOptions label { display: flex; align-items: center; gap: 6px; padding: 4px 0; color: #334155; font-size: 0.8rem; }
+.multiSelectOptions input { width: auto; min-height: auto; margin: 0; padding: 0; }
+.primary, .quiet, .action { border: 1px solid #0f766e; border-radius: 6px; padding: 7px 10px; background: #0f766e; color: #fff; font: inherit; cursor: pointer; }
+.quiet { background: #fff; color: #0f766e; }
+.list { display: grid; gap: 9px; }
+.taskSection + .taskSection { margin-top: 16px; padding-top: 14px; border-top: 1px solid #dbe3ec; }
+.taskSection h3 { margin: 0 0 8px; font-size: 0.9rem; }
+.card { border: 1px solid #dbe3ec; border-radius: 8px; padding: 11px; background: #fff; }
+.card h3, .card h4 { margin: 0 0 8px; font-size: 0.98rem; }
+.cardTitle { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+.projectId { font-weight: 700; white-space: nowrap; }
+.orderPill { border: 1px solid #0f766e; border-radius: 999px; padding: 2px 7px; color: #115e59; background: #ecfeff; font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 5px 10px; color: #475569; font-size: 0.82rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.action.danger { border-color: #dc2626; background: #fff; color: #b91c1c; }
+.screen button:disabled { opacity: 0.6; cursor: not-allowed; }
+.skeleton { height: 92px; border-radius: 8px; background: linear-gradient(90deg, #e8eef5 25%, #f7fafc 50%, #e8eef5 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (max-width: 900px) { .screen { height: auto; overflow: visible; } .header { align-items: start; flex-direction: column; } .container { grid-template-columns: 1fr; height: auto; } .panel { max-height: 70vh; } .filterBar { grid-template-columns: repeat(2, minmax(120px, 1fr)); } }
+.modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(15, 23, 42, 0.45); }
+.modalCard { width: min(760px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; padding: 18px; border-radius: 10px; background: #fff; box-shadow: 0 20px 50px rgba(15, 23, 42, 0.22); box-sizing: border-box; }
+.modalHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.modalHeader h2 { margin: 0; font-size: 1.15rem; }
+.modalHeader button { border: 1px solid #cbd5e1; background: #fff; border-radius: 5px; cursor: pointer; }
+.modal form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.editGrid { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, 1fr); gap: 12px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.modal label { display: grid; gap: 5px; min-width: 0; color: #475569; font-size: 0.82rem; }
+.modal .checkbox { display: flex; grid-column: 1 / -1; align-items: center; gap: 7px; min-height: 34px; }
+.modal .checkbox input { width: auto; min-height: auto; }
+.repeatingControls { grid-column: 1 / -1; display: flex; align-items: end; gap: 18px; }
+.repeatingControls .checkbox { grid-column: auto; }
+.repeatingControls > label:not(.checkbox) { width: min(176px, 100%); }
+.modal input, .modal select, .modal textarea { width: 100%; min-height: 34px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px; background: #fff; color: #0f172a; font: inherit; }
+.modal textarea { min-height: 72px; resize: vertical; }
+.modal select { appearance: auto; cursor: pointer; }
+.modalActions { grid-column: 1 / -1; display: flex; justify-content: end; gap: 8px; margin-top: 5px; }
+.modalActions button { border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 10px; background: #fff; cursor: pointer; }
+.modalActions .primary { border-color: #0f766e; background: #0f766e; color: #fff; }
+@media (max-width: 760px) { .editGrid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .modal form, .editGrid { grid-template-columns: 1fr; } .modalActions { grid-column: auto; } }
+.agentCommandBar { display: flex; gap: 12px; margin: 0 0 14px; padding: 12px; border: 1px solid #dbe3ec; border-radius: 10px; background: #f8fbff; }
+.agentInput { flex: 1 1 auto; min-width: 0; min-height: 36px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; background: #fff; font: inherit; }
+.agentResponse { margin: 0 0 14px; color: #0f172a; font-size: 0.9rem; }
