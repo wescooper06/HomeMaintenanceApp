@@ -12,7 +12,11 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0"
+  },
   "dependencies": {
+    "@supabase/supabase-js": "^2.0.0",
     "@capacitor/android": "^8.5.1",
     "@capacitor/cli": "^8.4.2",
     "@capacitor/core": "^8.4.2"

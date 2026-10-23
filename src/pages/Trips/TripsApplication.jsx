@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Route, Routes } from "react-router-dom";
-import NewTrip from "../../src/pages/Trips/NewTrip.jsx";
-import TripDetails from "../../src/pages/Trips/TripDetails.jsx";
-import TripsHome from "../../src/pages/Trips/TripsHome.jsx";
-import PrioritizeTrips from "../../src/pages/Trips/PrioritizeTrips.jsx";
-import TimelineView from "../../src/pages/Trips/TimelineView.jsx";
-import { connectGoogleSheets, hasSheetsAccess } from "../../src/services/tripsService.js";
+import NewTrip from "./NewTrip.jsx";
+import TripDetails from "./TripDetails.jsx";
+import TripsHome from "./TripsHome.jsx";
+import PrioritizeTrips from "./PrioritizeTrips.jsx";
+import TimelineView from "./TimelineView.jsx";
+import { connectGoogleSheets, hasSheetsAccess } from "../../services/tripsService.js";
 
-export default function App() {
+export default function TripsApplication({ home = false }) {
   const [connected, setConnected] = useState(hasSheetsAccess);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
@@ -37,6 +37,8 @@ export default function App() {
       </main>
     );
   }
+
+  if (home) return <TripsHome />;
 
   return (
     <Routes>

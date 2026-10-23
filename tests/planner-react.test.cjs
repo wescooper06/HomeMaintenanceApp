@@ -11,10 +11,36 @@ const source = fs.readFileSync(path.join(root, "src", "services", "plannerServic
 const serviceAst = espree.parse(source, { ecmaVersion: "latest", sourceType: "module" });
 const exportsList = serviceAst.body.filter((node) => node.type === "ExportNamedDeclaration").flatMap((node) =>
   node.declaration.type === "VariableDeclaration" ? node.declaration.declarations.map((entry) => entry.id.name) : [node.declaration.id.name]);
-const servicePromise = Promise.resolve(vm.runInThisContext(`(() => {
-  ${source.replace(/^export /gm, "")}
+const persistenceAdapter = new Proxy({}, {
+  get: (_, key) => (...args) => {
+    if (key === "getProjects") return window.loadAllProjects();
+    if (key === "loadPlannerState") return window.PlannerStorage.getWeeklyPlanner().then((planner) =>
+      ({ weekStartDate: planner.weekStartDate, weeklyTasks: planner.tasks }));
+    if (key === "getRepeatableOverrides") return Promise.resolve(JSON.parse(localStorage.getItem("hm_repeatable_tasks") || "[]"));
+    if (key === "saveRepeatableOverrides") {
+      localStorage.setItem("hm_repeatable_tasks", JSON.stringify(args[0]));
+      return Promise.resolve();
+    }
+    if (key === "updateProject") return window.SheetsService.updateProjectInSheet(...args);
+    if (key === "getCuratedTasks") return Promise.resolve(JSON.parse(localStorage.getItem("hm_planner_curated_tasks") || "[]"));
+    if (key === "saveCuratedTasks") {
+      localStorage.setItem("hm_planner_curated_tasks", JSON.stringify(args[0]));
+      return Promise.resolve();
+    }
+    if (key === "getStagedTasks") return Promise.resolve(
+      JSON.parse(localStorage.getItem("hm_weekly_planner_queue") || "[]").map((item, index) => ({ id: String(index), item }))
+    );
+    if (key === "deleteStagedTasks") {
+      localStorage.removeItem("hm_weekly_planner_queue");
+      return Promise.resolve();
+    }
+    return window.PlannerStorage[key](...args);
+  },
+});
+const servicePromise = Promise.resolve(vm.runInThisContext(`((plannerStorage) => {
+  ${source.replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "")}
   return { ${exportsList.join(",")} };
-})()`, { filename: "plannerService.test-module.js" }));
+})`, { filename: "plannerService.test-module.js" })(persistenceAdapter));
 const legacySource = fs.readFileSync(path.join(root, "www", "screens", "planner", "planner.js"), "utf8");
 const legacyAst = espree.parse(legacySource, { ecmaVersion: "latest", range: true });
 const declarations = legacyAst.body.find((node) => node.type === "FunctionDeclaration" && node.id.name === "initPlannerScreen")
@@ -83,8 +109,15 @@ async function setup(initial, projects = [], seed = {}) {
 }
 
 function comparable(state) {
-  return clone({ planner: state.planner, curatedTasks: state.curatedTasks, repeatableTasks: state.repeatableTasks,
-    overrides: [...state.repeatableOverrideMap.entries()] });
+  const legacySeries = (item) => {
+    const { interval, weekdays, ...rest } = item;
+    void interval;
+    void weekdays;
+    return rest;
+  };
+  return clone({ planner: state.planner, curatedTasks: state.curatedTasks,
+    overrides: [...state.repeatableOverrideMap.entries()].map(([id, item]) => [id, legacySeries(item)]),
+    repeatableTasks: state.repeatableTasks.map(legacySeries) });
 }
 
 test("weekly moves, completion, checklists and ad-hoc removal match legacy transitions", async () => {
@@ -206,7 +239,7 @@ test("staging deduplication, curated limit and repeatable scheduling match legac
     environment.local.set("hm_weekly_planner_queue", JSON.stringify(queue));
     legacy.consumeStagedQueue();
     environment.local.set("hm_weekly_planner_queue", JSON.stringify(queue));
-    controller.actions.consumeStagedQueue();
+    await controller.actions.consumeStagedQueue();
     assert.deepEqual(comparable(controller.getSnapshot()), comparable(sandbox.state));
     assert.equal(controller.getSnapshot().curatedTasks.length, 8);
     assert.equal(controller.getSnapshot().planner.tasks[0].date, "2026-10-19");
@@ -267,12 +300,12 @@ test("late initialization cannot overwrite the current mount or leak subscriptio
   assert.equal(environment.changes.size, 0);
 });
 
-test("pending Sheets writes never delay local snapshots or mutate an earlier snapshot", async () => {
+test("pending remote writes never delay React snapshots or mutate an earlier snapshot", async () => {
   const { controller } = await setup({ weekStartDate: "2026-10-19", tasks: [] });
   const writes = [];
   const completions = [];
   window.PlannerStorage.saveWeeklyPlannerState = (planner) => {
-    writes.push(planner);
+    writes.push(clone(planner));
     return new Promise((resolve) => completions.push(resolve));
   };
   try {

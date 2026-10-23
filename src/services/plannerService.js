@@ -1,4 +1,5 @@
 // Planner data normalization and state transitions retain the legacy storage contracts.
+import { plannerStorage } from "./plannerSupabaseStorage.js";
 
 export const DAY_ORDER = [
   { key: "mon", label: "Mon" },
@@ -497,9 +498,28 @@ export function getOccurrenceDatesInRange(master, rangeStart, rangeEnd) {
   }
 
   const recurrence = normalizeRecurrence(master.recurrence);
+  const interval = master.interval ?? 1;
+  if (!Number.isSafeInteger(interval) || interval < 1) {
+    throw new Error("Recurrence interval must be a positive integer.");
+  }
+  if (["weekly", "biweekly"].includes(recurrence) && master.weekdays?.length) {
+    const dates = new Set();
+    for (const weekday of master.weekdays) {
+      const day = FULL_DAY_NAMES.find((name) => name.slice(0, 3).toLowerCase() === String(weekday).toLowerCase().slice(0, 3));
+      if (!day) throw new Error(`Unknown recurrence weekday ${weekday}.`);
+      let anchor = alignDateToSeriesDay(startDate, day);
+      // Weekday rules are anchored to the start week, not to each day's first
+      // appearance after startDate (which would shift interval > 1 patterns).
+      const candidates = getOccurrenceDatesInRange({
+        ...master, startDate: anchor, baseDay: day, weekdays: [],
+      }, startDate > rangeStart ? startDate : rangeStart, rangeEnd);
+      candidates.forEach((date) => dates.add(date));
+    }
+    return [...dates].sort();
+  }
   const occurrences = [];
   for (let index = 0; index < 10000; index += 1) {
-    const occurrenceDate = addRecurrenceInterval(startDate, recurrence, index, master);
+    const occurrenceDate = addRecurrenceInterval(startDate, recurrence, index * interval, master);
     if (!occurrenceDate || occurrenceDate > rangeEnd) {
       break;
     }
@@ -556,31 +576,10 @@ export function formatReminderTime(sendAt) {
   return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-let adaptersPromise;
-
 export function ensurePlannerAdapters() {
-  if (window.APP_CONFIG && window.PlannerStorage && window.ProjectsService && window.SheetsService) return Promise.resolve();
-  if (!adaptersPromise) {
-    adaptersPromise = (async () => {
-      await import("../../www/js/app-config.js");
-      await import("../../www/js/utils/uuid.js");
-      await import("../../www/js/services/sheets.service.js");
-      await import("../../www/js/services/projects.service.js");
-      await import("../../www/js/services/planner-storage.service.js");
-    })().catch((error) => {
-      adaptersPromise = null;
-      throw new Error("Unable to load Planner persistence services.", { cause: error });
-    });
-  }
-  return adaptersPromise;
+  return Promise.resolve();
 }
 
-const STORAGE_KEYS = {
-  curatedTasks: "hm_planner_curated_tasks",
-  planner: "hm_weekly_planner",
-  staged: "hm_weekly_planner_queue",
-  repeatable: "hm_repeatable_tasks",
-};
 const CURATED_TASK_LIMIT = 8;
 const WEATHER_LOCATION = { name: "Mirrormont, WA", latitude: "47.4810", longitude: "-121.9960" };
 const WEATHER_FALLBACK_ICON = "\u26c5";
@@ -1020,24 +1019,18 @@ export function createPlannerController() {
     timers.add(timer);
     return timer;
   }
-  function savePlanner() {
-    state.gridRevision += 1;
-    const saved = structuredClone(state.planner);
+  function trackWrite(write) {
     pendingWrites += 1;
-    let write;
-    try {
-      // The adapter saves locally immediately and owns the ordered Sheets queue.
-      write = Promise.resolve(window.PlannerStorage.saveWeeklyPlannerState(saved));
-    } catch (error) {
-      pendingWrites -= 1;
-      throw error;
-    }
-    const handled = write.catch((error) => {
+    const handled = Promise.resolve(write).catch((error) => {
       persistenceError = error;
       report(error);
     }).finally(() => { pendingWrites -= 1; });
     persistence = Promise.all([persistence, handled]).then(() => undefined);
     return write;
+  }
+  function savePlanner() {
+    state.gridRevision += 1;
+    return trackWrite(plannerStorage.saveWeeklyPlannerState(state.planner));
   }
   function hideCuratedWarning() {
     if (warningTimer) { clearTimeout(warningTimer); timers.delete(warningTimer); }
@@ -1208,18 +1201,11 @@ export function createPlannerController() {
   }
 
   function loadRepeatableOverrides() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.repeatable);
-      const parsed = JSON.parse(raw || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      console.warn("Failed to read repeatable task overrides", error);
-      return [];
-    }
+    return plannerStorage.getRepeatableOverrides();
   }
 
   function saveRepeatableOverrides(items) {
-    localStorage.setItem(STORAGE_KEYS.repeatable, JSON.stringify(items));
+    trackWrite(plannerStorage.saveRepeatableOverrides(items));
   }
 
   function persistRepeatableMaster(master) {
@@ -1240,6 +1226,8 @@ export function createPlannerController() {
       baseBucket: cleanText(master.baseBucket, existing.baseBucket || "Morning"),
       startDate: cleanText(master.startDate, existing.startDate || ""),
       originalStartDate: cleanText(master.originalStartDate, existing.originalStartDate || master.startDate || ""),
+      interval: master.interval ?? existing.interval ?? 1,
+      weekdays: master.weekdays || existing.weekdays || [],
       active: master.active !== false,
       removedFromPlanner: master.active === false,
     };
@@ -1301,14 +1289,8 @@ export function createPlannerController() {
   }
 
   function loadCuratedTasks() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEYS.curatedTasks);
-      const parsed = JSON.parse(raw || "[]");
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-
-      return parsed.map((task, index) => ({
+    return plannerStorage.getCuratedTasks().then((items) =>
+      items.map((task, index) => ({
         taskId: cleanText(task.taskId, `task-${index + 1}`),
         projectId: cleanText(task.projectId, ""),
         title: cleanText(task.title, "Untitled Task"),
@@ -1317,16 +1299,13 @@ export function createPlannerController() {
         recurrence: cleanText(task.recurrence, ""),
         priority: parseNumber(task.priority, 3),
         order: parseNumber(task.order, index + 1),
-      }));
-    } catch (error) {
-      console.warn("Failed to read curated tasks", error);
-      return [];
-    }
+      })));
   }
 
   async function loadPlanner() {
     const weekStartDate = getWeekStartISO(new Date());
-    const storedPlanner = await window.PlannerStorage.getWeeklyPlanner();
+    const loaded = await plannerStorage.loadPlannerState();
+    const storedPlanner = { weekStartDate: loaded.weekStartDate, tasks: loaded.weeklyTasks };
     const safePlanner = buildEmptyPlanner(cleanText(storedPlanner && storedPlanner.weekStartDate, weekStartDate));
     safePlanner.tasks = (storedPlanner && Array.isArray(storedPlanner.tasks) ? storedPlanner.tasks : [])
       .map((item) => normalizeWeeklyTask(item, cleanText(item.date, safePlanner.weekStartDate), cleanText(item.timeSlot || item.slot, "morning")))
@@ -1335,7 +1314,7 @@ export function createPlannerController() {
   }
 
   function saveCuratedTasks() {
-    localStorage.setItem(STORAGE_KEYS.curatedTasks, JSON.stringify(state.curatedTasks));
+    return trackWrite(plannerStorage.saveCuratedTasks(state.curatedTasks));
   }
 
   function getVisibleDateForDay(dayKey) {
@@ -1671,16 +1650,15 @@ export function createPlannerController() {
     const token = generation;
     try {
       await ensurePlannerAdapters();
-      const projects = await window.loadAllProjects();
+      const projects = await plannerStorage.getProjects();
       if (destroyed || token !== generation) return;
       state.allProjects = (projects || []).map(toProjectView);
-      window.PlannerStorage.setCachedProjects(projects || []);
-      const taskManagerTasks = window.PlannerStorage && typeof window.PlannerStorage.getTaskManager === "function"
-        ? await window.PlannerStorage.getTaskManager()
-        : [];
+      plannerStorage.setCachedProjects(projects || []);
+      const taskManagerTasks = await plannerStorage.getTaskManager();
       if (destroyed || token !== generation) return;
 
-      const overrides = loadRepeatableOverrides();
+      const overrides = await loadRepeatableOverrides();
+      if (destroyed || token !== generation) return;
       const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
       state.repeatableOverrideMap = overrideMap;
 
@@ -1705,6 +1683,8 @@ export function createPlannerController() {
             baseBucket: cleanText(override.baseBucket, ""),
             startDate: cleanText(override.startDate, ""),
             originalStartDate: cleanText(override.originalStartDate, override.startDate || ""),
+            interval: override.interval ?? 1,
+            weekdays: override.weekdays || [],
             active: override.active !== false && override.removedFromPlanner !== true,
             priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
             order: parseNumber(override.order, parseNumber(project.order, index + 1)),
@@ -1756,7 +1736,7 @@ export function createPlannerController() {
       if (destroyed || token !== generation) return;
       console.warn("Failed to load repeatable tasks", error);
       setStatus(`Unable to load repeatable tasks. ${error.message}`);
-      state.repeatableTasks = [];
+      throw error;
     }
   }
 
@@ -1836,12 +1816,10 @@ export function createPlannerController() {
 
   async function resolveTaskMasterProjectId(task) {
     const id = cleanText(task.projectId, "") || parseWeeklySourceId(task);
-    let projects = window.PlannerStorage.getCachedProjects
-      ? window.PlannerStorage.getCachedProjects()
-      : null;
+    let projects = plannerStorage.getCachedProjects();
     if (!Array.isArray(projects) || !projects.some(project => cleanText(project.id, "") === id)) {
-      projects = await window.loadAllProjects();
-      window.PlannerStorage.setCachedProjects(projects);
+      projects = await plannerStorage.getProjects();
+      plannerStorage.setCachedProjects(projects);
     }
     if (projects.some(project => cleanText(project.id, "") === id)) {
       return id;
@@ -1855,19 +1833,11 @@ export function createPlannerController() {
     if (!id || !title) {
       throw new Error("A project ID and title are required to update the master project.");
     }
-    if (!window.SheetsService || typeof window.SheetsService.updateProjectInSheet !== "function") {
-      throw new Error("Project update service is unavailable.");
-    }
-
-    let projects = window.PlannerStorage.getCachedProjects
-      ? window.PlannerStorage.getCachedProjects()
-      : null;
-    if (!Array.isArray(projects)) {
-      projects = window.ProjectsService && window.ProjectsService.UnifiedProjectList || window.UnifiedProjectList || [];
-    }
+    let projects = plannerStorage.getCachedProjects();
+    if (!Array.isArray(projects)) projects = [];
     let project = projects.find(entry => cleanText(entry.id, "") === id);
     if (!project) {
-      projects = await window.loadAllProjects();
+      projects = await plannerStorage.getProjects();
       project = projects.find(entry => cleanText(entry.id, "") === id);
     }
     if (!project) {
@@ -1883,15 +1853,13 @@ export function createPlannerController() {
         _originalId: id,
       },
     };
-    const result = await window.SheetsService.updateProjectInSheet(updated);
+    const result = await plannerStorage.updateProject(updated);
     if (result && result.ok === false) {
       throw new Error(cleanText(result.error, "Unable to save the master project title."));
     }
 
-    const cachedProjects = window.PlannerStorage.getCachedProjects
-      ? window.PlannerStorage.getCachedProjects()
-      : null;
-    const lists = [projects, cachedProjects, window.ProjectsService && window.ProjectsService.UnifiedProjectList, window.UnifiedProjectList];
+    const cachedProjects = plannerStorage.getCachedProjects();
+    const lists = [projects, cachedProjects];
     lists.filter(Array.isArray).forEach(list => {
       list.forEach(entry => {
         if (cleanText(entry.id, "") === id) {
@@ -1899,9 +1867,7 @@ export function createPlannerController() {
         }
       });
     });
-    if (window.PlannerStorage.setCachedProjects) {
-      window.PlannerStorage.setCachedProjects(Array.isArray(cachedProjects) ? cachedProjects : projects);
-    }
+    plannerStorage.setCachedProjects(Array.isArray(cachedProjects) ? cachedProjects : projects);
     const view = getProjectById(id);
     if (view) {
       view.title = title;
@@ -2143,8 +2109,12 @@ export function createPlannerController() {
     const currentDate = cleanText(currentInstance.date, currentInstance.occurrenceDate);
     let threshold;
 
-    master.recurrence = normalizeRecurrence(values.recurrence);
-    master.baseDay = cleanText(values.baseDay, master.baseDay || "Monday");
+    const recurrence = normalizeRecurrence(values.recurrence);
+    const baseDay = cleanText(values.baseDay, master.baseDay || "Monday");
+    if (baseDay !== master.baseDay) master.weekdays = [baseDay.slice(0, 3)];
+    if (recurrence !== master.recurrence) master.interval = 1;
+    master.recurrence = recurrence;
+    master.baseDay = baseDay;
     master.monthWeek = normalizeMonthWeek(values.monthWeek, currentDate);
     master.baseBucket = cleanText(values.baseBucket, master.baseBucket || "Morning");
     master.active = true;
@@ -2247,16 +2217,12 @@ export function createPlannerController() {
     return true;
   }
 
-  function consumeStagedQueue() {
-    let staged;
+  async function consumeStagedQueue() {
+    const token = generation;
+    const records = await plannerStorage.getStagedTasks();
+    if (destroyed || token !== generation) return;
+    const staged = records.map((record) => record.item);
     let changed = false;
-    try {
-      staged = JSON.parse(localStorage.getItem(STORAGE_KEYS.staged) || "[]");
-    } catch (error) {
-      console.warn("Failed to read staged Planner tasks", error);
-      setStatus("Unable to read staged Planner tasks.");
-      return;
-    }
 
     if (!Array.isArray(staged) || !staged.length) {
       return;
@@ -2281,6 +2247,8 @@ export function createPlannerController() {
           source: "repeating",
           state: cleanText(entry.state, "unknown"),
           recurrence: normalizeRecurrence(cleanText(entry.recurrence, "")),
+          interval: entry.interval ?? 1,
+          weekdays: entry.weekdays || [],
           baseDay: cleanText(entry.baseDay, ""),
           monthWeek: normalizeMonthWeek(cleanText(entry.monthWeek, ""), cleanText(entry.startDate || entry.originalStartDate, "")),
           active: true,
@@ -2309,6 +2277,8 @@ export function createPlannerController() {
           state: repeatableRecord.state,
           category: repeatableRecord.category,
           recurrence: repeatableRecord.recurrence,
+          interval: repeatableRecord.interval,
+          weekdays: repeatableRecord.weekdays,
           baseDay: cleanText(repeatableRecord.baseDay, override.baseDay || "Monday"),
           monthWeek: normalizeMonthWeek(cleanText(repeatableRecord.monthWeek, ""), cleanText(entry.startDate || entry.originalStartDate, "")),
           baseBucket: cleanText(entry.baseBucket, override.baseBucket || "Morning"),
@@ -2385,13 +2355,14 @@ export function createPlannerController() {
       changed = true;
     });
 
-    localStorage.removeItem(STORAGE_KEYS.staged);
-
     if (changed) {
       saveCuratedTasks();
       hideCuratedWarning();
       setStatus("Staged tasks were added to the planner queue. Review the list and schedule them as needed.");
     }
+    await persistence;
+    if (persistenceError) throw persistenceError;
+    await plannerStorage.deleteStagedTasks(records.map((record) => record.id));
   }
 
   async function refreshWeather() {
@@ -2412,9 +2383,10 @@ export function createPlannerController() {
   async function refreshParking() {
     await persistence;
     const request = ++refreshRequest;
-    const planner = await loadPlanner();
+    const [planner, curatedTasks] = await Promise.all([loadPlanner(), loadCuratedTasks()]);
     if (destroyed || request !== refreshRequest || pendingWrites) return;
     state.planner = planner;
+    state.curatedTasks = curatedTasks;
     state.gridRevision += 1;
     notify();
   }
@@ -2427,23 +2399,22 @@ export function createPlannerController() {
     notify();
     await ensurePlannerAdapters();
     if (destroyed || token !== generation) return;
-    state.mode = window.PlannerStorage.getUseSheets() ? "Sheets mode" : "Local mode";
-    state.curatedTasks = loadCuratedTasks();
-    const planner = await loadPlanner();
+    state.mode = "Supabase mode";
+    const [planner, curatedTasks] = await Promise.all([loadPlanner(), loadCuratedTasks()]);
     if (destroyed || token !== generation) return;
     state.planner = planner;
+    state.curatedTasks = curatedTasks;
     state.selectedCalendarDate = planner.weekStartDate;
     state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
     notify();
-    void window.PlannerStorage.prefetchAll().catch((error) => console.warn("Background PlannerStorage prefetch failed", error));
     await loadRepeatableTasks();
     if (destroyed || token !== generation) return;
-    generateVisibleRecurringInstances();
-    consumeStagedQueue();
+    await consumeStagedQueue();
+    if (destroyed || token !== generation) return;
     state.loading = false;
     if (!state.error && !state.status.startsWith("Unable")) setStatus(`Planning week of ${state.planner.weekStartDate}.`);
     unsubscribe?.();
-    unsubscribe = window.PlannerStorage.onChange((detail) => {
+    unsubscribe = plannerStorage.onChange((detail) => {
       if (detail?.type === "weekly-task-sync-error") {
         persistenceError = new Error(cleanText(detail.error, "Unable to synchronize Weekly Planner."));
         report(persistenceError);
@@ -2479,8 +2450,10 @@ export function createPlannerController() {
       const item = payload.item;
       const convertedType = cleanText(item.convertedTo?.type, "project");
       const taskType = convertedType === "task-manager" ? "adhoc" : convertedType === "repeatable" ? "repeatable" : "project";
-      const projectId = cleanText(item.convertedTo?.id, cleanText(item.id, ""));
-      const id = buildWeeklyTaskId(taskType, projectId, date);
+      const sourceId = cleanText(item.convertedTo?.id, cleanText(item.id, ""));
+      const projectId = cleanText(item.projectId,
+        ["project", "repeatable"].includes(convertedType) ? sourceId : "");
+      const id = buildWeeklyTaskId(taskType, sourceId, date);
       const task = toPlannerSlotItem({
         id, taskId: id, date, timeSlot: slot, taskType, type: taskType,
         title: cleanText(item.title, "Untitled Task"),
@@ -2621,8 +2594,6 @@ const PARKING_FALLBACK_OPTIONS = {
   state: ["Not Started", "In Progress", "Recommended", "Completed"],
   priority: ["Low", "Medium", "High"],
 };
-let parkingDropdownOptions = null;
-let parkingDropdownPromise = null;
 
 function parkingJson(value, fallback) {
   const text = cleanText(value, fallback);
@@ -2636,6 +2607,7 @@ function parkingJson(value, fallback) {
 
 export function parseParkingItem(item = {}) {
   return {
+    ...(Object.hasOwn(item, "projectId") ? { projectId: cleanText(item.projectId, "") } : {}),
     id: cleanText(item.id, ""),
     title: cleanText(item.title, "Untitled Idea"),
     notes: cleanText(item.notes, ""),
@@ -2664,27 +2636,18 @@ export function getParkingItemColor(item) {
 
 export async function loadParkingItems() {
   await ensurePlannerAdapters();
-  const items = await window.PlannerStorage.getParkingLot();
+  const items = await plannerStorage.getParkingLot();
   return (Array.isArray(items) ? items : []).map(parseParkingItem).filter((item) => !item.deleted);
 }
 
 export function subscribeParkingChanges(listener) {
-  const unsubscribe = window.PlannerStorage.onChange((detail) => {
-    // A failed Sheets read emits this event itself; never recursively re-fetch it.
-    if (detail?.type !== "parking-lot-sync-error") listener(detail);
+  return plannerStorage.onChange((detail) => {
+    if (detail?.type?.startsWith("parking-lot-")) listener(detail);
   });
-  const onStorage = (event) => {
-    if (!event.key || event.key === "hm_parking_lot") listener({ type: "parking-lot-external" });
-  };
-  window.addEventListener("storage", onStorage);
-  return () => {
-    unsubscribe();
-    window.removeEventListener("storage", onStorage);
-  };
 }
 
 function invalidateParkingProjects() {
-  window.PlannerStorage.invalidateCache(["projects"]);
+  plannerStorage.invalidateCachedProjects();
 }
 
 export function getParkingDropdownValues(dropdowns, field) {
@@ -2693,20 +2656,15 @@ export function getParkingDropdownValues(dropdowns, field) {
 }
 
 async function loadParkingDropdowns() {
-  if (parkingDropdownOptions) return parkingDropdownOptions;
-  if (typeof window.SheetsService?.fetchProjectDropdownOptions !== "function") return {};
-  if (!parkingDropdownPromise) {
-    parkingDropdownPromise = window.SheetsService.fetchProjectDropdownOptions()
-      .then((options) => {
-        parkingDropdownOptions = options && typeof options === "object" ? options : {};
-        return parkingDropdownOptions;
-      }).catch((error) => {
-        console.warn("Unable to load project dropdown options for Parking Lot edit dialog", error);
-        parkingDropdownPromise = null;
-        return {};
-      });
-  }
-  return parkingDropdownPromise;
+  const projects = await plannerStorage.getProjects();
+  return Object.fromEntries(["home", "vehicle", "repeating", "misc"].map((source) => {
+    const matching = projects.filter((project) => normalizeSource(project.source) === source);
+    return [source, Object.fromEntries(["category", "state", "priority", "area", "property"].map((field) =>
+      [field, [...new Set(matching.map((project) => cleanText(
+        project.metadata?.[field] ?? project[field], ""
+      )).filter(Boolean))]]
+    ))];
+  }));
 }
 
 function parkingProjectSource(source) {
@@ -2746,7 +2704,7 @@ function assertParkingResult(result, fallback) {
 }
 
 async function createParkingProject(item, convertTo) {
-  const result = assertParkingResult(await window.ProjectsService.createProject({
+  const result = assertParkingResult(await plannerStorage.createProject({
     source: "home", property: "", vehicle: "", title: item.title, area: "",
     category: "uncategorized", priority: "3", order: "", resourceLinks: "",
     state: "unknown", dateCompleted: "", hours: "", mileage: "", mechanic: "",
@@ -2765,25 +2723,26 @@ async function createParkingProject(item, convertTo) {
 async function removeParkingConversion(conversion, targetType) {
   if (!conversion?.type || conversion.type === targetType) return;
   if (conversion.type === "task-manager" || conversion.type === "ad-hoc") {
-    await window.PlannerStorage.deleteTaskManagerTask(conversion.id);
+    await plannerStorage.deleteTaskManagerTask(conversion.id);
   } else if (conversion.type === "project" || conversion.type === "repeatable") {
-    assertParkingResult(await window.SheetsService.deleteProject({
+    assertParkingResult(await plannerStorage.deleteProject({
       id: conversion.id, source: parkingConvertedSource(conversion),
       tabName: cleanText(conversion.tabName, ""), metadata: { sheetRowNumber: Number(conversion.rowNumber || 0) },
     }), "Unable to remove previous project conversion.");
   } else if (conversion.type === "weekly") {
-    await window.PlannerStorage.deleteWeeklyTask(conversion.id, { hardDelete: false });
+    await plannerStorage.deleteWeeklyTask(conversion.id, { hardDelete: false });
   }
 }
 
 async function createParkingConversion(item, convertTo) {
   if (convertTo === "task-manager" || convertTo === "ad-hoc") {
-    const converted = await window.PlannerStorage.upsertTaskManagerTask({
-      taskId: item.id, projectId: item.id, title: item.title,
+    const converted = await plannerStorage.upsertTaskManagerTask({
+      ...(["task-manager", "ad-hoc"].includes(item.convertedTo?.type) ? { id: item.convertedTo.id } : {}),
+      taskId: item.id, projectId: "", title: item.title,
       source: "parking-lot", category: "uncategorized", state: "unknown",
       asset: "", mileage: "", recurrence: "", priority: 3, order: undefined,
     });
-    return { ...item, convertedTo: { type: "task-manager", id: converted.taskId }, color: PARKING_COLORS.adHoc };
+    return { ...item, convertedTo: { type: "task-manager", id: converted.id || converted.taskId }, color: PARKING_COLORS.adHoc };
   }
   if (convertTo === "project" || convertTo === "repeatable") return createParkingProject(item, convertTo);
   return item;
@@ -2804,7 +2763,7 @@ export async function convertParkingItem(item, convertTo) {
     }
     throw error;
   }
-  const saved = await window.PlannerStorage.upsertParkingItem(next);
+  const saved = await plannerStorage.upsertParkingItem(next);
   invalidateParkingProjects();
   return parseParkingItem(saved);
 }
@@ -2819,19 +2778,19 @@ export async function saveParkingItem(existing, values) {
   });
   // The legacy edit dialog's None choice retains an existing conversion.
   const converted = await createParkingConversion(next, values.convertTo);
-  const saved = await window.PlannerStorage.upsertParkingItem(converted);
+  const saved = await plannerStorage.upsertParkingItem(converted);
   invalidateParkingProjects();
   return parseParkingItem(saved);
 }
 
 export function deleteParkingItem(id) {
-  return window.PlannerStorage.deleteParkingItem(id, { hardDelete: true });
+  return plannerStorage.deleteParkingItem(id, { hardDelete: true });
 }
 
 export async function removeParkingProject(item) {
   if (!["project", "repeatable"].includes(item.convertedTo?.type)) return item;
   await removeParkingConversion(item.convertedTo, "");
-  const saved = await window.PlannerStorage.upsertParkingItem({ ...parseParkingItem(item), convertedTo: null, color: "" });
+  const saved = await plannerStorage.upsertParkingItem({ ...parseParkingItem(item), convertedTo: null, color: "" });
   invalidateParkingProjects();
   return parseParkingItem(saved);
 }
@@ -2847,24 +2806,23 @@ export async function parkPlannerPayload(payload) {
     metadataJson: JSON.stringify(source.metadata || {}),
     convertedTo: { type: "weekly", id: source.id }, convertedFromParking: source.id,
   });
-  const saved = await window.PlannerStorage.upsertParkingItem(item);
-  await window.PlannerStorage.deleteWeeklyTask(source.id, { hardDelete: false });
+  const saved = await plannerStorage.upsertParkingItem(item);
+  await plannerStorage.deleteWeeklyTask(source.id, { hardDelete: false });
   return parseParkingItem(saved);
 }
 
 export async function loadParkingProjectEditor(item) {
-  if (typeof window.SheetsService?.updateProjectInSheet !== "function") return null;
   const conversion = item.convertedTo || {};
   const id = cleanText(conversion.id, item.id);
   const source = parkingConvertedSource(conversion);
   const rowHint = Number(conversion.rowNumber || 0);
-  let project = findParkingProject(window.ProjectsService?.UnifiedProjectList, id, source, rowHint, item.title);
+  let project = findParkingProject(plannerStorage.getCachedProjects(), id, source, rowHint, item.title);
   if (!project) {
     try {
-      const projects = await window.ProjectsService.loadAllProjects();
+      const projects = await plannerStorage.getProjects();
       project = findParkingProject(projects, id, source, rowHint, item.title);
     } catch (error) {
-      console.error("Unable to load projects for in-place edit", error);
+      throw new Error("Unable to load projects for in-place edit.", { cause: error });
     }
   }
   if (!project) return null;
@@ -2874,9 +2832,6 @@ export async function loadParkingProjectEditor(item) {
     ...item,
     convertedTo: { ...conversion, id: cleanText(project.id, id), ...(row > 0 ? { rowNumber: row } : {}) },
   });
-  if (conversion.id !== nextItem.convertedTo.id || (row > 0 && Number(conversion.rowNumber) !== row)) {
-    await window.PlannerStorage.upsertParkingItem(nextItem);
-  }
   const metadata = identityConfirmed ? { ...project.metadata } : {};
   const dropdowns = await loadParkingDropdowns();
   const sourceDropdowns = dropdowns[source] || {};
@@ -2910,18 +2865,18 @@ export async function saveParkingProjectEditor(editor, values, onStatus = () => 
   };
   if (values.source !== source) {
     onStatus("Moving project...");
-    const result = assertParkingResult(await window.ProjectsService.createProject({
+    const result = assertParkingResult(await plannerStorage.createProject({
       ...fields, source: values.source, title, property, vehicle: property,
       recurrence: cleanText(metadata.recurrence, ""),
     }), "Unable to create project in the new list.");
     try {
-      assertParkingResult(await window.SheetsService.deleteProject({
+      assertParkingResult(await plannerStorage.deleteProject({
         id: project.id, source, metadata: { sheetRowNumber: Number(metadata.sheetRowNumber || 0) },
       }), "Unable to remove project from previous list.");
     } catch (error) {
       // Compensate the destination create rather than leaving a duplicate on a failed move.
       try {
-        assertParkingResult(await window.SheetsService.deleteProject({
+        assertParkingResult(await plannerStorage.deleteProject({
           id: result.id, source: values.source, metadata: { sheetRowNumber: Number(result.rowNumber || 0) },
         }), "Unable to remove replacement project.");
       } catch (rollbackError) {
@@ -2931,7 +2886,7 @@ export async function saveParkingProjectEditor(editor, values, onStatus = () => 
       invalidateParkingProjects();
       throw error;
     }
-    const saved = await window.PlannerStorage.upsertParkingItem({
+    const saved = await plannerStorage.upsertParkingItem({
       ...item, title,
       convertedTo: {
         ...item.convertedTo, type: values.source === "repeating" ? "repeatable" : "project",
@@ -2953,41 +2908,15 @@ export async function saveParkingProjectEditor(editor, values, onStatus = () => 
       sheetRowNumber: metadata.sheetRowNumber,
     },
   };
-  let nextItem = { ...item, title };
+  const nextItem = { ...item, title };
   onStatus("Saving...");
-  try {
-    const result = await window.SheetsService.updateProjectInSheet(nextProject);
-    if (result?.ok === false) throw new Error(cleanText(result.error, "Unable to save project details."));
-  } catch (error) {
-    const reason = cleanText(error.message, "Unable to save project details.");
-    if (!/did not persist title update|Unable to verify target row|Refusing to overwrite an empty row/i.test(reason)) throw error;
-    if (typeof window.SheetsService.repairProjectTitle !== "function") {
-      throw new Error("Repair action is unavailable in the loaded app runtime. Reload Planner to refresh scripts, then retry.", { cause: error });
-    }
-    onStatus("Repairing sheet row...");
-    let repair;
-    try {
-      repair = assertParkingResult(await window.SheetsService.repairProjectTitle(nextProject, {
-        id: cleanText(project.id, ""), title, sheetRowNumber: metadata.sheetRowNumber,
-        clearProperty: /got\s+""/i.test(reason), forceTitle: true,
-      }), reason);
-    } catch (repairError) {
-      if (/only repairs blank Task Description rows/i.test(repairError.message)) {
-        throw new Error("Loaded backend is outdated for title repair. Deploy latest Apps Script, then retry.", { cause: repairError });
-      }
-      throw repairError;
-    }
-    nextItem = {
-      ...nextItem,
-      convertedTo: { ...item.convertedTo, id: cleanText(project.id, item.convertedTo?.id), rowNumber: repair.rowNumber || item.convertedTo?.rowNumber },
-    };
-  }
-  const saved = await window.PlannerStorage.upsertParkingItem(nextItem);
+  await plannerStorage.updateProject(nextProject);
+  const saved = await plannerStorage.upsertParkingItem(nextItem);
   invalidateParkingProjects();
   return parseParkingItem(saved);
 }
 
 export async function saveParkingAdHocTitle(item, title) {
   const nextTitle = cleanText(title, cleanText(item.title, "Untitled Idea"));
-  return parseParkingItem({ ...item, title: nextTitle });
+  return parseParkingItem(await plannerStorage.upsertParkingItem({ ...item, title: nextTitle }));
 }
