@@ -30,6 +30,11 @@ function harness() {
     },
   };
   const context = vm.createContext({
+    plannerStorage: {
+      ...window.PlannerStorage,
+      createProject: window.ProjectsService.createProject,
+      invalidateCachedProjects: () => {},
+    },
     window, console, ensurePlannerAdapters: async () => {},
     cleanText: (value, fallback) => String(value ?? "").trim() || fallback,
   });
@@ -56,14 +61,18 @@ test("ordinary edit sends the exact legacy parking payload, including tag/priori
   });
 });
 
-test("ad-hoc title edit changes only the in-memory parking item", async () => {
+test("ad-hoc title edit persists through the shared store without mutating the input", async () => {
   const { api, calls } = harness();
   const item = api.parseParkingItem({ id: "p1", title: "Old", tags: "tag", convertedTo: { type: "task-manager", id: "t1" } });
   const next = await api.saveParkingAdHocTitle(item, " Renamed ");
   assert.equal(next.title, "Renamed");
   assert.equal(item.title, "Old");
   assert.equal(next.tags, "tag");
-  assert.deepEqual(calls, { parking: [], tasks: [], projects: [], weeklyDeletes: [] });
+  assert.equal(calls.parking.length, 1);
+  assert.equal(calls.parking[0].title, "Renamed");
+  assert.deepEqual(calls.tasks, []);
+  assert.deepEqual(calls.projects, []);
+  assert.deepEqual(calls.weeklyDeletes, []);
 });
 
 test("project and repeatable conversions use exact legacy create payloads", async () => {
@@ -82,7 +91,7 @@ test("project and repeatable conversions use exact legacy create payloads", asyn
   }
 });
 
-test("ad-hoc conversion uses exact legacy task-manager payload", async () => {
+test("ad-hoc conversion leaves the optional project link empty instead of linking a parking ID", async () => {
   const { api, calls } = harness();
   await api.convertParkingItem({ id: "p1", title: "Idea" }, "task-manager");
   assert.deepEqual(Object.keys(calls.tasks[0]).sort(), [
@@ -91,7 +100,7 @@ test("ad-hoc conversion uses exact legacy task-manager payload", async () => {
   ].sort());
   assert.equal(calls.tasks[0].order, undefined);
   assert.deepEqual(plain(calls.tasks[0]), {
-    taskId: "p1", projectId: "p1", title: "Idea", source: "parking-lot",
+    taskId: "p1", projectId: "", title: "Idea", source: "parking-lot",
     category: "uncategorized", state: "unknown", asset: "", mileage: "", recurrence: "", priority: 3,
   });
 });

@@ -5,6 +5,18 @@ import { connectGoogleSheets, hasSheetsAccess } from "../services/googleSheetsCl
 import styles from "../pages/ActivityPlanner/DailyActivityPlanner.module.css";
 
 export default function App() {
+  return (
+    <DailyActivitiesApplication>
+      <Routes>
+        <Route path="/activity-planner" element={<DailyActivityPlanner />} />
+        <Route path="/" element={<Navigate to="/activity-planner" replace />} />
+        <Route path="/activity-planner/index.html" element={<Navigate to="/activity-planner" replace />} />
+      </Routes>
+    </DailyActivitiesApplication>
+  );
+}
+
+export function DailyActivitiesApplication({ children }) {
   const [connected, setConnected] = useState(hasSheetsAccess);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
@@ -36,11 +48,5 @@ export default function App() {
     );
   }
 
-  return (
-    <Routes>
-      <Route path="/activity-planner" element={<DailyActivityPlanner />} />
-      <Route path="/" element={<Navigate to="/activity-planner" replace />} />
-      <Route path="/activity-planner/index.html" element={<Navigate to="/activity-planner" replace />} />
-    </Routes>
-  );
+  return children || <DailyActivityPlanner />;
 }

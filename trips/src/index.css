@@ -1,4 +1,4 @@
-:root {
+html[data-vite-page="trips"] {
   --text: #6b6375;
   --text-h: #08060d;
   --bg: #fff;
@@ -31,7 +31,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  html[data-vite-page="trips"] {
     --text: #9ca3af;
     --text-h: #f3f4f6;
     --bg: #16171d;
@@ -413,7 +413,7 @@ body {
 @media (max-width: 900px) { .prioritize-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 480px) { .prioritize-page { padding: 16px; } .prioritize-header { align-items: flex-start; flex-direction: column; } .prioritize-header h1 { font-size: 24px; } }
 
-#root {
+html[data-vite-page="trips"] #root {
   width: 100%;
   max-width: none;
   margin: 0;
@@ -424,14 +424,14 @@ body {
   box-sizing: border-box;
 }
 
-h1,
-h2 {
+html[data-vite-page="trips"] h1,
+html[data-vite-page="trips"] h2 {
   font-family: var(--heading);
   font-weight: 500;
   color: var(--text-h);
 }
 
-h1 {
+html[data-vite-page="trips"] h1 {
   font-size: 56px;
   letter-spacing: -1.68px;
   margin: 32px 0;
@@ -440,7 +440,7 @@ h1 {
     margin: 20px 0;
   }
 }
-h2 {
+html[data-vite-page="trips"] h2 {
   font-size: 24px;
   line-height: 118%;
   letter-spacing: -0.24px;
@@ -449,19 +449,19 @@ h2 {
     font-size: 20px;
   }
 }
-p {
+html[data-vite-page="trips"] p {
   margin: 0;
 }
 
-code,
-.counter {
+html[data-vite-page="trips"] code,
+html[data-vite-page="trips"] .counter {
   font-family: var(--mono);
   display: inline-flex;
   border-radius: 4px;
   color: var(--text-h);
 }
 
-code {
+html[data-vite-page="trips"] code {
   font-size: 15px;
   line-height: 135%;
   padding: 4px 8px;

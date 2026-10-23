@@ -7,12 +7,12 @@ import PlannerFooter from "./components/PlannerFooter.jsx";
 import DragDropLayer from "./components/DragDropLayer.jsx";
 import styles from "./PlannerPage.module.css";
 
-export default function PlannerPage() {
+export default function PlannerPage({ navigation = null }) {
   return (
     <PlannerProvider>
       <DragDropLayer>
         <section className={`${styles["planner-screen"]} ${styles["hm-card"]}`}>
-          <div data-main-nav />
+          <div data-main-nav>{navigation}</div>
           <PlannerHeader />
           <PlannerSidebar />
           <WeeklyGrid />
