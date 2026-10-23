@@ -800,7 +800,25 @@
     return UnifiedProjectList;
   }
 
+  function buildProjectForStorage(payload, id) {
+    const explicitSourceKey = payload.source ? sourceKey(payload.source) : "";
+    const isVehicle = cleanString(payload.vehicle) !== "";
+    if (!isVehicle && !cleanString(payload.property) && !explicitSourceKey && !isMiscCategory(payload.category)) {
+      throw new Error("Select Property or Vehicle/Engine before creating a project.");
+    }
+    const key = payload.addToRepeating ? "repeating"
+      : explicitSourceKey || (isMiscCategory(payload.category) ? "misc" : isVehicle ? "vehicle" : "home");
+    const schemas = { home: SCHEMAS.listA, vehicle: SCHEMAS.listB, repeating: SCHEMAS.listC, misc: SCHEMAS.listD };
+    const builders = {
+      home: buildHomeCreateFields, vehicle: buildVehicleCreateFields,
+      repeating: buildRepeatingCreateFields, misc: buildMiscCreateFields,
+    };
+    return normalizeRow({ id, ...builders[key](payload) }, schemas[key], 0);
+  }
+
   const service = {
+    buildProjectForStorage,
+    toLinks,
     SCHEMAS,
     get UnifiedProjectList() {
       return UnifiedProjectList;

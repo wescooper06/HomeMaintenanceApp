@@ -1025,6 +1025,8 @@
   }
 
   window.PlannerStorage = {
+    normalizeTaskManagerTask,
+    normalizeWeeklySheetTask,
     getParkingLot,
     upsertParkingItem,
     deleteParkingItem,

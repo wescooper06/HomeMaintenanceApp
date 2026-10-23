@@ -1,8 +1,5 @@
-// Keep the existing persistence boundary until the shared adapters are migrated.
-import "../../www/js/utils/uuid.js";
-import "../../www/js/services/sheets.service.js";
-import "../../www/js/services/projects.service.js";
-import "../../www/js/services/planner-storage.service.js";
+import { plannerStorage } from "./plannerSupabaseStorage.js";
+import { parseResourceLinkEntries } from "./plannerService.js";
 
 export const clean = (value, fallback = "") => String(value ?? "").trim() || fallback;
 export const number = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -17,13 +14,13 @@ export function sourceTag(value) {
 }
 
 export async function loadWorkbench(forceReload = false) {
-  const cached = !forceReload ? window.PlannerStorage.getCachedProjects() : null;
+  const cached = !forceReload ? plannerStorage.getCachedProjects() : null;
   const [projects, tasks] = await Promise.all([
-    cached || window.ProjectsService.loadAllProjects(),
-    window.PlannerStorage.getTaskManager(),
+    cached || plannerStorage.getProjects(),
+    plannerStorage.getTaskManager(),
   ]);
-  window.PlannerStorage.setCachedProjects(projects);
-  return { projects, tasks, mode: window.PlannerStorage.getUseSheets() ? "Sheets mode" : "Local mode" };
+  plannerStorage.setCachedProjects(projects);
+  return { projects, tasks, mode: "Supabase mode" };
 }
 
 export function filterProjects(projects, filters) {
@@ -82,7 +79,7 @@ export function groupTasks(tasks, sort) {
 export async function addProjectTask(project, tasks) {
   const existing = tasks.find((task) => clean(task.projectId) === clean(project.id)
     && sourceTag(task.source) === sourceTag(project.source));
-  return window.PlannerStorage.upsertTaskManagerTask({
+  return plannerStorage.upsertTaskManagerTask({
     id: existing?.id,
     projectId: project.id,
     title: project.title,
@@ -104,19 +101,19 @@ export async function moveTask(task, tasks, action) {
   const neighbor = ordered[index + (action === "up" ? -1 : 1)];
   if (index < 0 || !neighbor) throw new Error("This task cannot move further in that direction.");
   const saved = await Promise.all([
-    window.PlannerStorage.upsertTaskManagerTask({ ...task, order: neighbor.order }),
-    window.PlannerStorage.upsertTaskManagerTask({ ...neighbor, order: task.order }),
+    plannerStorage.upsertTaskManagerTask({ ...task, order: neighbor.order }),
+    plannerStorage.upsertTaskManagerTask({ ...neighbor, order: task.order }),
   ]);
   return saved;
 }
 
 export async function removeTask(task) {
-  await window.PlannerStorage.deleteTaskManagerTask(task.id);
+  await plannerStorage.deleteTaskManagerTask(task.id);
 }
 
 export async function sendWeekly(task, taskCount) {
   if (sourceTag(task.source) !== "repeating") {
-    await window.PlannerStorage.upsertCuratedTask({
+    await plannerStorage.upsertCuratedTask({
       taskId: clean(task.id, clean(task.projectId)), projectId: clean(task.projectId),
       title: clean(task.title, "Untitled Task"), source: sourceTag(task.source),
       category: clean(task.category, "uncategorized"), recurrence: clean(task.recurrence),
@@ -135,12 +132,12 @@ export async function sendWeekly(task, taskCount) {
   if (typeof metadata !== "object" || Array.isArray(metadata)) {
     throw new Error("Repeatable task metadata must be an object.");
   }
-  const saved = await window.PlannerStorage.upsertTaskManagerTask({
+  const saved = await plannerStorage.upsertTaskManagerTask({
     ...task, metadataJson: JSON.stringify({ ...metadata, plannerRepeatable: true }),
   });
-  const overrides = await window.PlannerStorage.getRepeatableOverrides();
+  const overrides = await plannerStorage.getRepeatableOverrides();
   const existing = overrides.find((item) => clean(item.projectId) === projectId) || {};
-  await window.PlannerStorage.upsertRepeatableOverride({
+  await plannerStorage.upsertRepeatableOverride({
     ...existing, projectId,
     title: clean(task.title, clean(existing.title, "Untitled Task")),
     state: clean(task.state, clean(existing.state, "unknown")),
@@ -151,13 +148,13 @@ export async function sendWeekly(task, taskCount) {
     startDate: "", originalStartDate: "", active: false,
     removedFromPlanner: false, removedFromTaskManager: false,
   });
-  const planner = await window.PlannerStorage.getWeeklyPlanner();
+  const planner = await plannerStorage.getWeeklyPlanner();
   const generated = (Array.isArray(planner?.tasks) ? planner.tasks : []).filter((item) =>
     !item.overridden && (clean(item.parentRepeatableId) === projectId
       || clean(item.id || item.taskId).startsWith(`repeatable-${projectId}-`))
   );
   await Promise.all(generated.map((item) =>
-    window.PlannerStorage.deleteWeeklyTask(clean(item.id || item.taskId), { hardDelete: true })
+    plannerStorage.deleteWeeklyTask(clean(item.id || item.taskId), { hardDelete: true })
   ));
   return { task: saved, message: `Added "${task.title}" to Repeatable Tasks. Drag it onto a day to schedule it.` };
 }
@@ -196,7 +193,8 @@ export function getEditFields(project) {
     ["state", "State", project.state], ["priority", "Priority", value("priority")],
     ["order", "Order", value("order")], ["recurrence", "Recurrence", value("recurrence")],
     ["area", "Area", value("area")], ["actualCost", "Cost", value("actualCost", "cost")],
-    ["resourceLinks", "Resource Links", value("resourceLinks")], ["notes", "Notes", value("notes")],
+    ["resourceLinks", "Resource Links", parseResourceLinkEntries(value("resourceLinks")).map((entry) => entry.url).join("\n")],
+    ["notes", "Notes", value("notes")],
     ["addToRepeating", "Add to Repeating List", Boolean(project.addToRepeating || value("recurrence"))],
   ];
   if (["home", "repeating"].includes(sourceTag(project.source))) {
@@ -220,7 +218,7 @@ export async function createProject(values) {
   if ((source === "repeating" || values.addToRepeating) && !clean(values.recurrence)) {
     throw new Error("Recurrance is required for repeating projects.");
   }
-  return window.ProjectsService.createProject({
+  return plannerStorage.createProject({
     ...values, source, recurrence: clean(values.recurrence), addToRepeating: Boolean(values.addToRepeating),
   });
 }
@@ -232,23 +230,27 @@ export async function updateProject(project, values) {
   Object.entries(values).forEach(([key, raw]) => {
     if (key === "addToRepeating") return;
     const text = clean(raw);
+    const previous = key === "resourceLinks"
+      ? parseResourceLinkEntries(project.metadata?.resourceLinks ?? project.resourceLinks).map((entry) => entry.url).join("\n")
+      : clean(project.metadata?.[key]);
+    if (!core.has(key) && text === previous) return;
     const value = numeric.has(key) && text !== "" && Number.isFinite(Number(text)) ? Number(text) : text;
     if (core.has(key)) updated[key] = value;
     else updated.metadata[key] = value;
   });
   updated.metadata._originalTitle = clean(updated.metadata._originalTitle, clean(project.title));
   updated.metadata._originalId = clean(updated.metadata._originalId, clean(project.id));
-  const result = await window.SheetsService.updateProjectInSheet(updated);
+  const result = await plannerStorage.updateProject(updated);
   if (result?.ok === false) throw new Error(clean(result.error, "Unable to save project."));
   return updated;
 }
 
 export function cacheProjects(projects) {
-  window.PlannerStorage.setCachedProjects(projects);
+  plannerStorage.setCachedProjects(projects);
 }
 
 export async function deleteProject(project) {
-  const result = await window.SheetsService.deleteProject(project);
+  const result = await plannerStorage.deleteProject(project);
   if (result?.ok === false) throw new Error(result.error || "Unable to delete project.");
 }
 
@@ -270,23 +272,6 @@ export function parseCommand(command) {
 }
 
 export async function createAgentProject(command) {
-  try {
-    const result = await window.ProjectsService.createProject(command);
-    // A refresh failure must not create a duplicate local project after a successful write.
-    return { message: `Created project ${result.id} in ${result.tabName}.`, local: false };
-  } catch (error) {
-    console.warn("Agent Sheets creation failed; retaining the project locally.", error);
-    const projects = [...(window.PlannerStorage.getCachedProjects() || [])];
-    const nextId = projects.reduce((max, project) => {
-      const numeric = Number(String(project?.id || "").replace(/[^0-9]/g, ""));
-      return Number.isFinite(numeric) && numeric > max ? numeric : max;
-    }, 0) + 1;
-    projects.push({
-      id: String(nextId), title: command.title, source: command.source,
-      category: command.category, state: command.state, priority: "Medium",
-      order: projects.length + 1, metadata: { sources: [command.source] },
-    });
-    cacheProjects(projects);
-    return { message: `Created project locally. Sheets sync was unavailable: ${error.message}`, local: true };
-  }
+  const result = await plannerStorage.createProject(command);
+  return { message: `Created project ${result.id} in ${result.tabName}.`, local: false };
 }
