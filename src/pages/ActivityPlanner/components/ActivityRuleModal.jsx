@@ -16,7 +16,7 @@ function validate(draft) {
 const START_OPTIONS = TIME_OPTIONS.slice(0, -1);
 const END_OPTIONS = TIME_OPTIONS.slice(1);
 
-/** Includes a rule's stored time even when it falls outside the 06:00–24:00 grid options. */
+/** Includes a rule's stored time even when it falls between half-hour boundaries. */
 function optionsWith(options, value) {
   return !value || options.includes(value) ? options : [value, ...options];
 }
@@ -87,7 +87,7 @@ export default function ActivityRuleModal({ isEditing, editingSingleDay, initial
               ))}
             </select>
             {activityTypes.length === 0 && (
-              <small className={styles.hint}>No activity types loaded. Add rows to the ActivityTypes sheet (with an id), then Refresh.</small>
+              <small className={styles.hint}>No activity types loaded. Add rows to activity_types in Supabase, then Refresh.</small>
             )}
           </label>
 

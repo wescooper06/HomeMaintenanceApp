@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./DailyActivityPlanner.module.css";
 import WeeklyGrid from "./components/WeeklyGrid.jsx";
 import ActivityRuleModal from "./components/ActivityRuleModal.jsx";
-import { useSheetsData, regenerateWeeklyGrid } from "../../services/activityPlannerService.js";
+import { useActivityData, regenerateWeeklyGrid } from "../../services/activityPlannerService.js";
 import { createRuleId, selectionToRuleDraft } from "../../utils/plannerUtils.js";
 
 const NEW_RULE_DEFAULTS = { activity_type_id: "", allow_override: false, priority: 1, notes: "" };
 
 export default function DailyActivityPlanner() {
-  const { activityTypes, rules, weeklyGrid, loading, error: loadError, reload, addRule, updateRule, splitRule, deleteRule } = useSheetsData();
+  const { activityTypes, rules, weeklyGrid, loading, error: loadError, reload, addRule, updateRule, splitRule, deleteRule } = useActivityData();
 
   // Drag-select: anchor is where the mouse went down, focus is the cell currently hovered.
   const [selection, setSelection] = useState(null);
@@ -19,6 +19,7 @@ export default function DailyActivityPlanner() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [pageError, setPageError] = useState("");
+  const [needsRegeneration, setNeedsRegeneration] = useState(false);
 
   const activityTypesById = useMemo(
     () => Object.fromEntries(activityTypes.map((type) => [type.id, type])),
@@ -86,7 +87,10 @@ export default function DailyActivityPlanner() {
 
     try {
       await regenerateWeeklyGrid();
+      setNeedsRegeneration(false);
+      setPageError("");
     } catch (regenerateError) {
+      setNeedsRegeneration(true);
       setPageError(`Rule saved, but the grid could not be regenerated: ${regenerateError.message}`);
     }
 
@@ -102,6 +106,17 @@ export default function DailyActivityPlanner() {
 
   async function handleRefresh() {
     setPageError("");
+    if (needsRegeneration) {
+      setSaving(true);
+      try {
+        await regenerateWeeklyGrid();
+        setNeedsRegeneration(false);
+      } catch (error) {
+        setPageError(error.message);
+      } finally {
+        setSaving(false);
+      }
+    }
     await reload();
   }
 
