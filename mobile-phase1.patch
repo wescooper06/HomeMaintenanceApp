@@ -1,0 +1,30 @@
+diff --git a/capacitor.config.json b/capacitor.config.json
+index cd1e43d..d6b136a 100644
+--- a/capacitor.config.json
++++ b/capacitor.config.json
+@@ -1,9 +1,8 @@
+ {
+   "appId": "com.example.homemaintenance",
+   "appName": "HomeMaintenanceApp",
+-  "webDir": "www",
++  "webDir": "dist/trips",
+   "server": {
+-    "androidScheme": "https",
+-    "appStartPath": "/mobile/index.html"
++    "androidScheme": "https"
+   }
+ }
+diff --git a/package.json b/package.json
+index 50e541b..7e6fab3 100644
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,8 @@
+   "scripts": {
+     "dev": "npm --prefix trips run dev",
+     "test": "node tests/misc-sheet.test.js",
+-    "dev:activity-planner": "npm --prefix trips run dev:activity-planner"
++    "dev:activity-planner": "npm --prefix trips run dev:activity-planner",
++    "mobile:sync": "npm --prefix trips run build && cap sync android"
+   },
+   "keywords": [],
+   "author": "",

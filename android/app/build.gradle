@@ -3,6 +3,10 @@ apply plugin: 'com.android.application'
 android {
     namespace = "com.example.homemaintenance"
     compileSdk = rootProject.ext.compileSdkVersion
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
     defaultConfig {
         applicationId "com.example.homemaintenance"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -16,6 +20,8 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+
     buildTypes {
         release {
             minifyEnabled false
