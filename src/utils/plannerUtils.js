@@ -2,7 +2,7 @@ export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export const DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export const SLOT_MINUTES = 30;
-export const GRID_START_MINUTES = 6 * 60;
+export const GRID_START_MINUTES = 0;
 export const GRID_END_MINUTES = 24 * 60;
 export const SLOT_COUNT = (GRID_END_MINUTES - GRID_START_MINUTES) / SLOT_MINUTES;
 
@@ -43,7 +43,7 @@ export function minutesToSlot(totalMinutes) {
   return Math.floor((totalMinutes - GRID_START_MINUTES) / SLOT_MINUTES);
 }
 
-/** Every selectable boundary time, 06:00 through 24:00. */
+/** Every selectable boundary time, 00:00 through 24:00. */
 export const TIME_OPTIONS = Array.from({ length: SLOT_COUNT + 1 }, (_, index) => minutesToTime(slotToMinutes(index)));
 
 /** "Mon,Tue,Fri" / "Mon–Sun" / "Mon-Wed,Sat" -> ordered unique short day names. */
@@ -116,12 +116,12 @@ export function buildActivityBlocks(gridRows) {
   slotsByDay.forEach((slots, dayIndex) => {
     let current = null;
     slots.forEach((row, slot) => {
-      if (row && current && current.activityTypeId === row.activity_type_id && current.endSlot === slot - 1) {
+      if (row?.activity_type_id && current && current.activityTypeId === row.activity_type_id && current.endSlot === slot - 1) {
         current.endSlot = slot;
         current.ruleIds.push(row.rule_id);
         return;
       }
-      current = row
+      current = row?.activity_type_id
         ? { key: `${dayIndex}-${slot}`, dayIndex, startSlot: slot, endSlot: slot, activityTypeId: row.activity_type_id, ruleIds: [row.rule_id] }
         : null;
       if (current) blocks.push(current);
