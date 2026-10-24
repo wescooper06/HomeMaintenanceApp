@@ -47,7 +47,7 @@ test("the Life Manager Vite entry bundles every feature without writing to www",
   assert.match(html, /<title>Life Manager<\/title>/);
   assert.doesNotMatch(html, /NavComponent|location\.assign/);
   const scripts = output.filter((entry) => entry.type === "chunk").map((entry) => entry.code).join("\n");
-  for (const text of ["Life Manager", "Weekly Planner", "Workbench", "Dashboard", "Calendar", "Daily Activity Planner", "Trips", "planner_weekly_tasks", "projects_all", "Connect Google Sheets"]) {
+  for (const text of ["Life Manager", "Weekly Planner", "Workbench", "Dashboard", "Calendar", "Daily Activity Planner", "Trips", "planner_weekly_tasks", "projects_all", "trips_workflow_metadata", "trips_timeline", "Connect Google Sheets"]) {
     assert(scripts.includes(text), `Build includes ${text}`);
   }
   assert.deepEqual(legacyHashes(), before);

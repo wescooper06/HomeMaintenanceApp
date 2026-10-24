@@ -1,7 +1,3 @@
-// Trips Home Page
-// Displays active trips from the Trips sheet.
-// Uses getTrips() from sheetsClient.js.
-// Allows opening a trip and adding a new one.
 import { useEffect, useRef, useState } from "react";
 import { deleteTrip, getTrips } from "../../services/tripsService.js";
 import { Link, useNavigate } from "react-router-dom";
@@ -229,7 +225,7 @@ export default function TripsHome() {
     setActionError("");
     let deleted = false;
     try {
-      await deleteTrip(trip.id ?? trip.tripId);
+      await deleteTrip(trip.tripId);
       deleted = true;
       setTrips((current) => current.filter((item) => item.tripId !== trip.tripId));
       setTrips(await getTrips());
