@@ -5,7 +5,8 @@ import TimelineGrid from "./components/TimelineGrid.jsx";
 import TripEditorPanel from "./components/TripEditorPanel.jsx";
 import MonthDetailsModal from "./components/MonthDetailsModal.jsx";
 import { TimelineDragDrop } from "./components/TimelineDragDrop.jsx";
-import { assignTripToMonth, getTimeline, getTrips, propagateTimelineYear } from "../../services/tripsService.js";
+import { assignTripToMonth, getTrips } from "../../services/tripsService.js";
+import { getTimeline, propagateTimelineYear } from "../../services/tripsTimelineService.js";
 import { timelineKey } from "../../utils/timelineUtils.js";
 import "./TimelineView.css";
 

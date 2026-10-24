@@ -6,7 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, CalendarDays, GripVertical } from "lucide-react";
 import TripEditorPanel from "./components/TripEditorPanel.jsx";
 import PriorityTimelinePreview from "./components/PriorityTimelinePreview.jsx";
-import { ensureTripPriorityColumn, getTrips, updateTrip } from "../../services/tripsService.js";
+import { getTrips, updateTrip } from "../../services/tripsService.js";
 import { prioritizedTrips, tripPriority } from "../../utils/priorityUtils.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -86,8 +86,6 @@ export default function PrioritizeTrips() {
     let active = true;
     async function load() {
       try {
-        await ensureTripPriorityColumn();
-        if (!active) return;
         let trips = await getTrips();
         if (!active) return;
         const ordered = prioritizedTrips(trips);

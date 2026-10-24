@@ -3,7 +3,7 @@
 ## Shared Trips source
 
 Trips pages, components, and assets now live in `../src/pages/Trips/`.
-The Trips Sheets service is `../src/services/tripsService.js`, and its shared
+The Trips Supabase service is `../src/services/tripsService.js`, and its shared
 utilities live in `../src/utils/`. The existing `trips/` package still supplies
 the app entry point, dependencies, and Vite configuration. Run `npm run dev`
 or `npm run build` here as before; its entry imports the relocated source.
@@ -22,7 +22,7 @@ The main navigation uses `/#planner`, `/#workbench`, `/#dashboard`, `/#calendar`
 and its Google connection flow, not the placeholder page. Old `#activities`,
 `/daily-activities`, and `/activity-planner` links remain aliases.
 Path aliases such as `/planner` still support existing React navigation.
-The Trips feature retains its name, Google connection flow, and paths:
+The Trips feature retains its name and paths, without a Google connection gate:
 `/`, `/index.html`, `/prioritize`, `/timeline`, `/new`, and `/:tripId`.
 An explicit `#trips` always opens the Trips home feature.
 
@@ -106,9 +106,9 @@ only after destination writes succeed. JSON metadata is preserved on edits.
 Multi-row saves are not transactions; errors are explicit and retryable.
 Concurrent edits in separate clients remain last-writer-wins.
 
-No legacy `www/` files or historical migrations are changed. Trips and Daily
-Activities retain their independent Google integrations; this patch changes
-Planner/Projects data storage, not those features. Reminder delivery is also
+No legacy `www/` files or historical migrations are changed. Daily Activities
+retains its independent Google integration. Trips uses Supabase exclusively for
+trip, workflow, and timeline data. Reminder delivery is also
 unchanged and requires its existing runtime configuration.
 
 Validation:
@@ -118,6 +118,14 @@ node --test tests/planner-supabase.test.cjs tests/planner-react.test.cjs tests/p
 ```
 
 Run this at the repository root. Tests do not contact the live database.
+
+## Trips Supabase storage
+
+Trips uses the same lazily configured Supabase client as Planner. The only Trips
+tables are `trips`, `trips_workflow_metadata`, and `trips_timeline`.
+No schema changes, Sheets import, or data migration runs automatically.
+See [the migration checklist](./SUPABASE-MIGRATION.md) for service APIs, schema
+conventions, validation, and partial-failure recovery.
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

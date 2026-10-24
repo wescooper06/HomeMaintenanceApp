@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "npm --prefix trips run dev",
     "test": "node tests/misc-sheet.test.js",
-    "dev:activity-planner": "npm --prefix trips run dev:activity-planner"
+    "dev:activity-planner": "npm --prefix trips run dev:activity-planner",
+    "mobile:sync": "npm --prefix trips run build && cap sync android"
   },
   "keywords": [],
   "author": "",

@@ -1,9 +1,8 @@
 {
   "appId": "com.example.homemaintenance",
   "appName": "HomeMaintenanceApp",
-  "webDir": "www",
+  "webDir": "dist/trips",
   "server": {
-    "androidScheme": "https",
-    "appStartPath": "/mobile/index.html"
+    "androidScheme": "https"
   }
 }
