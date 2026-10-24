@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { assignTripToMonth, getTimeline, getTrips, initializeTimelineYear, propagateTimelineYear } from "../../../services/tripsService.js";
+import { assignTripToMonth, getTrips } from "../../../services/tripsService.js";
+import { getTimeline, propagateTimelineYear } from "../../../services/tripsTimelineService.js";
 import { TIMELINE_MONTHS, timelineColor, timelineTripIds } from "../../../utils/timelineUtils.js";
 import MonthBox from "./MonthBox.jsx";
 import MonthDetailsModal from "./MonthDetailsModal.jsx";
@@ -26,8 +27,6 @@ export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelin
     let active = true;
     async function loadYear() {
       try {
-        await initializeTimelineYear(currentYear);
-        if (!active) return;
         const [months, loadedTrips] = await Promise.all([getTimeline(), getTrips()]);
         if (active) {
           setTimeline(months);

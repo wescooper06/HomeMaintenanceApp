@@ -1,474 +1,187 @@
-import { TIMELINE_MONTHS, timelineKey, timelineMonthNumber, timelineTripIds } from "../utils/timelineUtils.js";
-import { SPREADSHEET_ID, columnName, sheetRange, sheetsApiRequest } from "./googleSheetsClient.js";
-export {
-  SPREADSHEET_ID, columnName, sheetRange, sheetsApiRequest,
-  connectGoogleSheets, hasSheetsAccess,
-} from "./googleSheetsClient.js";
+import { getSupabaseClient } from "./supabaseClient.js";
+import { createTripsWorkflowService } from "./tripsWorkflowService.js";
+import { createTripsTimelineService, validateTimelineMonth } from "./tripsTimelineService.js";
+import { tripFields, tripResult, tripRows, tripUuid } from "./tripsSupabase.js";
+import { timelineMonthNumber } from "../utils/timelineUtils.js";
 
-async function sheetsRequest(path, options = {}) {
-  return sheetsApiRequest(SPREADSHEET_ID, path, options);
-}
+const fields = {
+  destination: "destination", startDate: "start_date", endDate: "end_date",
+  tripType: "trip_type", status: "status", timelineMonth: "timeline_month",
+  timelineYear: "timeline_year", notes: "notes", duration: "duration",
+  seasonality: "seasonality", costRange: "cost_range", considerations: "considerations",
+  tags: "tags", links: "links", priority: "priority", purpose: "purpose", location: "location",
+};
 
-async function readSheet(sheetName) {
-  const range = encodeURIComponent(sheetRange(sheetName, "A:ZZ"));
-  const renderOptions = sheetName === "Trips" ? "?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER" : "";
-  const payload = await sheetsRequest(`/values/${range}${renderOptions}`);
-  const values = payload.values || [];
-  return { headers: values[0] || [], rows: values.slice(1) };
-}
-
-async function readTripsSheet() {
-  let table = await readSheet("Trips");
-  const missingColumns = ["purpose", "location"].filter((column) => !table.headers.includes(column));
-  if (!missingColumns.length) return table;
-
-  const firstColumn = columnName(table.headers.length + 1);
-  const lastColumn = columnName(table.headers.length + missingColumns.length);
-  const range = encodeURIComponent(sheetRange("Trips", `${firstColumn}1:${lastColumn}1`));
-  await sheetsRequest(`/values/${range}?valueInputOption=RAW`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ majorDimension: "ROWS", values: [missingColumns] }),
-  });
-  return readSheet("Trips");
-}
-
-function rowsToObjects(headers, rows) {
-  return rows.filter((row) => row.some((value) => value !== "" && value != null)).map((row) => {
-    const record = {};
-    headers.forEach((header, index) => {
-      record[header] = row[index] ?? "";
-    });
-    return record;
-  });
-}
-
-async function appendSheetRow(sheetName, headers, row) {
-  const range = encodeURIComponent(sheetRange(sheetName, "A:ZZ"));
-  return sheetsRequest(`/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ majorDimension: "ROWS", values: [headers.map((header) => row[header] ?? "")] }),
-  });
-}
-
-export async function getTrips() {
-  const { headers, rows } = await readTripsSheet();
-  return rowsToObjects(headers, rows).map((row) => ({
-    ...row,
-    tripId: String(row.tripId ?? row.id ?? ""),
-    destination: row.destination || "",
-    startDate: tripDateValue(row.startDate),
-    endDate: tripDateValue(row.endDate),
-    tripType: row.tripType || "",
-    status: row.status || "",
-    purpose: row.purpose || "",
-    location: row.location || "",
-    priorityRank: row.priorityRank || "",
-    timelineMonth: hasTimelineValue(row.timelineMonth) ? timelineMonthNumber(row.timelineMonth) || row.timelineMonth : "",
-    timelineYear: row.timelineYear || "",
-    notes: row.notes || "",
-  }));
-}
-
-function tripDateValue(value) {
-  if (typeof value === "number") {
-    return new Date(Date.UTC(1899, 11, 30) + value * 86400000).toISOString().slice(0, 10);
-  }
-  return value || "";
-}
-
-export async function getTripById(tripId) {
-  const trips = await getTrips();
-  return trips.find((trip) => trip.tripId === tripId) || null;
-}
-
-const pendingTimelineCreates = new Set();
-
-export async function createTrip(tripData) {
-  validateTripTimeline(tripData);
-  const { headers } = await readTripsSheet();
-  const tripWithDetails = { ...tripData, purpose: tripData.purpose ?? "", location: tripData.location ?? "" };
-  const sheetTrip = tripFieldsForHeaders(headers, tripWithDetails);
-  validateTripColumns(headers, sheetTrip);
-  if ((await getTrips()).some((trip) => trip.tripId === tripData.tripId)) {
-    if (pendingTimelineCreates.has(String(tripData.tripId))) {
-      await updateTrip(tripData.tripId, tripWithDetails);
-      pendingTimelineCreates.delete(String(tripData.tripId));
-      return { tripId: tripData.tripId, result: { recovered: true } };
-    }
-    throw new Error(`Trip already exists: ${tripData.tripId}`);
-  }
-  const result = await appendSheetRow("Trips", headers, sheetTrip);
-  if (hasTimelineValue(tripData.timelineMonth) || hasTimelineValue(tripData.timelineYear)) {
-    pendingTimelineCreates.add(String(tripData.tripId));
-    await syncSavedTripTimeline(null, tripData);
-    pendingTimelineCreates.delete(String(tripData.tripId));
-  }
-  return { tripId: tripData.tripId, result };
-}
-
-function validateTripColumns(headers, fields) {
-  const missing = Object.keys(fields).filter((field) =>
-    fields[field] !== "" && fields[field] != null && !headers.includes(field)
-  );
-  if (missing.length) {
-    throw new Error(`Trips sheet is missing columns: ${missing.join(", ")}. Add these exact headers before saving.`);
-  }
-}
-
-function tripFieldsForHeaders(headers, fields) {
-  if (headers.includes("tripId")) return fields;
-  if (!headers.includes("id")) throw new Error("Trips sheet is missing its tripId or id header.");
-  const { tripId, ...values } = fields;
-  return tripId == null ? values : { ...values, id: tripId };
-}
-
-export async function updateTrip(tripId, updates) {
-  const { headers, rows } = await readTripsSheet();
-  const idColumn = headers.indexOf(headers.includes("tripId") ? "tripId" : "id");
-  if (idColumn < 0) throw new Error("Trips sheet is missing its tripId or id header.");
-  const rowIndex = rows.findIndex((row) => String(row[idColumn]) === String(tripId));
-  if (rowIndex < 0) throw new Error(`Trip not found: ${tripId}`);
-  const oldTrip = Object.fromEntries(headers.map((header, index) => [header, rows[rowIndex][index] ?? ""]));
-  const updatedTrip = { ...oldTrip, ...updates, id: rows[rowIndex][idColumn], tripId: String(tripId) };
-  const syncTimeline = Object.hasOwn(updates, "timelineMonth") || Object.hasOwn(updates, "timelineYear");
-  if (syncTimeline) validateTripTimeline(updatedTrip);
-  const sheetUpdates = tripFieldsForHeaders(headers, updates);
-  validateTripColumns(headers, sheetUpdates);
-  const data = Object.keys(sheetUpdates).filter((field) => field !== "tripId" && field !== "id" && headers.includes(field)).map((field) => {
-    const column = columnName(headers.indexOf(field) + 1);
-    return {
-      range: sheetRange("Trips", `${column}${rowIndex + 2}`),
-      values: [[sheetUpdates[field] ?? ""]],
-    };
-  });
-  if (!data.length) return { ok: true, tripId };
-  await sheetsRequest("/values:batchUpdate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ valueInputOption: "RAW", data }),
-  });
-  if (syncTimeline) await syncSavedTripTimeline(oldTrip, updatedTrip);
-  return { ok: true, tripId, ...updates };
-}
-
-export async function deleteTrip(tripId) {
-  if (!String(tripId ?? "").trim()) throw new Error("Missing trip id for deletion.");
-  const metadata = await sheetsRequest("?fields=sheets(properties(sheetId,title))");
-  const sheet = metadata.sheets?.find((item) => item.properties.title === "Trips");
-  if (!sheet) throw new Error("Trips sheet not found.");
-  const { headers, rows } = await readSheet("Trips");
-  const idColumn = headers.indexOf(headers.includes("tripId") ? "tripId" : "id");
-  if (idColumn < 0) throw new Error("Trips sheet is missing its tripId or id header.");
-  const matches = rows.map((row, index) => String(row[idColumn]) === String(tripId) ? index : -1).filter((index) => index >= 0);
-  if (matches.length !== 1) throw new Error(matches.length ? "Duplicate trip ids found; deletion cancelled." : "Trip not found; refresh the list before deleting.");
-  await sheetsRequest(":batchUpdate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requests: [{ deleteDimension: { range: {
-      sheetId: sheet.properties.sheetId,
-      dimension: "ROWS",
-      startIndex: matches[0] + 1,
-      endIndex: matches[0] + 2,
-    } } }] }),
-  });
-}
-
-let priorityColumnSetup = null;
-
-export function ensureTripPriorityColumn() {
-  if (priorityColumnSetup) return priorityColumnSetup;
-  priorityColumnSetup = (async () => {
-    const { headers, rows } = await readSheet("Trips");
-    if (headers.includes("priority")) return;
-    const columnCount = rows.reduce((count, row) => Math.max(count, row.length), headers.length) + 1;
-    const metadata = await sheetsRequest("?fields=sheets(properties(sheetId,title,gridProperties(columnCount)))");
-    const sheet = metadata.sheets?.find((item) => item.properties.title === "Trips");
-    if (!sheet) throw new Error("Trips sheet not found.");
-    const availableColumns = sheet.properties.gridProperties.columnCount;
-    if (columnCount > availableColumns) {
-      await sheetsRequest(":batchUpdate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requests: [{ appendDimension: {
-          sheetId: sheet.properties.sheetId, dimension: "COLUMNS", length: columnCount - availableColumns,
-        } }] }),
-      });
-    }
-    const range = encodeURIComponent(sheetRange("Trips", `${columnName(columnCount)}1`));
-    await sheetsRequest(`/values/${range}?valueInputOption=RAW`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ values: [["priority"]] }),
-    });
-  })().finally(() => { priorityColumnSetup = null; });
-  return priorityColumnSetup;
-}
-
-const TIMELINE_COLUMNS = ["year", "month", "color", "notes", "tripIds"];
-
-async function timelineTable() {
-  const table = await readSheet("Timeline");
-  const missing = TIMELINE_COLUMNS.filter((column) => !table.headers.includes(column));
-  if (missing.length) throw new Error(`Timeline sheet is missing columns: ${missing.join(", ")}.`);
-  return table;
-}
-
-function validateTimelineMonth(year, month) {
-  if (!Number.isInteger(Number(year)) || Number(year) < 1 || Number(year) > 9999 ||
-  !Number.isInteger(timelineMonthNumber(month))) {
-    throw new Error("Timeline requires a valid year and a month from 1 to 12.");
-  }
-}
-
-export async function getTimeline() {
-  const [{ headers, rows }, trips] = await Promise.all([
-    timelineTable(), getTrips(),
-  ]);
-  const validIds = new Set(trips.map((trip) => String(trip.tripId)));
-  const records = rowsToObjects(headers, rows);
-  const seen = new Set();
-  const months = records.map((record) => {
-    validateTimelineMonth(record.year, record.month);
-    const year = Number(record.year);
-    const month = timelineMonthNumber(record.month);
-    const key = `${year}-${month}`;
-    if (seen.has(key)) throw new Error(`Duplicate Timeline month: ${year}-${month}. Remove the duplicate row before editing.`);
-    seen.add(key);
-    return {
-      ...record, year, month,
-      tripIds: timelineTripIds(record.tripIds).filter((id) => validIds.has(id)),
-    };
-  });
-  const idColumn = headers.indexOf("tripIds");
-  const changes = rows.flatMap((row, index) => {
-    const ids = timelineTripIds(row[idColumn]);
-    const cleaned = ids.filter((id) => validIds.has(id));
-    return cleaned.length === ids.length ? [] : [{
-      range: sheetRange("Timeline", `${columnName(idColumn + 1)}${index + 2}`),
-      values: [[cleaned.join(",")]],
-    }];
-  });
-  if (changes.length) {
-    await sheetsRequest("/values:batchUpdate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ valueInputOption: "RAW", data: changes }),
-    });
-  }
-  return months;
-}
-
-export async function getTimelineMonth(year, month) {
-  validateTimelineMonth(year, month);
-  const key = timelineKey(year, month);
-  const entry = (await getTimeline()).find((record) => timelineKey(record.year, record.month) === key);
-  return {
-    year: Number(year), month: timelineMonthNumber(month), color: entry?.color ?? "", notes: entry?.notes ?? "", tripIds: entry?.tripIds ?? [],
-  };
-}
-
-export async function updateTimelineMonth(year, month, updates) {
-  validateTimelineMonth(year, month);
-  const allowed = ["color", "notes", "tripIds"];
-  if (Object.keys(updates).some((field) => !allowed.includes(field))) throw new Error("Unsupported Timeline field.");
-  const values = { ...updates };
-  if (Object.hasOwn(values, "color")) {
-    values.color = String(values.color || "").trim().toUpperCase();
-    if (values.color && !["IDEAL", "CAUTION", "CONFLICT"].includes(values.color)) throw new Error("Invalid Timeline color.");
-  }
-  if (Object.hasOwn(values, "tripIds")) values.tripIds = timelineTripIds(values.tripIds).join(",");
-  const { headers, rows } = await timelineTable();
-  const yearColumn = headers.indexOf("year");
-  const monthColumn = headers.indexOf("month");
-  const matches = rows.map((row, index) => Number(row[yearColumn]) === Number(year) && timelineMonthNumber(row[monthColumn]) === timelineMonthNumber(month) ? index : -1).filter((index) => index >= 0);
-  if (matches.length > 1) throw new Error(`Duplicate Timeline month: ${year}-${month}.`);
-  if (!matches.length) {
-    const record = { year: Number(year), month: TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(0, 1) + TIMELINE_MONTHS[timelineMonthNumber(month) - 1].slice(1).toLowerCase(), color: "", notes: "", tripIds: "", ...values };
-    const range = encodeURIComponent(sheetRange("Timeline", "A:ZZ"));
-    await sheetsRequest(`/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ values: [headers.map((header) => record[header] ?? "")] }),
-    });
-    return;
-  }
-  const data = Object.keys(values).map((field) => ({
-    range: sheetRange("Timeline", `${columnName(headers.indexOf(field) + 1)}${matches[0] + 2}`),
-    values: [[values[field] ?? ""]],
-  }));
-  if (!data.length) return;
-  await sheetsRequest("/values:batchUpdate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ valueInputOption: "RAW", data }),
-  });
-}
-
-export async function propagateTimelineYear(fromYear, toYear) {
-  validateTimelineMonth(fromYear, 1);
-  validateTimelineMonth(toYear, 1);
-  if (Number(fromYear) === Number(toYear)) throw new Error("Choose a different target year.");
-  const source = (await getTimeline()).filter((entry) => entry.year === Number(fromYear));
-  await initializeTimelineYear(toYear);
-  for (const entry of source) {
-    await updateTimelineMonth(toYear, entry.month, { color: entry.color ?? "", notes: entry.notes ?? "" });
-  }
-}
-
-export async function assignTripToMonth(tripId, year, month) {
-  validateTimelineMonth(year, month);
-  const trip = await getTripById(String(tripId));
-  if (!trip) throw new Error(`Trip not found: ${tripId}`);
-  return updateTrip(trip.tripId, { timelineMonth: timelineMonthNumber(month), timelineYear: Number(year) });
-}
-
-export async function removeTripFromMonth(tripId, year, month) {
-  const entry = await getTimelineMonth(year, month);
-  const ids = timelineTripIds(entry.tripIds);
-  const id = String(tripId);
-  if (ids.includes(id)) {
-    await updateTimelineMonth(year, month, { tripIds: ids.filter((value) => value !== id) });
-  }
-}
-
-const timelineYearInitializations = new Map();
-let timelineSyncQueue = Promise.resolve();
-
-function hasTimelineValue(value) {
-  return value != null && String(value).trim() !== "";
-}
-
-function validateTripTimeline(trip) {
-  if (hasTimelineValue(trip.timelineYear)) validateTimelineMonth(trip.timelineYear, 1);
-  if (hasTimelineValue(trip.timelineMonth) && !Number.isInteger(timelineMonthNumber(trip.timelineMonth))) {
-    throw new Error("Trip timeline month must be Jan-Dec or a number from 1 to 12.");
-  }
-}
-
-function timelineTripId(trip) {
-  const id = String(trip.id ?? trip.tripId ?? "").trim();
-  if (!id) throw new Error("Missing trip id for Timeline sync.");
-  return id;
-}
-
-function tripHasTimeline(trip) {
-  return hasTimelineValue(trip.timelineMonth) && hasTimelineValue(trip.timelineYear);
-}
-
-export function initializeTimelineYear(year) {
-  validateTimelineMonth(year, 1);
-  const key = Number(year);
-  if (timelineYearInitializations.has(key)) return timelineYearInitializations.get(key);
-  const initialization = (async () => {
-    const { headers } = await timelineTable();
-    const existing = await getTimeline();
-    const months = new Set(existing.filter((entry) => entry.year === key).map((entry) => entry.month));
-    const missing = TIMELINE_MONTHS.flatMap((name, index) => months.has(index + 1) ? [] : [{
-      year: key, month: name.slice(0, 1) + name.slice(1).toLowerCase(),
-      color: "", notes: "", blocks: "", tripIds: "",
-    }]);
-    if (!missing.length) return;
-    const range = encodeURIComponent(sheetRange("Timeline", "A:ZZ"));
-    await sheetsRequest(`/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ values: missing.map((entry) => headers.map((header) => entry[header] ?? "")) }),
-    });
-  })().finally(() => timelineYearInitializations.delete(key));
-  timelineYearInitializations.set(key, initialization);
-  return initialization;
-}
-
-export async function addTripToTimeline(trip) {
-  if (!tripHasTimeline(trip)) return;
-  validateTripTimeline(trip);
-  const id = timelineTripId(trip);
-  await initializeTimelineYear(trip.timelineYear);
-  const target = (await getTimeline()).find((entry) => timelineKey(entry.year, entry.month) === timelineKey(trip.timelineYear, trip.timelineMonth));
-  const ids = timelineTripIds(target?.tripIds);
-  if (!ids.includes(id)) {
-    await updateTimelineMonth(trip.timelineYear, trip.timelineMonth, { tripIds: [...ids, id] });
-  }
-}
-
-export async function removeTripFromTimeline(trip) {
-  const id = timelineTripId(trip);
-  for (const entry of await getTimeline()) {
-    const ids = timelineTripIds(entry.tripIds);
-    if (ids.includes(id)) await updateTimelineMonth(entry.year, entry.month, { tripIds: ids.filter((value) => value !== id) });
-  }
-}
-
-export async function moveTripInTimeline(oldTrip, updatedTrip) {
-  validateTripTimeline(updatedTrip);
-  const changed = timelineKey(oldTrip.timelineYear, oldTrip.timelineMonth) !== timelineKey(updatedTrip.timelineYear, updatedTrip.timelineMonth);
-  if (changed || !tripHasTimeline(updatedTrip)) {
-    await removeTripFromTimeline(oldTrip);
-  } else {
-    const id = timelineTripId(updatedTrip);
-    const target = timelineKey(updatedTrip.timelineYear, updatedTrip.timelineMonth);
-    for (const entry of await getTimeline()) {
-      const ids = timelineTripIds(entry.tripIds);
-      if (timelineKey(entry.year, entry.month) !== target && ids.includes(id)) {
-        await updateTimelineMonth(entry.year, entry.month, { tripIds: ids.filter((value) => value !== id) });
+function toRow(data) {
+  const row = tripFields(data, fields);
+  for (const column of ["start_date", "end_date"]) {
+    if (!Object.hasOwn(row, column)) continue;
+    row[column] = row[column] || null;
+    if (row[column] !== null) {
+      const value = String(row[column]);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+          !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) {
+        throw new Error(`${column} must be a valid YYYY-MM-DD date.`);
       }
     }
   }
-  await addTripToTimeline(updatedTrip);
-}
-
-async function syncSavedTripTimeline(oldTrip, updatedTrip) {
-  const operation = timelineSyncQueue.then(async () => {
-    if (hasTimelineValue(updatedTrip.timelineYear)) await initializeTimelineYear(updatedTrip.timelineYear);
-    if (oldTrip) await moveTripInTimeline(oldTrip, updatedTrip);
-    else await addTripToTimeline(updatedTrip);
-  });
-  timelineSyncQueue = operation.catch(() => undefined);
-  try {
-    await operation;
-  } catch (syncError) {
-    throw new Error(`Trip saved, but Timeline sync failed. Retry Save to finish syncing. ${syncError.message}`, { cause: syncError });
+  for (const column of ["duration", "timeline_year", "timeline_month"]) {
+    if (!Object.hasOwn(row, column)) continue;
+    const value = row[column];
+    row[column] = value == null || String(value).trim() === "" ? null
+      : column === "timeline_month" ? timelineMonthNumber(value) : Number(value);
+    if (row[column] !== null && (!Number.isInteger(row[column]) ||
+        row[column] < (column === "duration" ? 0 : 1) ||
+        row[column] > (column === "timeline_month" ? 12 : column === "timeline_year" ? 9999 : 32767))) {
+      throw new Error(`Invalid ${column}.`);
+    }
   }
+  if (Object.hasOwn(row, "links")) {
+    if (typeof row.links === "string") {
+      const value = row.links.trim();
+      row.links = value === "" ? null
+        : /^[{["]/.test(value) || /^(true|false|null|-?\d+(\.\d+)?([eE][+-]?\d+)?)$/.test(value)
+          ? JSON.parse(value) : value;
+    }
+  }
+  for (const column of Object.values(fields)) {
+    if (!["duration", "timeline_year", "timeline_month", "links", "start_date", "end_date"].includes(column) &&
+        Object.hasOwn(row, column)) row[column] = row[column] == null ? null : String(row[column]);
+  }
+  return row;
 }
 
-export async function getWorkflowMetadata(tripId) {
-  const { headers, rows } = await readSheet("Workflow Metadata");
-  const workflow = rowsToObjects(headers, rows).find((row) => row.tripId === tripId);
-  if (!workflow) return { tripId, stage: "Define", stageNotes: "" };
+function fromRow(row) {
   return {
-    ...workflow,
-    stage: workflow.stageStatus || workflow.stage || "Define",
-    stageNotes: workflow.stageNotes || "",
+    tripId: row.id,
+    ...Object.fromEntries(Object.entries(fields).map(([field, column]) => [
+      field, column === "links" && row.links != null && typeof row.links !== "string"
+        ? JSON.stringify(row.links) : row[column] ?? "",
+    ])),
   };
 }
 
-export async function updateWorkflowMetadata(tripId, updates) {
-  const { headers, rows } = await readSheet("Workflow Metadata");
-  const tripIdColumn = headers.indexOf("tripId");
-  const stageColumn = headers.indexOf("stageStatus") >= 0
-    ? headers.indexOf("stageStatus")
-    : headers.indexOf("stage");
-  const notesColumn = headers.indexOf("stageNotes");
-  if (tripIdColumn < 0 || stageColumn < 0 || notesColumn < 0) {
-    throw new Error("Workflow Metadata sheet is missing required headers.");
+function tripValues(data, id) {
+  const { tripId, id: suppliedId, ...values } = data;
+  if ((tripId != null && tripId !== id) || (suppliedId != null && suppliedId !== id)) {
+    throw new Error("Trip identity cannot be changed.");
+  }
+  return toRow(values);
+}
+
+function comparable(value) {
+  return JSON.stringify(value, (_, entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+    ? Object.fromEntries(Object.keys(entry).sort().map((key) => [key, entry[key]])) : entry);
+}
+
+export function createTripsService(getClient = getSupabaseClient) {
+  const workflow = createTripsWorkflowService(getClient);
+  const timeline = createTripsTimelineService(getClient);
+
+  async function getTrips() {
+    return (await tripRows(getClient(), "trips", ["created_at", "id"])).map(fromRow);
   }
 
-  const recordIndex = rows.findIndex((row) => row[tripIdColumn] === tripId);
-  const rowNumber = recordIndex < 0 ? rows.length + 2 : recordIndex + 2;
-  const row = recordIndex < 0 ? Array(headers.length).fill("") : [...rows[recordIndex]];
-  while (row.length < headers.length) row.push("");
-  row[tripIdColumn] = tripId;
-  row[stageColumn] = updates.stageStatus || updates.stage || "Define";
-  row[notesColumn] = updates.stageNotes || "";
+  async function getTripById(tripId) {
+    const row = await tripResult(getClient().from("trips").select("*")
+      .eq("id", tripUuid(tripId)).maybeSingle(), "Load trip");
+    return row ? fromRow(row) : null;
+  }
 
-  if (recordIndex < 0) return appendSheetRow("Workflow Metadata", headers, Object.fromEntries(headers.map((header, index) => [header, row[index]])));
+  async function ensureTimeline(row) {
+    if (row.timeline_year != null && row.timeline_month != null) {
+      validateTimelineMonth(row.timeline_year, row.timeline_month);
+      await timeline.createTimelineEntry(row.timeline_year, row.timeline_month);
+    }
+  }
 
-  const range = encodeURIComponent(sheetRange("Workflow Metadata", `A${rowNumber}:${columnName(headers.length)}${rowNumber}`));
-  return sheetsRequest(`/values/${range}?valueInputOption=USER_ENTERED`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ majorDimension: "ROWS", values: [row] }),
-  });
+  async function createTrip(data) {
+    const id = tripUuid(data.tripId ?? data.id ?? crypto.randomUUID());
+    const row = tripValues(data, id);
+    const month = row.timeline_month != null, year = row.timeline_year != null;
+    if (month !== year) throw new Error("Provide both Timeline month and year, or leave both empty.");
+    await tripResult(getClient().from("trips").upsert({ ...row, id }, {
+      onConflict: "id", ignoreDuplicates: true,
+    }), "Create trip");
+    try {
+      const saved = await getTripById(id);
+      if (!saved) throw new Error("Created trip is not readable; check Supabase policies.");
+      const existing = tripValues(saved, id);
+      if (Object.keys(row).some((column) => comparable(row[column] ?? "") !== comparable(existing[column] ?? ""))) {
+        throw new Error("This ID already belongs to a trip with different values. Use Edit to change it instead of creating it again.");
+      }
+      await workflow.createWorkflowMetadata(id, saved.status);
+      await ensureTimeline(existing);
+      return saved;
+    } catch (error) {
+      throw new Error(`Trip ${id} was saved, but related setup failed. Retry creation with the same ID to finish without duplicates. ${error.message}`, { cause: error });
+    }
+  }
+
+  async function updateTrip(tripId, updates) {
+    const id = tripUuid(tripId);
+    const values = tripValues(updates, id);
+    const old = await getTripById(id);
+    if (!old) throw new Error(`Trip not found: ${id}`);
+    const merged = {
+      timeline_month: old.timelineMonth === "" ? null : old.timelineMonth,
+      timeline_year: old.timelineYear === "" ? null : old.timelineYear,
+      ...values,
+    };
+    // Create shared settings first so a failed setup cannot move a trip halfway.
+    if (Object.hasOwn(values, "timeline_month") || Object.hasOwn(values, "timeline_year")) {
+      if ((merged.timeline_month != null) !== (merged.timeline_year != null)) {
+        throw new Error("Provide both Timeline month and year, or clear both.");
+      }
+      await ensureTimeline(merged);
+    }
+    const row = await tripResult(getClient().from("trips")
+      .update({ ...values, updated_at: new Date().toISOString() }).eq("id", id)
+      .select("*").single(), "Save trip");
+    return fromRow(row);
+  }
+
+  async function deleteTrip(tripId) {
+    const id = tripUuid(tripId);
+    const exists = await getTripById(id);
+    const deleted = await tripResult(getClient().from("trips").delete().eq("id", id).select("id"), "Delete trip");
+    if (exists && deleted.length !== 1) throw new Error("Trip deletion was not confirmed; check Supabase delete policies.");
+    try {
+      const metadata = await tripResult(getClient().from("trips_workflow_metadata").select("trip_id").eq("trip_id", id)
+        .maybeSingle(), "Check trip workflow cleanup");
+      const removed = await tripResult(getClient().from("trips_workflow_metadata").delete().eq("trip_id", id)
+        .select("trip_id"), "Delete trip workflow");
+      if (metadata && removed.length !== 1) throw new Error("Workflow deletion was not confirmed; check Supabase delete policies.");
+    } catch (error) {
+      throw new Error(`Trip deleted, but workflow cleanup failed. Retry deletion for ${id}. ${error.message}`, { cause: error });
+    }
+    // Timeline settings are shared by other trips and must not be deleted.
+    return { ok: true, tripId: id };
+  }
+
+  async function assignTripToMonth(tripId, year, month) {
+    validateTimelineMonth(year, month);
+    return updateTrip(tripId, { timelineYear: Number(year), timelineMonth: timelineMonthNumber(month) });
+  }
+
+  async function removeTripFromMonth(tripId, year, month) {
+    validateTimelineMonth(year, month);
+    const trip = await getTripById(tripId);
+    if (!trip) throw new Error(`Trip not found: ${tripId}`);
+    if (Number(trip.timelineYear) === Number(year) && Number(trip.timelineMonth) === timelineMonthNumber(month)) {
+      return updateTrip(tripId, { timelineYear: null, timelineMonth: null });
+    }
+    return trip;
+  }
+
+  return { getTrips, getTripById, createTrip, updateTrip, deleteTrip, assignTripToMonth, removeTripFromMonth };
 }
+
+const trips = createTripsService();
+export const getTrips = (...args) => trips.getTrips(...args);
+export const getTripById = (...args) => trips.getTripById(...args);
+export const createTrip = (...args) => trips.createTrip(...args);
+export const updateTrip = (...args) => trips.updateTrip(...args);
+export const deleteTrip = (...args) => trips.deleteTrip(...args);
+export const assignTripToMonth = (...args) => trips.assignTripToMonth(...args);
+export const removeTripFromMonth = (...args) => trips.removeTripFromMonth(...args);
