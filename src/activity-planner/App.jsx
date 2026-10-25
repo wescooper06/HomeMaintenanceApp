@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+
 import DailyActivityPlanner from "../pages/ActivityPlanner/DailyActivityPlanner.jsx";
 
 export default function App() {

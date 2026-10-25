@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+
 import {
   getActivityTypes, getActivityRules, getWeeklyGrid,
   createActivityRule, updateActivityRule, deleteActivityRule, splitRule,
@@ -20,8 +21,8 @@ export function useActivityData() {
           setData({ activityTypes, rules, weeklyGrid });
           setError("");
         }
-      }).catch((error) => {
-        if (current === state.generation) setError(error.message);
+      }).catch((loadError) => {
+        if (current === state.generation) setError(loadError.message);
       }).finally(() => {
         if (current === state.generation) setLoading(false);
       });

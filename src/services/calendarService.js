@@ -1,18 +1,12 @@
-// Legacy Calendar helpers and React transitions; adapters load only when requested.
 
+import { calendarReminders } from "./calendarReminderService.js";
+import { googleAuth } from "./googleAuth.js";
 import { cleanText, toDateKey } from "./plannerService.js";
+import { plannerStorage } from "./plannerSupabaseStorage.js";
 
 export { cleanText, toDateKey };
 
-export function escapeHtml(value) {
-  return String(value == null ? "" : value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    // eslint-disable-next-line no-useless-escape -- Keep the legacy expression unchanged.
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+
 
 export function buildMonthRange(monthDate) {
   const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
@@ -276,6 +270,7 @@ export function formatDateTimeDisplay(value, isAllDay) {
 
 export function normalizeCalendarEvents(items) {
   return (items || [])
+    .filter((event) => !event?.extendedProperties?.private?.plannerTaskId)
     .flatMap((event) => {
       const span = parseEventSpan(event);
       if (!span) {
@@ -459,7 +454,8 @@ export function getUniqueEventCount(events) {
   const ids = new Set();
 
   events.forEach((event) => {
-    const id = cleanText(getEventIdentity(event.raw), `${event.title}-${event.dateKey}`);
+    const id = cleanText(getEventIdentity(event.raw), "");
+    if (!id) throw new Error("Calendar event requires an explicit event ID; title-based identity is disabled.");
     ids.add(id);
   });
 
@@ -487,7 +483,7 @@ export function getPlannerEventIdSet(planner) {
   const ids = new Set();
 
   (planner.tasks || []).forEach((task) => {
-    if (cleanText(task && task.source, "") !== "google-calendar") {
+    if (task?.deleted || task?.deletedInstance || cleanText(task && task.source, "") !== "google-calendar") {
       return;
     }
 
@@ -522,258 +518,13 @@ export function buildCalendarEventsQuery(monthDate) {
   });
 }
 
-export function renderMonthGrid(state, plannerEventIds) {
-  const monthLabel = state.currentMonth.toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
-  const updatedAtLabel = state.lastUpdatedAt
-      ? `Updated at ${state.lastUpdatedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`
-      : "";
 
-  const eventsByDate = new Map();
-  state.events.forEach((event) => {
-    if (!eventsByDate.has(event.dateKey)) {
-      eventsByDate.set(event.dateKey, []);
-    }
-    eventsByDate.get(event.dateKey).push(event);
-  });
 
-  const today = new Date();
-  const monthStart = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth(), 1);
-  const monthEnd = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() + 1, 0);
-  const gridStart = getMonthGridStart(monthStart);
 
-  const weekdayHeaders = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    .map((label) => `<div class="calendar-weekday">${label}</div>`)
-    .join("");
 
-  const dayCells = Array.from({ length: 42 }, (_, index) => {
-    const cellDate = new Date(gridStart.getTime());
-    cellDate.setDate(gridStart.getDate() + index);
-    const key = toDateKey(cellDate);
-    const events = eventsByDate.get(key) || [];
-    const isOutsideMonth = cellDate < monthStart || cellDate > monthEnd;
-    const classNames = ["calendar-day-cell"];
-    if (isOutsideMonth) {
-      classNames.push("is-outside");
-    }
-    if (isSameDay(cellDate, today)) {
-      classNames.push("is-today");
-    }
 
-    const chips = events.map((event) => {
-      const eventId = getEventIdentity(event.raw);
-      const occurrenceKey = `${eventId}|${normalizeDateKey(event.dateKey)}`;
-      const inPlanner = plannerEventIds.has(occurrenceKey);
-      return `
-          <div class="calendar-event-item" draggable="true" data-action="drag-event" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(event.dateKey)}">
-            <div class="calendar-event-card" data-event-id="${escapeHtml(eventId)}" title="${escapeHtml(event.title)}">
-              ${inPlanner ? '<span class="calendar-planner-indicator" aria-label="In Planner" title="Added to Planner">P</span>' : ""}
-              <button type="button" class="calendar-event-open" data-action="open-event" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(event.dateKey)}" aria-label="Open event ${escapeHtml(event.title)}">
-                <span class="calendar-event-chip">
-                ${event.time ? `<span class="calendar-event-chip-time">${escapeHtml(event.time)}</span>` : ""}
-                <span>${escapeHtml(event.title)}</span>
-                ${event.description ? `<span class="calendar-event-chip-description">${escapeHtml(event.description)}</span>` : ""}
-                </span>
-              </button>
-              <div class="calendar-event-actions">
-                <button type="button" class="calendar-edit-pill" data-action="toggle-edit" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(event.dateKey)}">Edit</button>
-                <button type="button" class="calendar-add-planner" data-action="add-to-planner" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(event.dateKey)}">Add to Planner</button>
-              </div>
-            </div>
-          </div>
-        `;
-    }).join("");
 
-    return `
-        <article class="${classNames.join(" ")}" data-date-key="${key}">
-          <div class="calendar-day-number">${cellDate.getDate()}</div>
-          <div class="calendar-day-events">${chips}</div>
-        </article>
-      `;
-  }).join("");
 
-  const html = `
-      <section class="calendar-month-grid" aria-label="Monthly calendar">
-        <div class="calendar-weekday-row">${weekdayHeaders}</div>
-        <div class="calendar-days-grid">${dayCells}</div>
-      </section>
-    `;
-  return { monthLabel, updatedAtLabel, html };
-}
-
-export function renderCreateEventDialog() {
-  const defaults = getCreateDefaults();
-  return `
-        <div class="weather-modal-card" role="dialog" aria-modal="true" aria-label="Add calendar event">
-          <header class="weather-modal-header">
-            <div>
-              <h3 class="weather-modal-title">Add Event</h3>
-              <p class="weather-modal-location">Google Calendar</p>
-            </div>
-            <button type="button" class="weather-modal-close" data-action="modal-close" aria-label="Close event modal">X</button>
-          </header>
-          <div class="weather-modal-body">
-            <div class="weather-modal-form">
-              <div class="weather-modal-field field-full">
-                <label for="eventEditTitle">Title</label>
-                <input id="eventEditTitle" type="text" value="${escapeHtml(defaults.title)}" />
-              </div>
-              <div class="weather-modal-time-column">
-                <h4 class="weather-modal-column-title">Start Date</h4>
-                <div class="weather-modal-field">
-                  <label for="eventEditStartDate">Date</label>
-                  <input id="eventEditStartDate" type="date" value="${escapeHtml(defaults.dateValue)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditStartDateStartTime">Start time</label>
-                  <input id="eventEditStartDateStartTime" type="time" value="${escapeHtml(defaults.startDateStartTime)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditStartDateEndTime">End time</label>
-                  <input id="eventEditStartDateEndTime" type="time" value="${escapeHtml(defaults.startDateEndTime)}" />
-                </div>
-              </div>
-              <div class="weather-modal-time-column">
-                <h4 class="weather-modal-column-title">End Date</h4>
-                <div class="weather-modal-field">
-                  <label for="eventEditEndDate">Date</label>
-                  <input id="eventEditEndDate" type="date" value="${escapeHtml(defaults.dateValue)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditEndDateStartTime">Start time</label>
-                  <input id="eventEditEndDateStartTime" type="time" value="${escapeHtml(defaults.endDateStartTime)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditEndDateEndTime">End time</label>
-                  <input id="eventEditEndDateEndTime" type="time" value="${escapeHtml(defaults.endDateEndTime)}" />
-                </div>
-              </div>
-              <div class="weather-modal-field field-full">
-                <label for="eventEditLocation">Location</label>
-                <input id="eventEditLocation" type="text" value="${escapeHtml(defaults.location)}" />
-              </div>
-              <div class="weather-modal-field field-full">
-                <label for="eventEditDescription">Description</label>
-                <textarea id="eventEditDescription">${escapeHtml(defaults.description)}</textarea>
-              </div>
-            </div>
-            <div class="weather-modal-actions">
-              <button type="button" class="primary" data-action="create-event">Create Event</button>
-              <button type="button" data-action="modal-close">Cancel</button>
-            </div>
-          </div>
-        </div>
-      `;
-}
-
-export function renderEditEventDialog(event) {
-  const rawEvent = event && event.raw ? event.raw : event;
-  const eventId = getEventIdentity(rawEvent);
-  const occurrenceDateKey = normalizeDateKey(event && event.dateKey) || normalizeDateKey(rawEvent.start && (rawEvent.start.date || rawEvent.start.dateTime));
-  const defaults = getEventSpanForInputs(rawEvent);
-  return `
-        <div class="weather-modal-card" role="dialog" aria-modal="true" aria-label="Edit calendar event">
-          <header class="weather-modal-header">
-            <div>
-              <h3 class="weather-modal-title">Edit Event</h3>
-              <p class="weather-modal-location">Google Calendar</p>
-            </div>
-            <button type="button" class="weather-modal-close" data-action="modal-close" aria-label="Close event modal">X</button>
-          </header>
-          <div class="weather-modal-body">
-            <div class="weather-modal-form">
-              <div class="weather-modal-field field-full">
-                <label for="eventEditTitle">Title</label>
-                <input id="eventEditTitle" type="text" value="${escapeHtml(cleanText(rawEvent.summary, ""))}" />
-              </div>
-              <div class="weather-modal-time-column">
-                <h4 class="weather-modal-column-title">Start Date</h4>
-                <div class="weather-modal-field">
-                  <label for="eventEditStartDate">Date</label>
-                  <input id="eventEditStartDate" type="date" value="${escapeHtml(defaults.startDateValue)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditStartDateStartTime">Start time</label>
-                  <input id="eventEditStartDateStartTime" type="time" value="${escapeHtml(defaults.startDateStartTimeValue)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditStartDateEndTime">End time</label>
-                  <input id="eventEditStartDateEndTime" type="time" value="${escapeHtml(defaults.startDateEndTimeValue)}" />
-                </div>
-              </div>
-              <div class="weather-modal-time-column">
-                <h4 class="weather-modal-column-title">End Date</h4>
-                <div class="weather-modal-field">
-                  <label for="eventEditEndDate">Date</label>
-                  <input id="eventEditEndDate" type="date" value="${escapeHtml(defaults.endDateValue)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditEndDateStartTime">Start time</label>
-                  <input id="eventEditEndDateStartTime" type="time" value="${escapeHtml(defaults.endDateStartTimeValue)}" />
-                </div>
-                <div class="weather-modal-field">
-                  <label for="eventEditEndDateEndTime">End time</label>
-                  <input id="eventEditEndDateEndTime" type="time" value="${escapeHtml(defaults.endDateEndTimeValue)}" />
-                </div>
-              </div>
-              <div class="weather-modal-field field-full">
-                <label for="eventEditLocation">Location</label>
-                <input id="eventEditLocation" type="text" value="${escapeHtml(cleanText(rawEvent.location, ""))}" />
-              </div>
-              <div class="weather-modal-field field-full">
-                <label for="eventEditDescription">Description</label>
-                <textarea id="eventEditDescription">${escapeHtml(cleanText(rawEvent.description, ""))}</textarea>
-              </div>
-            </div>
-            <div class="weather-modal-actions">
-              <button type="button" class="primary" data-action="save-event" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(occurrenceDateKey)}">Save Changes</button>
-              <button type="button" class="danger" data-action="delete-event" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(occurrenceDateKey)}">Delete Event</button>
-              <button type="button" data-action="cancel-edit">Cancel</button>
-            </div>
-          </div>
-        </div>
-      `;
-}
-
-export function renderEventDetailsDialog(event) {
-  const rawEvent = event && event.raw ? event.raw : event;
-  const eventId = getEventIdentity(rawEvent);
-  const occurrenceDateKey = normalizeDateKey(event && event.dateKey) || normalizeDateKey(rawEvent.start && (rawEvent.start.date || rawEvent.start.dateTime));
-  const start = rawEvent.start || {};
-  const end = rawEvent.end || {};
-  const recurrence = Array.isArray(rawEvent.recurrence) ? rawEvent.recurrence.join("\n") : cleanText(rawEvent.recurrence, "-");
-  const isAllDay = Boolean(cleanText(start.date, "") && !cleanText(start.dateTime, ""));
-
-  return `
-      <div class="weather-modal-card" role="dialog" aria-modal="true" aria-label="Calendar event details">
-        <header class="weather-modal-header">
-          <div>
-            <h3 class="weather-modal-title">${escapeHtml(cleanText(rawEvent.summary, "Untitled event"))}</h3>
-            <p class="weather-modal-location">Google Calendar</p>
-          </div>
-          <button type="button" class="weather-modal-close" data-action="modal-close" aria-label="Close event modal">X</button>
-        </header>
-        <div class="weather-modal-body">
-          <div class="weather-modal-grid">
-            <div class="weather-modal-item"><strong>Date:</strong> ${escapeHtml(formatModalDateLabel(rawEvent) || "-")}</div>
-            <div class="weather-modal-item"><strong>Start:</strong> ${escapeHtml(formatDateTimeDisplay(start.dateTime || start.date, isAllDay))}</div>
-            <div class="weather-modal-item"><strong>End:</strong> ${escapeHtml(formatDateTimeDisplay(end.dateTime || end.date, isAllDay))}</div>
-            <div class="weather-modal-item"><strong>Location:</strong> ${escapeHtml(cleanText(rawEvent.location, "-"))}</div>
-          </div>
-          <div class="weather-modal-item"><strong>Description:</strong><br>${escapeHtml(cleanText(rawEvent.description, "-"))}</div>
-          <div class="weather-modal-item"><strong>Recurrence:</strong><br>${recurrence ? escapeHtml(recurrence).replace(/\n/g, "<br>") : "-"}</div>
-          <div class="weather-modal-item"><strong>Attendees:</strong><br>${escapeHtml(formatAttendees(rawEvent.attendees))}</div>
-          <div class="weather-modal-actions">
-            <button type="button" class="primary" data-action="toggle-edit" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(occurrenceDateKey)}">Edit Event</button>
-            <button type="button" class="primary" data-action="add-to-planner" data-event-id="${escapeHtml(eventId)}" data-date-key="${escapeHtml(occurrenceDateKey)}">Add to Planner</button>
-            <button type="button" data-action="modal-close">Close</button>
-          </div>
-        </div>
-      </div>
-    `;
-}
 
 export function buildEventUpdatePayloads(selected, updatedData) {
   if (!selected) throw new Error("Event not found.");
@@ -811,24 +562,7 @@ export function buildEventUpdatePayloads(selected, updatedData) {
     }
   }
 
-  const putPayload = {
-    ...baseEvent,
-    summary: Object.prototype.hasOwnProperty.call(updatedData, "summary")
-      ? cleanText(updatedData.summary, cleanText(baseEvent.summary, "Untitled event"))
-      : cleanText(baseEvent.summary, "Untitled event"),
-    description: Object.prototype.hasOwnProperty.call(updatedData, "description")
-      ? cleanText(updatedData.description, cleanText(baseEvent.description, ""))
-      : cleanText(baseEvent.description, ""),
-    location: Object.prototype.hasOwnProperty.call(updatedData, "location")
-      ? cleanText(updatedData.location, cleanText(baseEvent.location, ""))
-      : cleanText(baseEvent.location, ""),
-  };
-  if (patchPayload.start && patchPayload.end) {
-    putPayload.start = patchPayload.start;
-    putPayload.end = patchPayload.end;
-  }
-
-  return { patchPayload, putPayload };
+  return { patchPayload };
 }
 
 export function buildEventMoveData(selected, targetDateKey, sourceDateKey) {
@@ -931,13 +665,14 @@ export function buildPlannerEventAdditions(event, occurrenceDateKey, planner) {
   }
 
   const eventProjectId = cleanText(rawEvent.id, "");
-  // Shape the legacy snapshot without mutating the caller's task collection.
+  // Keep stable event/day identities without mutating the caller's task collection.
   const existingTasks = Array.isArray(planner.tasks) ? [...planner.tasks] : [];
   const additions = [];
 
   dateKeysToAdd.forEach((dateKey) => {
     const duplicate = existingTasks.find((task) => {
-      return cleanText(task && task.source, "") === "google-calendar"
+      return !task?.deleted && !task?.deletedInstance
+        && cleanText(task && task.source, "") === "google-calendar"
         && cleanText(task && task.projectId, "") === eventProjectId
         && normalizeDateKey(task && task.date) === dateKey;
     });
@@ -961,6 +696,8 @@ export function buildPlannerEventAdditions(event, occurrenceDateKey, planner) {
       checklist: [],
       checklistOpen: false,
       completed: false,
+      deleted: false,
+      deletedInstance: false,
       projectId: eventProjectId,
       recurrence: "",
       priority: null,
@@ -1086,68 +823,15 @@ export function getCalendarFormValues(mode, event) {
   });
 }
 
-let calendarAuthPromise;
-let calendarPlannerPromise;
-
-async function getCalendarAuth() {
-  if (!window.Auth) {
-    if (!calendarAuthPromise) {
-      calendarAuthPromise = (async () => {
-        await import("../../www/js/app-config.js");
-        await import("../../www/auth.js");
-      })().catch((error) => {
-        calendarAuthPromise = null;
-        throw new Error("Unable to load Google authentication.", { cause: error });
-      });
-    }
-    await calendarAuthPromise;
-  }
-  if (!window.Auth) throw new Error("Google authentication is unavailable.");
-  return window.Auth;
-}
-
-async function getCalendarPlannerStorage() {
-  if (!window.PlannerStorage) {
-    if (!calendarPlannerPromise) {
-      calendarPlannerPromise = (async () => {
-        await import("../../www/js/app-config.js");
-        await import("../../www/js/utils/uuid.js");
-        await import("../../www/js/services/sheets.service.js");
-        await import("../../www/js/services/planner-storage.service.js");
-      })().catch((error) => {
-        calendarPlannerPromise = null;
-        throw error;
-      });
-    }
-    await calendarPlannerPromise;
-  }
-  if (!window.PlannerStorage) throw new Error("PlannerStorage is unavailable.");
-  return window.PlannerStorage;
-}
-
-export function readCalendarPlanner(storage = window.localStorage) {
-  try {
-    const parsed = JSON.parse(storage.getItem("hm_weekly_planner") || "null");
-    if (parsed && typeof parsed === "object" && Array.isArray(parsed.tasks)) return parsed;
-  } catch (error) {
-    console.debug("Planner storage read failed", error);
-  }
-  return { weekStartDate: getPlannerWeekStart(new Date()), tasks: [] };
-}
-
 export function createCalendarApi({
-  getAuth = getCalendarAuth,
+  getAuth = () => googleAuth,
   request = (...args) => fetch(...args),
 } = {}) {
   const scopes = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events";
   const baseUrl = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
   async function accessToken() {
     const auth = await getAuth();
-    try {
-      return await auth.ensureAuthenticated(scopes);
-    } catch {
-      return auth.signIn(scopes);
-    }
+    return auth.ensureAuthenticated(scopes);
   }
   async function send(method, eventId, payload) {
     const token = await accessToken();
@@ -1160,11 +844,11 @@ export function createCalendarApi({
       ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
     if (response.status === 401) {
-      void (await getAuth()).signOut();
-      throw new Error("TOKEN_EXPIRED");
+      await (await getAuth()).signOut();
+      throw new Error("Google Calendar token expired. Connect Google Calendar, then retry.");
     }
     if (!response.ok) {
-      if (method === "PATCH" || method === "PUT") {
+      if (method === "PATCH") {
         let message;
         try {
           const body = await response.json();
@@ -1181,23 +865,15 @@ export function createCalendarApi({
   async function signIn() {
     return (await getAuth()).signIn(scopes);
   }
-  async function retryExpired(operation) {
-    try {
-      return await operation();
-    } catch (error) {
-      if (error.message !== "TOKEN_EXPIRED") throw error;
-      await signIn();
-      return operation();
-    }
-  }
   return {
+    signIn,
     async list(monthDate) {
       const token = await accessToken();
       const response = await request(`${baseUrl}?${buildCalendarEventsQuery(monthDate)}`, {
         method: "GET", headers: { Authorization: `Bearer ${token}` },
       });
       if (response.status === 401) {
-        void (await getAuth()).signOut();
+        await (await getAuth()).signOut();
         throw new Error("Google Calendar token expired. Please sign in again.");
       }
       if (!response.ok) throw new Error(`Google Calendar request failed with ${response.status}`);
@@ -1205,38 +881,18 @@ export function createCalendarApi({
       return Array.isArray(payload.items) ? payload.items : [];
     },
     async update(eventId, selected, data) {
-      const { patchPayload, putPayload } = buildEventUpdatePayloads(selected, data);
-      const patch = () => send("PATCH", eventId, patchPayload);
-      const put = () => send("PUT", eventId, putPayload);
-      try {
-        return await patch();
-      } catch (error) {
-        if (error.message === "TOKEN_EXPIRED") {
-          await signIn();
-          return patch();
-        }
-        const primaryFailure = cleanText(error && error.message, "");
-        try {
-          return await put();
-        } catch (putError) {
-          if (putError.message === "TOKEN_EXPIRED") {
-            await signIn();
-            return put();
-          }
-          const fallbackFailure = cleanText(putError && putError.message, "Unknown update failure");
-          throw new Error(primaryFailure ? `${primaryFailure} | PUT fallback: ${fallbackFailure}` : fallbackFailure, { cause: putError });
-        }
-      }
+      const { patchPayload } = buildEventUpdatePayloads(selected, data);
+      return send("PATCH", eventId, patchPayload);
     },
-    create: (data) => retryExpired(() => send("POST", null, buildEventCreatePayload(data))),
-    remove: (eventId) => retryExpired(() => send("DELETE", eventId)),
+    create: (data) => send("POST", null, buildEventCreatePayload(data)),
+    remove: (eventId) => send("DELETE", eventId),
   };
 }
 
 export function createCalendarController({
   api = createCalendarApi(),
-  getPlannerStorage = getCalendarPlannerStorage,
-  localStorage = window.localStorage,
+  getPlannerStorage = () => plannerStorage,
+  reminders = calendarReminders,
   confirm = (message) => window.confirm(message),
 } = {}) {
   let snapshot = {
@@ -1244,7 +900,8 @@ export function createCalendarController({
     lastUpdatedAt: null, loading: false, loadError: "",
     modalMode: "", selectedEventId: "", selectedEventDateKey: "", dialogVersion: 0,
     isSavingEvent: false, draggingEventId: "", draggingEventDateKey: "", dropDateKey: "",
-    planner: readCalendarPlanner(localStorage),
+    planner: { weekStartDate: getPlannerWeekStart(new Date()), tasks: [] },
+    plannerError: "",
   };
   const listeners = new Set();
   let active = false;
@@ -1266,12 +923,23 @@ export function createCalendarController({
     const month = snapshot.currentMonth;
     publish({ loading: true, loadError: "", status: "Loading calendar events..." });
     try {
-      const rawEvents = await api.list(month);
+      const [calendarResult, plannerResult] = await Promise.allSettled([
+        api.list(month),
+        Promise.resolve().then(getPlannerStorage).then((storage) => storage.getWeeklyPlanner()),
+      ]);
       if (!active || id !== loadId || lifecycle !== generation) return false;
-      const events = normalizeCalendarEvents(rawEvents);
+      const plannerError = plannerResult.status === "rejected"
+        ? `Unable to load Supabase Planner (${cleanText(plannerResult.reason?.message, "Unknown error")}).` : "";
+      if (plannerError) console.warn(plannerError, plannerResult.reason);
+      publish({
+        planner: plannerResult.status === "fulfilled" ? plannerResult.value
+          : { weekStartDate: getPlannerWeekStart(new Date()), tasks: [] },
+        plannerError,
+      });
+      if (calendarResult.status === "rejected") throw calendarResult.reason;
+      const events = normalizeCalendarEvents(calendarResult.value);
       publish({
         events, loading: false, lastUpdatedAt: new Date(),
-        planner: readCalendarPlanner(localStorage),
         status: `Loaded ${getUniqueEventCount(events)} events for ${month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}.`,
       });
       return true;
@@ -1307,6 +975,12 @@ export function createCalendarController({
       publish({ isSavingEvent: false });
       return refresh();
     },
+    connect() {
+      return mutate(async (isCurrent) => {
+        await api.signIn();
+        if (isCurrent()) await refresh();
+      }, "Unable to connect Google Calendar");
+    },
     refresh,
     navigate(offset) {
       publish({ currentMonth: offset === "today" ? getCurrentCalendarMonth() : getCalendarMonth(snapshot.currentMonth, offset) });
@@ -1324,6 +998,21 @@ export function createCalendarController({
       });
     },
     closeDialog,
+    setReminder(minutes) {
+      const event = selected();
+      if (!event) {
+        publish({ status: "Event is no longer available." });
+        return Promise.resolve(false);
+      }
+      return mutate(async (isCurrent) => {
+        await reminders.setEventReminder(getEventIdentity(event.raw), minutes);
+        if (!isCurrent()) return;
+        const loaded = await refresh();
+        if (isCurrent()) publish({ status: `${minutes === null
+          ? "Calendar event notifications disabled." : "Calendar event notification saved."}${loaded
+          ? "" : " Calendar refresh failed; retry Refresh."}` });
+      }, "Unable to update Calendar notification");
+    },
     submit(values, mode) {
       const event = selected();
       if (mode !== "create" && !event) {
@@ -1363,25 +1052,13 @@ export function createCalendarController({
         return Promise.resolve(false);
       }
       return mutate(async (isCurrent) => {
-        let storage;
-        let localOnly = false;
-        try { storage = await getPlannerStorage(); } catch (error) {
-          console.warn("PlannerStorage is unavailable; falling back to local planner storage.", error);
-          localOnly = true;
-        }
-        const planner = storage ? await storage.getWeeklyPlanner() : readCalendarPlanner(localStorage);
+        const storage = await getPlannerStorage();
+        const planner = await storage.getWeeklyPlanner();
         const result = buildPlannerEventAdditions(event, dateKey, planner);
-        let syncError = "";
-        const unsubscribe = storage?.onChange?.((change) => {
-          if (change.type === "weekly-task-sync-error") syncError = cleanText(change.error, "Planner sync failed.");
-        });
-        try {
-          if (storage) {
-            for (const record of result.additions) await storage.upsertWeeklyTask(record);
-          } else if (result.additions.length) {
-            localStorage.setItem("hm_weekly_planner", JSON.stringify(result.planner));
-          }
-        } finally { unsubscribe?.(); }
+        if (result.additions.length) {
+          await storage.savePlannerState({ weeklyTasks: result.additions });
+        }
+        const savedPlanner = await storage.getWeeklyPlanner();
         if (!isCurrent()) return;
         closeDialog();
         const label = cleanText(event.raw.summary, "Untitled event");
@@ -1395,9 +1072,8 @@ export function createCalendarController({
             ? `Added "${label}" to Planner for ${result.additions.length} day(s) in the event range.`
             : `Added "${label}" to Planner.`;
         }
-        if (localOnly) status += " Saved locally only; Planner sync is unavailable.";
-        if (syncError) status += ` Saved locally; Planner sync failed (${syncError}).`;
-        publish({ planner: readCalendarPlanner(localStorage), lastUpdatedAt: result.additions.length ? new Date() : snapshot.lastUpdatedAt, status });
+        publish({ planner: savedPlanner, plannerError: "",
+          lastUpdatedAt: result.additions.length ? new Date() : snapshot.lastUpdatedAt, status });
       }, "Unable to add event to Planner");
     },
     startDrag(eventId, dateKey) {

@@ -1,5 +1,6 @@
-import styles from "../PlannerPage.module.css";
 import { getSeriesEditorValues } from "../../../services/plannerService.js";
+import styles from "../PlannerPage.module.css";
+
 import { usePlanner } from "./usePlanner.js";
 
 export default function RepeatableSeriesEditor({ taskId }) {

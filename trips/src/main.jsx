@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+
 import LifeManagerRouter from "../../src/router/LifeManagerRouter.jsx";
 import "./index.css";
 

@@ -2,32 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/trips/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Icons+Round" rel="stylesheet" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>trips</title>
-    <script type="module" crossorigin src="/trips/assets/index-CD-mqyEX.js"></script>
-    <link rel="stylesheet" crossorigin href="/trips/assets/index-CDjs5KaR.css">
+    <title>Life Manager</title>
+    <script type="module" crossorigin src="./assets/index-Ce5q7KZj.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B3StLWCu.css">
   </head>
   <body>
-    <div data-main-nav></div>
     <div id="root"></div>
-    <script>
-      (() => {
-        const navBase = ["5173", "5174"].includes(location.port)
-          ? "/components/nav/"
-          : location.pathname.startsWith("/www/") ? "/www/components/nav/" : "/components/nav/";
-        window.HM_NAV_BASE = navBase;
-        const stylesheet = document.createElement("link");
-        stylesheet.rel = "stylesheet";
-        stylesheet.href = `${navBase}nav.css?v=20260727-10`;
-        document.head.appendChild(stylesheet);
-        const script = document.createElement("script");
-        script.src = `${navBase}nav.js?v=20260727-10`;
-        script.onload = () => window.NavComponent.mount("trips").catch((error) => console.error(error));
-        script.onerror = () => console.error("Failed to load shared navigation.");
-        document.head.appendChild(script);
-      })();
-    </script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
   </body>
 </html>

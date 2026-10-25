@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+
 import MainNavigation from "./MainNavigation.jsx";
 
 const pages = {

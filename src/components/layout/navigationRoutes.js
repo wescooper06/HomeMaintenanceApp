@@ -1,0 +1,17 @@
+export const navigationLinks = [
+  ["dashboard", "Dashboard"],
+  ["workbench", "Workbench"],
+  ["planner", "Planner"],
+  ["calendar", "Calendar"],
+  ["daily", "Daily Activities"],
+  ["trips", "Trips"],
+];
+
+export function standaloneNavigationHref(route, location) {
+  if (route === "daily") return "#daily";
+  if (["5173", "5174"].includes(location.port)) {
+    return `${location.protocol}//${location.hostname}:5173/#${route}`;
+  }
+  const root = location.pathname.startsWith("/www/") ? "/www/" : "/";
+  return `${root}index.html#${route}`;
+}

@@ -1,0 +1,30 @@
+.panel {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border, #ccd4d0);
+  border-radius: 0.75rem;
+}
+
+.panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.input {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+}
+
+.input textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+}

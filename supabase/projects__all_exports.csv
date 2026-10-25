@@ -1,0 +1,307 @@
+id	external_id	project_type	category	title	state	priority	order	recurrence	metadata
+014497c1-caef-4c23-9ec5-70bdac3dfc52	PA0163	home	Organize	Estate Planning Activities	In Progress	High			
+023a02cd-40bd-4d4a-859a-12e3650f7ec9	PA0058	home	Repair	Remove wallpaper		Medium			
+025e585a-908b-4b5f-b00f-2e68fdccff4c	PB0062	vehicle	Maintenance	Regular Maintenance	Completed				
+02de862b-dffa-4ab5-ac22-fdd8b0a1a4b9	PB0057	vehicle	Maintenance	Regular Maintenance	Completed				
+03d0cc90-4f5e-4151-b1bb-1af9f78bf965	PA0191	home	Repair	Repair the gap in the interior garage door	Not Started	Medium			
+046848d4-cbac-4ace-bb44-b1ecd5363bb1	PA0086	home	Build	Build small dresser or shelves in closetÂ 					
+0521cdec-8f70-4ae1-846c-b11f5538aee7	PA0031	home	Repair	Test and repair air gaps around front door	Not Started	High	5		
+063d2f88-0ef2-4a33-95e9-707759d4ec5e	PA0114	home	Repair	Paint trim		Medium			
+071a4990-13c2-475b-8fb5-21d93d44f818	PA0065	home	Renovate	Replace cabinets/countersÂ 					
+07f32d14-14df-468b-b30b-bd5633be6845	PB0009	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"07f32d14-14df-468b-b30b-bd5633be6845","_originalTitle":""}
+0885466f-1532-409d-86d6-ed4f76abca29	PB0061	vehicle	Maintenance	Regular Maintenance	Completed				
+093af536-0cca-47c2-8281-dcd2d5ed80d0	PA0134	home	Build	Build storage for storage binsÂ 					
+0a04f2bf-6328-4e20-81fe-356bc7995038	PA0036	home	Clean	Clean up the mound of blackberriesÂ 					
+0a60d625-14ff-4df7-9441-aa1c48baf925	PA0047	home	Install	Add wifi switches for exterior lights		Medium			
+0b392f04-4e74-4c39-bf7e-e54fa2c82531	PB0067	vehicle	Repair	Timing Cover Reseal	Recommended				
+0c5137d4-659b-4d0c-bad8-0a12f5015422	PB0037	vehicle	Maintenance	Regular Maintenance	Completed				
+0cbd2f96-a63b-4bff-9945-edcb3644ddb1	PA0072	home	Install	Add signal booster					
+0d0a365d-25d3-4121-b57a-29e4ac6a2168	PA0020	home	Install	Replace stair light		Medium			
+0d5e6f07-a90a-4929-8bc5-20a436967232	PA0015	home	Organize	Go through all of the bins and organize		Medium			
+0f1fb0e1-ce25-4baf-8380-9c1a416ae19f	PA0062	home	Repair	Cover over floor ventÂ 					
+0fb30e82-6cbc-4828-927f-e4f1878133c2	PA0112	home	Repair	Paint window sills		Medium			
+10179e3e-36d3-4c13-bc56-907f57b04721	PB0052	vehicle	Maintenance	Regular Maintenance	Completed				
+115ca136-94ac-423e-89d1-369cf279d0c5	PA0083	home	Install	Replace pellet stove		Low			
+11850bd2-1aab-449e-83a9-f7446cf2846a	PA0167	home	Install	Replace stove	Not Started	Low			
+11c6c949-032e-457d-9da3-7996fd922954	PA0207	home	Repair	Remove broken weather stripping from shop office door	Not Started	High			
+12700a54-0b09-4b8e-8185-aedecf964e1b	PB0015	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"12700a54-0b09-4b8e-8185-aedecf964e1b","_originalTitle":""}
+1300b289-19ae-48fa-8f46-28a92ffe6a8d	PA0199	home	Clean	Clear log pile	Not Started	High	9		
+13bfab7a-72d5-483d-b562-5c53f3a6ab54	PA0008	home	Install	Install additional lightingÂ 					
+14861b6e-dc26-4060-b097-2bfa38e542d1	PB0073	vehicle	Maintenance	Regular Maintenance	Completed				
+1662822d-6dd8-4b0f-862a-dea23b752a8b	PA0060	home	Repair	Repair ceiling holeÂ 					
+177b4a30-77c9-4916-8235-4c78809e6f4a	PA0005	home	Repair	Patch hole in wallÂ 					
+18368a48-5d50-48dd-a5c4-ab28988ed94b	PA0177	home	Repair	Replace door handle and hinges	Completed	Medium			
+19b2dbce-efb9-418f-9875-6cb05cbf586f	PA0209	home	Install	Add motion light above garage door	Not Started				
+1acffa52-ca20-418a-aa97-7836b92c1fa0	PA0085	home	Repair	Paint trimÂ 					
+1af38d37-d071-4d68-8b54-06c141d18e29	PB0033	vehicle	Maintenance	Regular Maintenance	Completed				
+1c3c728e-f2d9-4b05-b586-9532adeac27a	PA0100	home	Install	Replace big stair light		Medium			
+1d9182f7-77a3-48e5-9297-24849cf16242	PA0179	home	Repair	Replace door handle and hinges	Completed	Medium			
+1d95d455-55b0-483d-8507-bc237ccbc30f	PA0192	home	Repair	Repair the gap in the exterior garage door	Not Started	High			
+1e83a114-7f73-4d3f-8e17-8d74ce701485	PA0117	home	Organize	Move travel items to shelves					
+1f7f5944-1f18-4dc1-a1ee-06660786e11a	PA0068	home	Repair	Reset baseboardsÂ 					
+20530fb5-89d7-4cbc-9535-cadef2475b1a	PB0071	vehicle	Repair	Center Brake Light	Recommended				
+22253ef8-26f8-45d1-b11c-2bdf2c10bb0b	PA0122	home	Clean	Cut down weird tree	Not Started	Low			
+22a337f6-a412-4361-9d2d-753e02e1ad60	PA0040	home	Build	Build cabinet between between posts		High			
+22c733f7-40cb-4ea9-9973-86bee90831b7	PA0140	home	Build	Build custom shelves to replace metal shelves		Medium			
+23e062e2-c9a6-4680-bbe2-8be124208273	PA0087	home	Repair	Paint trim		Medium			
+254ccf0c-3c39-4f21-8c39-66b0a343040d	PA0033	home	Repair	Remove speaker in ceiling		Medium			
+26c9d91e-4d23-4329-b49b-406723f03438	PA0014	home	Install	Replace lattice					
+28161f5e-e15f-48a2-881a-07f9a61aae36	PA0136	home	Repair	Paint office		Low			
+2a0c349f-6ea4-4915-b7fd-d0f146d377c0	PB0060	vehicle	Maintenance	Regular Maintenance	Completed				
+2af2fcf7-a7cf-4f1e-bdcd-f0513fc53d08	PA0183	home	Repair	Replace door handle and hinges	Completed	Medium			
+2b045bff-9765-4258-a1d6-0a855370ad5b	PB0047	vehicle	Repair	Replaced Valve Cover Gaskets; Replaced PCV Valve, Replaced Battery	Completed				
+2b2e00db-9032-4232-a61d-346bc1375aa5	PB0028	vehicle	Repair	Reverse lights	Recommended				
+2c239661-21e3-4b90-b3cc-29cf09153dde	PA0126	home	Repair	Have propane tank pipe buried and added to houseÂ 	Not Started	High			
+2fd02172-efbb-487d-af62-880937d88a2d	PB0076	vehicle	Maintenance	Regular Maintenance	Completed				
+2fe78dca-2d99-4081-a633-ae990a72de75	PA0194	home	Install	Replace sink traps	Completed	Low			
+3017b671-efc9-4a6f-b48d-7b0682009ee4	PA0124	home	Clean	Cut down trees near propane tankÂ 	Not Started	Low			
+321072f7-5fc0-4d21-a020-ee57b0241761	PA0012	home	Install	Replace hose bib (W)					
+34de2bc5-324c-418a-a4b2-78004dbb0bb6	PB0012	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"34de2bc5-324c-418a-a4b2-78004dbb0bb6","_originalTitle":""}
+3625d5d8-0de8-49da-b152-c83eddb82eba	PA0115	home	Repair	Tape, mud and paint hole in wall		Medium			
+36a78d38-6716-427d-ab6e-ebc2c21a5bc5	PA0049	home	Build	Build shelves		Medium			
+37357d6b-a341-4317-8ca0-bf2f77e04496	PA0145	home	Clean	Pressure wash garage doorsÂ 					
+3737f48a-74f7-43dc-ae1e-07a93da0c005	PB0081	vehicle	Maintenance	Windshield	Completed				
+383c5637-ddaf-4eda-86f6-a19567b6ece2	PB0003	vehicle	Repair	Replace Drive Belt Tensioner Assy	Completed				
+38607b26-4432-458c-beb0-ea6073718c63	PA0088	home	Repair	Paint wainscoating		Medium			
+38a46443-9d33-4278-99dc-93cacdf82eb6	PA0120	home	Build	Build generator storage box	Not Started	Low			
+38b65b50-50be-4351-aab1-eb6fbf6cd0a4	PA0006	home	Install	Replace toilet with corner toiletÂ 					
+3958ef87-f757-4679-9971-48783012129f	PB0026	vehicle	Repair	Replaced 4 tires - 111T Back Country AT2	Completed				
+395972ca-8bcd-479e-a56b-09bc100451c5	PB0006	vehicle	Repair	Installed Cam Bolts and Front End Alignment	Completed				
+396a23df-b434-42f0-9111-3434443c6c88	PA0050	home	Build	Build shelvesÂ 					
+39b02df9-85d0-4e0a-8a89-7510e22ecb51	PA0035	home	Build	Build an exterior garden tool shedÂ 					
+3b3f50e1-c066-4e73-b497-2069ce4233d6	PB0018	vehicle	Repair	Rear Shock Air Compressor	Completed				
+3ca59a75-f1a1-42fd-8baa-5b8da728690d	PB0054	vehicle	Maintenance	Regular Maintenance	Completed				
+3e434e73-701c-471b-8761-9f4abd26d8cd	PB0020	vehicle	Repair	Alternator	Completed				
+3f91154f-c453-43c8-b4d5-b2d0cd52bfde	PA0138	home	Repair	Fix leak over entry doorÂ 					
+3fd29386-49f0-4227-ab7a-67a3403af985	PA0132	home	Clean	Remove wooden bordersÂ 	Not Started	Low			
+3fe99d70-d816-4cbd-8b3e-15a83f204ff3	PA0018	home	Repair	Paint closet doors		Medium			
+405ed1b8-c7c7-4b04-bdb6-186adf1554c2	PA0041	home	Clean	Defrost freezerÂ 					
+41239392-e9c4-4ccc-953b-ef87017d48f8	PA0156	home	Maintenance	Clean out leaves and garbage under side porch		Medium			
+4197525f-ed73-4e80-8513-07f76a20b9da	PB0023	vehicle	Maintenance	AC refrigerant; rear diff limited slip additive	Completed				
+41ec859c-fa4d-4866-bfe6-984ae1641ece	PA0026	home	Repair	Add covers for well pump electronics					
+423333aa-90c4-4e8d-9af7-cbe271e0b13a	PA0098	home	Repair	Cover over floor ventÂ 					
+430b2c43-dc1c-4d0a-8815-bf3e080937a5	PB0038	vehicle	Maintenance	Regular Maintenance	Completed				
+43a28669-1a01-44eb-b98c-3081e1e10efb	PA0160	home	Organize	Replace bookshelf with new display cabinets	Not Started	High	3		
+44a1a976-7b0c-4214-9652-a182560adedd	PA0075	home	Repair	Paint window sills		Medium			
+45a83bed-4407-4c89-850d-702c3dad537e	PB0079	vehicle	Maintenance	Regular Maintenance	Completed				
+4602c230-20cb-4e33-9fba-56dbdb7faeb6	PA0030	home	Install	Replace wall outlets with GFCIÂ 					
+471d4e1e-1c3c-4244-9eba-48502599ec63	PA0152	home	Install	Add gutter guardsÂ 					
+483593e3-d05b-4677-b9e1-c06c03ddc04f	PB0034	vehicle	Maintenance	Regular Maintenance	Completed				
+4855e0b9-7f22-4569-a942-2d12cf45a474	PD0001	misc	SAR	Implement drone program tasks	In Progress	High			
+49c1aa2d-60e8-4e67-83d6-7cc490c88326	PA0121	home	Build	Build paver walkway to dirt roadÂ 	Not Started	Low			
+49c5a94e-80ce-43ea-a206-d30d8b10fb46	PA0001	home	Repair	Patch and repair walls		Low			
+49f6f30a-6858-46c8-afc9-8d01db32c288	PC0007	repeating	Organize	Restaurant Depot Shop	In Progress				{"_originalId":"49f6f30a-6858-46c8-afc9-8d01db32c288","_originalTitle":"Restaurant Depot Shop"}
+4b4b8ee9-c330-4be4-b25c-7409525c85a1	PA0162	home	Organize	Complete Vanguard Investment Tasks	In Progress	High			
+4cc853ff-6a29-4335-b082-2c9e94850d83	PA0109	home	Build	Build Ikea bookshelves					
+4ddf19f4-8eb2-4a2b-83e7-009679bcc8c4	PA0171	home	Install	Add curtains to the south window	Completed	High			
+4e00bca4-a6cc-4f04-89ce-4397d9b693ac	PA0004	home	Build	Build barn door for small closetÂ 					
+4e765c8a-691f-4ce0-a59c-bfeafcd2886f	PB0043	vehicle	Repair	Replaced tires; 4-wheel alignment	Completed				
+4f491f7a-233f-45d0-b1a9-813e8cf36ad8	PA0189	home	Install	Replace hose bib (E)	Not Started	High	8		
+4fea8702-119a-4960-9f9f-b093d23c8850	PA0125	home	Renovate	Redo drain field	Not Started	Low			
+500da600-bc4a-4b00-96a9-dce1858c1378	PB0045	vehicle	Maintenance	Replaced strut assemblies - FCS; Replaced front stabilizer bar and bushings - AC Delco; Replaced rear shocks - KYB Gas-Adjust Monotube; Regular Maintenance	Completed				
+50483f25-20a6-437f-9875-f7cff883be6c	PB0017	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"50483f25-20a6-437f-9875-f7cff883be6c","_originalTitle":""}
+512331df-3bd7-4910-818d-4f55f2075580	PA0154	home	Install	Lay down weed fabric and gravel		Medium			
+513d70a6-038c-45e4-903b-3ffb01a5a942	PA0090	home	Repair	Paint door		Medium			
+521a1fb0-da8f-4978-bb80-a1df1af3b8a4	PA0123	home	Clean	Clean up border trees	Not Started	Low			
+55478b78-adb0-45b6-805a-1591bb91763e	PB0046	vehicle	Repair	Replaced radiator; Replaced front lower ball joints	Completed				
+564d104d-cdf3-487e-80cc-ad58fb8c0b26	PB0069	vehicle	Repair	Replace Center Battery Light	Recommended				
+586bcad0-5db7-489b-8ed7-e39b22bc7f6f	PB0058	vehicle	Maintenance	Regular Maintenance	Completed				
+590a7531-8422-4120-b01a-785f9646e2f9	PB0074	vehicle	Maintenance	Regular Maintenance	Completed				
+59267ce9-2922-403b-8fcf-0c4e01e197a3	PA0089	home	Repair	Paint window sills		Medium			
+59fe29a1-7032-4a41-93d5-4f279944bae0	PA0007	home	Repair	Cover over floor ventÂ 					
+5a20a941-d828-441c-84a5-9ebb91aaaba7	PA0165	home	Install	Replace carpet	Not Started	Low			
+5a8d1ffa-e563-427d-8ed2-93a0a86b2b62	PA0208	home							
+5a903589-95fd-440f-92de-25056129c6b8	PA0057	home	Repair	Repair hole in ceiling	Not Started	High	5		
+5b18857c-e5a3-432a-93df-8a5c4098e151	PA0196	home	Install	Replace sheet vinyl	Not Started	High			
+5c1f8f15-8ff7-45fc-a00f-edc77c667214	PA0002	home	Repair	Repair walls		Low			
+5c64665b-62ef-4537-8c49-4df55d9d7043	PA0166	home	Install	Replace dishwasher	Not Started	Low			
+5cae04d1-244b-4aa8-b4fa-604a2c2001d6	PA0144	home	Clean	Pull out old wiringÂ 					
+5ddd242a-4aea-4a0e-8fb5-004813f75903	PB0056	vehicle	Maintenance	Regular Maintenance	Completed				
+5e8ab0a0-e836-4a86-9de4-980b8103644c	PA0113	home	Install	Build a space for hammocks and chairs	Not Started	Low			
+5f7f6303-9b97-4898-ae7e-f5ca78d8642a	PB0002	vehicle	Maintenance	Regular Maintenance + Accessory Drive Belt Replacement	Completed				
+60019cd7-b5f4-4d29-957b-8f7e1382fce0	PA0147	home	Repair	Fix front door frameÂ 					
+604aad6d-8dce-4f10-a6e8-6f67f1df2e5c	PA0181	home	Repair	Replace door handle and hinges	Completed	Medium			
+604cb849-f1a8-4711-a9cd-ed1100d5f026	PA0106	home	Repair	Clean air ventsÂ 					
+608d2f98-4c57-4a4f-99cb-64893724b624	PA0069	home	Repair	Reset window trimÂ 					
+6119aeb9-0b79-49ad-8d22-c722ddec72e4	PA0176	home	Repair	Replace door handle and hinges	Completed	Medium			
+630a12e3-b9f2-4e27-8311-dccf37065622	PA0202	home	Build	Build an insulated generator shed	Not Started	High	10		
+669d2e52-13d6-413f-9036-2b6e57beca60	PA0028	home	Renovate	Replace deck		Low			
+673d9661-46bf-4174-9f5f-8af1ed422549	PA0195	home	Install	Replace bathroom sink 	Not Started	High			
+67e3b38d-c78e-42e5-9e73-8daf4d5018da	PA0038	home	Clean	Remove blackberry bushÂ 					
+68fb05bb-fe50-476c-a68a-32b1c1b3079d	PB0040	vehicle	Maintenance	Regular Maintenance	Completed				
+691deeca-c4b0-4e00-aa69-a3529cb24127	PA0149	home	Install	Replace hot water tankÂ 					
+698360a9-a2e8-4b83-a966-095d996d8318	PA0052	home	Repair	Replace door  		Medium			
+6a9112e3-b41d-4617-ab38-de92333eb31a	PA0073	home	Install	Raise mirrorsÂ 					
+6ae8bb80-6b0a-4206-9320-654c0927a15d	PA0164	home	Repair	Finish Katelyn's picture frames	In Progress	High			
+6afcdb7c-d8fb-44ac-8336-36c7fe2ffbdb	PA0054	home	Build	Build additional shelf under islandÂ 					
+6c20cf4b-bb66-4cab-8aaf-a36c8208c7c2	PB0025	vehicle	Repair	"Replaced: upper control arms, lower control arms, upper ball joints, lower ball joints, sway bar links, front shocks, wheel hub assemblies, brake calipers, banjo bolts, brake rotors and pads, rear shocks, 
+Refurbished and painted steering knuckle
+Front end alignment"	Completed				
+6e909a55-c91b-4e4e-aaff-3624570250b5	PA0188	home	Repair	Add correct mini-blinds to the west windows	Not Started	Medium			{"recurrence":null,"_originalId":"6e909a55-c91b-4e4e-aaff-3624570250b5","_originalTitle":"Add mini-blinds to the west window"}
+6ff3cb0f-a914-4370-b7af-fed478f3a493	PA0063	home	Install	Replace ceiling fan					
+71e8bf11-5109-41b7-8899-15da5426dc83	PB0004	vehicle	Maintenance	Replace Battery (Group 35 Standard)	Completed				
+7325218d-649f-4539-8624-183979e50ecb	PA0130	home	Clean	Weed eat blackberry vinesÂ 	Not Started	Low			
+73b1c5fd-f73b-4beb-baf3-2be3c800faa3	PB0063	vehicle	Maintenance	New Tires	Completed				
+7448c499-d473-475c-bb5d-62ecaf969874	PA0032	home	Repair	Fix wall damage from mini splitsÂ 		Medium			
+7449cca3-f498-48a0-8a43-e298149c2c7f	PA0059	home	Repair	Touch-up damage in wall from fridgeÂ 					
+7695ed5f-dac1-4436-a718-7846bb5f0267	PA0182	home	Repair	Paint door	Completed	Medium			
+77e64050-5efc-4bcf-87f0-de6eefd0ea4b	PA0091	home	Repair	Paint baseboardsÂ 					
+7989ff0b-c015-4b41-809f-da14a41248a8	PB0032	vehicle	Maintenance	Regular Maintenance	Completed				
+7a3220e2-2a3a-4c6a-a319-6aa1e35a3a44	PA0048	home	Repair	Fix holes around automatic garage doorsÂ 					
+7ca969cf-2c6a-49b0-a498-dfa34666f6da	PA0108	home	Build	Build bed					
+7cf6890e-43b0-4f45-a0f1-3297cc5e125b	PA0042	home	Install	Replace counter outlets near sink with GFCI outletsÂ 					
+7ed9d827-89c5-4741-8e2d-a1f2ca0cfced	PC0004	repeating	Clean	Vacuum house					
+7ffa800a-0f62-41fd-955d-2c9774a39986	PB0027	vehicle	Maintenance	Adjust parking break shoes	Recommended				
+80d29dd0-47bc-4f17-832d-a4cc44aece6f	PA0045	home	Organize	Organize wall cabinetsÂ 					
+80e1a99c-fc5b-4bdf-8eda-2a70710a259f	PB0022	vehicle	Repair	Replaced power steering cooler and return line	Completed				
+81737f48-c0c9-4c34-8812-1a494d9f7f57	PA0203	home	Repair	Repair Katelyn's vacuum cleaner	Not Started	High			
+81f54764-7d2a-45a7-a861-c499455a7404	PA0093	home	Repair	Refinish main dining room tableÂ 					
+81fab532-34e4-4159-b890-c28f731e3837	PB0049	vehicle	Repair	Front pads and rotors	Completed				
+82007063-5e39-46b0-bf37-6c4f1a47124c	PB0077	vehicle	Repair	Timing Belt	Completed				
+82562a24-5bf0-4885-b925-371d0acc61d1	PB0019	vehicle	Repair	GEM Module	Completed				
+82c34e98-d65c-4eca-804c-5fbbc4a6ca11	PA0158	home	Maintenance	Take out stump in the back field	Not Started	Low			
+82f3d84e-34f3-471d-8b5c-a618cb575831	PB0031	vehicle	Maintenance	Regular Maintenance	Completed				
+83263001-bdc0-4e69-b573-61a628f12cb3	PA0023	home	Repair	Convert sump pump to gravity drain		Low			
+842a387a-aecc-41fc-b2cb-fdefc7b2ba2e	PD0004	misc	Miscellaneous	App Enhancements	In Progress				
+844d673f-bf4f-4562-82be-58022482df9b	PC0008	repeating	Organize	TY Shop	In Progress			Weekly	
+8597ac10-850a-4f39-ac4f-8a1e60d09f80	PA0201	home	Install	Replace p-trap under kitchen sink	Completed	High	1		
+85c7abc6-f530-4df2-936a-79e753014ba7	PA0174	home	Repair	Replace door handle and hinges	Completed	Medium			
+87f2b785-337f-4b44-8b4f-35795aebe1b8	PB0001	vehicle	Maintenance	Change Oil	Recommended		1		
+885bb416-9695-4832-8671-66c62703dd1f	PA0003	home	Install	Replace sheet vinyl		Low			
+8887b04b-a7e7-4b91-8cb0-d38154c2fcd7	PA0061	home	Repair	Remove speakersÂ 					
+8914c775-d8fe-4edd-baaf-2751b044e1ed	PB0070	vehicle	Maintenance	Cabin Air Filter	Recommended				
+8990e6e6-e14e-477c-a9d6-561afc8bce8c	PA0168	home	Install	Replace fridge	Not Started	Low			
+8d7efd0c-c541-4461-8aee-6c675584e366	PA0043	home	Repair	Paint walls		Low			
+8dab2209-8f84-4be0-bff8-7b3411568272	PA0064	home	Install	Add track lighting					
+8e1659fa-2398-48ce-ac5e-6cb27673b899	PA0131	home	Clean	Clean up rock gardensÂ 	Not Started	Low			
+8eb4c76c-574d-4775-beb5-fb2ae2bad4df	PB0072	vehicle	Repair	Rear Pads w/ Turn	Recommended				
+8f47fc2f-ef83-4962-bbaa-bdbd1484df2a	PB0035	vehicle	Maintenance	Regular Maintenance	Completed				
+9096f316-7d3f-4c2d-821e-88dc6a5ea6bc	PA0110	home	Organize	Organize the content of the safe		Medium			
+92b9d7a2-0ac3-440f-a070-170092e4638d	PB0010	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"92b9d7a2-0ac3-440f-a070-170092e4638d","_originalTitle":""}
+92f8c0fb-c8a0-483b-af7f-beca3cf8bb47	PA0029	home	Repair	Add lag bolts in ledge board under deck					
+9394ba1c-4c4b-4b32-9a86-3a5b2f7f7c7d	PA0105	home	Repair	Paint door		Medium			
+95998e8d-5818-4d9b-be8e-b5da371942ac	PA0185	home	Install	Purchase a sectional chair	Completed	Medium			
+965c70ae-7784-46ae-b41d-d758ed5d6d17	PA0155	home	Clean	Tear out blackberry hedges and level berm		Low			
+98e25599-8664-4238-a607-79b660e2926f	PA0017	home	Repair	Paint trim		Medium			
+9b5e107a-7720-4b2a-8284-4f966fdb80f4	PB0044	vehicle	Repair	Replaced Throttle Pedal Postion Sensor	Completed				
+9cca0d43-1e29-4d40-8cf1-3641ff2fc0f4	PA0175	home	Repair	Paint door	Completed	Medium			
+9d44c49f-d842-49a6-82b0-6cb73a0a6ffb	PB0053	vehicle	Maintenance	Regular Maintenance	Completed				
+9de3fcb5-5655-4d96-bbb8-5ae7cd6d2a87	PB0029	vehicle	Maintenance	Regular Maintenance	Completed				
+9e36da93-f79f-4034-962c-30ca33c7c448	PA0170	home	Organize	Organize the shelves	Completed	High			
+9eaabf13-1275-400b-80c1-0ff9851674f6	PB0014	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"9eaabf13-1275-400b-80c1-0ff9851674f6","_originalTitle":""}
+9f38a7ed-7252-47ad-94c9-51159f1aa87e	PA0051	home	Repair	Remove tankless water heater		Low			
+a0148d16-f37a-42fd-a895-80086f17d554	PA0102	home	Install	Add solar light strings	Not Started	Low			
+a3f71e26-dc31-47d5-8985-191b588bd50b	PA0133	home	Renovate	Finish the bathroomÂ 					
+a49f64df-c7e1-48cc-8246-4efe55155681	PA0193	home	Install	Add blinds to windows	Not Started	High			
+a5a6a761-8c0a-478e-acf1-824c50866b59	PA0190	home	Repair	Replace the exterior insulation	Not Started	Medium			
+a70e0c56-50b2-42db-a8e2-45dd7164f528	PA0139	home	Repair	Fix leak over ADU doorÂ 					
+a7571c1a-89d2-41b4-85f7-9459f6939779	PA0197	home	Install	Replace light over toilet	Not Started	High			
+a77f8bbf-0794-4fc5-955b-be9b33c55599	PA0198	home	Install	Trim weeds off retaining wall	Completed	Medium			
+a8ef4ebf-50fe-4157-89f5-817595f26873	PA0159	home	Organize	Replace wall unit with new display cabinet	In Progress	High	4		
+a9f415b8-87a5-48be-b1a3-7298a73da6ed	PA0077	home	Repair	Replace closet door knobs					
+aa4e9ebd-49fa-4273-8733-adcd280b994f	PA0024	home	Repair	Repair crawl space cover		Medium			
+ac1716c8-0ffe-49ba-83b0-a6235ac3a237	PA0161	home		Create ROX 1 and S&D Curriculum Docs					
+ad817eb7-82d0-4dc5-9d3c-9bc62f50bb63	PA0044	home	Organize	Organize tool cabinet		Medium			
+ae70874f-9b86-4c7e-b474-fa7601393e2c	PA0071	home	Install	Hang curtains					
+af39d1f9-09d4-4d22-b804-07a8541b9a50	PB0021	vehicle	Repair	"Transfer Case Gasket
+Transmission Seal w/ Torque Converter
+Transmission Filter
+Starter"	Completed				
+b0ac2969-43e6-4c57-ac99-d124448e79c5	PA0173	home	Repair	Paint door	Completed	Medium			
+b0f371d1-e112-4dfb-9450-7d48d893b286	PA0011	home	Repair	Cover over floor ventÂ 					
+b44065f5-4098-4070-96a8-b2e953fa65f7	PA0204	home	Build	Install powered winch for upper platform	Not Started	Medium			
+b4f92621-c580-4d92-b868-bdaadc9c1fca	PB0082	vehicle	Maintenance	Regular Maintenance	Completed				
+b5bf4fa7-902d-444e-aa2e-78924f0ed416	PB0007	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"b5bf4fa7-902d-444e-aa2e-78924f0ed416","_originalTitle":""}
+b5ddbd39-6455-40b0-b32b-3c428c1978a2	PA0016	home	Repair	Paint window sills		Medium			
+b6adc1ea-1606-4839-ad96-5f830db8a55b	PD0002	misc	Travel	Vancouver Trip Planning	Completed	High			
+b82a0abc-e92c-4265-a3cf-431637ef0bcc	PB0036	vehicle	Maintenance	Regular Maintenance	Completed				
+b8bc2d84-a3a3-4a18-bfb4-f1f3837cef84	PA0184	home	Install	Purchase glass doors for the bookshelves	Completed	Medium			
+b91b07eb-bc33-4cd5-8077-2581251e1c89	PB0065	vehicle	Repair	Rear Shoes w/ Turn	Recommended				
+b9ae6742-e23d-43fb-96a6-0412ea016058	PA0084	home	Install	Add gutter guards					
+bb80d647-406f-4bdf-8467-d6cd14b0a067	PB0051	vehicle	Maintenance	Brake Fluid Exchange	Recommended				
+bbf5052d-be1f-4bd1-9ead-edbb59418c3c	PA0013	home	Build	Build a custom model-building table		Medium			
+bc78b00e-d843-4b5b-989a-353cebb2eff8	PA0027	home	Install	Add motion light above garage	 Not Started 				
+bc7c6eed-21c8-445b-a035-5fc3cc8c6e1f	PA0128	home	Repair	Fix exterior flood lights	Not Started	Medium			
+bd1c058a-3b43-44a6-b2d7-0f21d307b69d	PA0092	home	Build	Cut dowels for windows and sliding glass doorÂ 					
+bd45ecae-0835-4d5c-89d3-c9d2e2f2044b	PA0097	home	Repair	Refurbish old telephoneÂ 					
+bdd65953-6106-4b03-a442-ea84dc5fc19e	PA0074	home	Repair	Paint closet doors		Medium			
+bdfe94e5-fa3a-4706-b211-9dc1544363fb	PA0118	home	Repair	Paint trim		Medium			
+bf0fccc7-280c-4360-a0c8-5e606cd59dd1	PA0111	home	Repair	Paint trim		Medium			
+c03ac3f2-7fc2-40d3-8591-9067a9695b54	PA0180	home	Repair	Paint door	Completed	Medium			
+c0adc981-5326-4124-812f-ec294cbb376e	PA0172	home	Repair	Seal cracks with marine paint	Completed	High			
+c15443fd-1ff9-484a-8ae6-61ef061d30aa	PB0078	vehicle	Maintenance	Regular Maintenance	Completed				
+c2533e67-1be2-4b15-87e3-e25b67afbe93	PA0143	home	Clean	Sell cargo boxes					
+c2639d89-8c04-4d01-9ff1-6b2ae060d0db	PA0187	home	Repair	Repair the giant hole in the north wall	Not Started	High	6		
+c321a2f6-1f20-4aeb-937e-d8b7a0df470a	PA0178	home	Repair	Paint door	Completed	Medium			
+c4ff3688-1453-41e4-8f89-e03f25e48ec6	PB0068	vehicle	Repair	A/C Refresh	Recommended				
+c5b217d6-3717-4b96-91d8-0e90de6ddac2	PA0101	home	Install	Replace hallway lights					
+c5c0c191-e136-4143-994f-25e1ea1627e3	PB0080	vehicle	Maintenance	Regular Maintenance	Completed				
+c68df7d0-f69f-4b7a-9fb1-c89bf8ef430b	PA0046	home	Install	Replace the sink		Medium			
+c6df2a66-776e-45be-82fd-c96626eb33e1	PB0059	vehicle	Maintenance	Regular Maintenance	Completed				
+c793100d-a447-4b8b-94cd-e5598ac99e7b	PB0024	vehicle	Maintenance	PCV Valve	Completed				
+c7eea0b1-a70e-45d7-bfdc-f16bb7d79844	PA0137	home	Repair	Remove all extraneous wall outletsÂ 					
+c8155878-f53f-41c8-b05b-60e21b069a36	PA0076	home	Repair	Remove speaker in ceiling		Medium			
+c9160c78-e329-4c3c-bc4b-d7b06bd3710e	PA0019	home	Repair	Paint small closet door		Medium			
+c9b2f6fc-882a-4b8f-868b-20099b043ce9	PA0078	home	Repair	Patch ceiling fan box					
+c9bd1540-ebd0-4444-8b38-5cc09638417b	PA0119	home	Repair	Paint window sills		Medium			
+c9d59972-f425-462a-aa09-79e3a3c3295d	PA0037	home	Clean	Clean up wood pile in fieldÂ 					
+cade8385-b8de-4c2c-8e7a-40901baf845c	PB0075	vehicle	Maintenance	Regular Maintenance	Completed				
+cc29d7ac-d173-4ba5-86f6-249f18340518	PA0135	home	Repair	Repair hole in back wall		Low			
+cc2a712c-9364-4f9d-8564-ca07ee6e986b	PA0010	home	Repair	Replace missing river rockÂ 					
+ccef1324-39dd-41ac-9f22-66951776f0f1	PA0056	home	Renovate	Renovate kitchen cabinets/counters/drawersÂ 		Low			
+cd14e295-470e-4cab-a505-6c3be261798a	PA0081	home	Repair	Replace front porch steps		Medium			
+cddc19f7-d688-45bd-b889-154dd295d960	PA0025	home	Repair	Fix leaking ABS waste pipes		Medium			
+cf0ffc81-d00c-44a2-b59f-710a270abda3	PC0002	repeating	Maintenance	Garbage	In Progress	High		Weekly	
+cf31dfa7-162f-4565-aaa4-007544bc226d	PA0141	home	Build	Build a wall between the bay 1 and bay 2		Low			
+d02e5c9b-5d72-4e39-b3c9-5b7e541ee749	PB0048	vehicle	Repair	Brake Fluid Exchange	Completed				
+d09ab8d5-3d2c-4b4e-ba47-b5edf8d7fcbe	PA0146	home	Repair	Fix railing on stairsÂ 					
+d1f12c06-99d3-4143-988e-d63e44bacae7	PA0104	home	Install	Build a fire pit	Not Started	Low			
+d37bdc4b-6650-4754-b603-3a0d5beff17b	PA0153	home	Install	Add electric heaters to keep above freezingÂ 					
+d3b216a1-9b54-48b5-a232-72620ab91f9a	PA0205	home	Build	Build shelves under miter saw table	Not Started	Medium			
+d3d55965-4ccd-49a4-893b-1ae544021c77	PC0001	repeating	Maintenance	Mow Yard	Not Started	High		Weekly	
+d4d51acb-ed03-4a5a-87be-201412ae511a	PA0009	home	Repair	Tape, mud and paint hole in wall		Medium			
+d4d8fc7e-4a17-481b-9fd4-92f0c45657bf	PB0050	vehicle	Maintenance	Clean and Adjust Rear Breaks	Recommended				
+d8c4eeed-e827-4012-a510-2b6ac66dea12	PA0151	home	Install	Replace sinkÂ 					
+db570ebe-3a1d-4323-92f5-e01f0d4c826e	PA0039	home	Clean	Clean-up or rebuild tree houseÂ 					
+dbd138f8-713e-408c-92d4-a455c6d69fe4	PB0008	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"dbd138f8-713e-408c-92d4-a455c6d69fe4","_originalTitle":""}
+dc362065-fc68-4fa1-a96a-2bc77deb5b71	PA0070	home	Repair	Reset dryer vent to wall (instead of through floor)Â 					
+dcc8efef-ac9d-46a9-bd0a-ebb811a017c3	PA0053	home	Build	Build pantry shelvesÂ 		Low			
+ddb85414-7c7f-4c1f-92cc-314607fa2b6b	PA0142	home	Build	Add plywood to bottom of ADU flooringÂ 					
+de39724c-4603-4158-b321-8e54bd09222a	PA0095	home	Install	Change out the toiletÂ 					
+df1b01eb-4e4a-4688-bdd0-5f202e258748	PA0021	home	Install	Add digital lock to external doorÂ 					
+df65afbf-e807-467b-b5ff-5055877f9887	PA0150	home	Install	Get wifi enabled water sensorsÂ 					
+e072c95f-c11a-470e-af29-ac559653aed5	PA0067	home	Repair	Change laundry room lockÂ 					
+e097cbd7-82cc-4148-acb4-ebd87e105aaf	PB0066	vehicle	Repair	Front Pads w/ Turn	Recommended				
+e0b3f5bc-ae70-4e03-ac5f-98c563878d60	PA0129	home	Clean	Clean-up laurel hedgeÂ 	Not Started	Low			
+e1935d30-9949-4203-9145-935719609a0d	PA0022	home	Repair	Replace termite-eaten wall		Low			
+e1a2b48b-f32c-4459-8aba-230512e38f6a	PB0041	vehicle	Repair	Replaced transmission w/ used tranny (167,000mi) and transfer case; Replaced rear main seal	Completed				
+e2258a88-bf37-4f4e-99e1-99a7e3ab7ced	PA0082	home	Repair	Replace side porch steps					
+e466de6a-6ffb-48fd-aaf1-beb2a44b2a7e	PB0030	vehicle	Maintenance	Regular Maintenance	Completed				
+e4f7e44b-af80-4836-8d13-c9a97d2086d8	PA0099	home	Install	Replace light barÂ 					
+e5700852-6fc2-4044-93b3-297970d609b3	PC0003	repeating	Maintenance	Recycle	In Progress	High		Bi-Weekly	
+e66c50c8-22c2-43e2-a63a-bf0564da90be	PA0094	home	Repair	Cover over floor ventÂ 					
+e72c0cef-cc0e-48ee-9ba8-55e7a14374d1	PA0206	home	Build	Build shelves under 4-table set	Not Started	Medium			
+e7f34d01-15d7-43f8-ad37-399ffc84e2b1	PA0148	home	Clean	Clean up cinder blocks					
+e9b0edb2-fcf5-4d47-99e6-9e3e3b84b529	PA0103	home	Install	Replace primary well pumpÂ 	Not Started	Low			
+ea2248d5-b7db-47ad-bf9c-c62da185a493	PB0064	vehicle	Repair	Accessory Drive Belt	Completed				
+ec5479f9-8de3-403e-a261-d2cc772ce940	PA0080	home	Build	Build border with lawn					
+ecec4669-4542-4b29-9471-7d114fbd6ee9	PB0055	vehicle	Maintenance	Regular Maintenance	Completed				
+ed3f1aa3-3416-4450-a29a-717752f8d80c	PA0169	home	Install	Replace sheet vinyl (kitchen)	Not Started	Low			
+ee59116f-3810-4805-985d-e533aedd5e2c	PA0200	home	Clean	Clear log pile near and around treehouse	Not Started	High			
+eee3e893-7036-4555-b6e2-1b6b5bd7a461	PA0066	home	Renovate	Remove furnaceÂ 					
+ef7e03bf-0725-4996-ab33-04c3315c92bb	PB0042	vehicle	Repair	Replace door key cylinders	Completed				
+f0caee13-b07e-4e6a-966a-8860bb07bfe4	PA0157	home	Clean	Remove concrete blocks around stump		Medium			
+f123718f-bc66-4695-acdf-968dddc2c7f9	PA0127	home	Repair	Drain septic tank	Not Started	Low			
+f16d3f77-269c-488b-b227-de3ab5f6df20	PB0016	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"f16d3f77-269c-488b-b227-de3ab5f6df20","_originalTitle":""}
+f1c52291-275c-4866-ad4e-0e2f28885a0a	PA0055	home	Install	Add wifi-enabled light switchesÂ 					
+f3036cd1-8689-4bf9-8540-10e8e66677fb	PD0003	misc	Family	Soup/Stews Project List	In Progress				
+f3a8169d-9a60-4c8e-9725-df0aeecb6593	PB0011	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"f3a8169d-9a60-4c8e-9725-df0aeecb6593","_originalTitle":""}
+f3f1b148-1820-4ea4-ace4-a078a53ccb58	PA0034	home	Repair	Cover over floor ventsÂ 					
+f4824691-aacb-4be7-8916-2da274223921	PA0079	home	Install	Change out the toiletÂ 					
+f68c4ab4-7561-4a51-8f87-62ac350d0212	PA0186	home	Install	Add shelves to the closets	Completed	Medium			
+f89a8ed4-1fc4-4005-886c-680d6eed12d6	PA0107	home	Repair	Reset baseboardsÂ 					
+f8e35539-64f8-4656-a346-061e6421f2dd	PB0005	vehicle	Maintenance	Replace Battery (Group 24F Standard)	Completed				
+f8f86aeb-f8c0-4d3c-b68a-7ffc37f9e765	PB0013	vehicle	Maintenance	Regular Maintenance	Completed				{"recurrence":null,"_originalId":"f8f86aeb-f8c0-4d3c-b68a-7ffc37f9e765","_originalTitle":""}
+f90e08b1-71aa-41fc-8b1f-43dc86744100	PA0116	home	Maintenance	Clean windows		Medium			
+fb1a78bd-a0f1-42a1-b329-c5db71574880	PA0096	home	Build	Build wine barrel table	In Progress	High	2		
+ffc32b05-9810-477f-9dd5-f82918130a10	PB0039	vehicle	Maintenance	Regular Maintenance	Completed				

@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
+
+import styles from "../PlannerPage.module.css";
+
 import { usePlanner } from "./usePlanner.js";
 import usePlannerDialog from "./usePlannerDialog.js";
-import styles from "../PlannerPage.module.css";
 
 export default function MasterProjectTitleEditor() {
   const { snapshot, actions } = usePlanner();

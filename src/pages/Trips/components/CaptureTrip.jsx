@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+
 import { createTrip, updateTrip } from "../../../services/tripsService.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

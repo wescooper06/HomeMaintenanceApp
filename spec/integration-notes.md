@@ -1,11 +1,13 @@
-# Integration Notes
+# Modern integration notes
 
-| Topic | Notes |
-|--------|-------|
-| App Navigation | Trips becomes 4th tab alongside Workbench |
-| Shared Components | Modals reuse existing UI patterns |
-| Sheets Integration | All travel data stored in new Sheets tables |
-| Mobile Sync | Mobile reads/writes same Sheets backend |
-| Supabase Migration | Tables map 1:1 to future Postgres schema |
-| Future Automation | Price tracking agent runs via Supabase cron |
-| Data Consistency | Trip ID is the primary key across all tables |
+| Topic | Current implementation |
+| --- | --- |
+| Navigation | Shared React navigation and modern hash routes; Trips nested browser routes |
+| Web/mobile | One responsive main build; Capacitor Android uses `dist/trips` |
+| Persistence | Supabase only for application records; no Sheets fallback |
+| Google | Explicit Calendar OAuth, direct Calendar events/notifications |
+| Configuration | Vite environment in `trips/.env.local`; no Apps Script handlers |
+| Projects | Existing UUIDs and explicit external IDs; edit-only raw project policy |
+| Planner backup | Versioned modern JSON, insert-only conflict checks; historical formats rejected |
+| Historical data | Archived as evidence only; never imported, corrected or reconciled |
+| Release | HTTPS SPA hosting and device/signing verification required; see Phase 7 report |

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import styles from "./DailyActivityPlanner.module.css";
-import WeeklyGrid from "./components/WeeklyGrid.jsx";
-import ActivityRuleModal from "./components/ActivityRuleModal.jsx";
+
 import { useActivityData, regenerateWeeklyGrid } from "../../services/activityPlannerService.js";
 import { createRuleId, selectionToRuleDraft } from "../../utils/plannerUtils.js";
+
+import ActivityRuleModal from "./components/ActivityRuleModal.jsx";
+import WeeklyGrid from "./components/WeeklyGrid.jsx";
+import styles from "./DailyActivityPlanner.module.css";
 
 const NEW_RULE_DEFAULTS = { activity_type_id: "", allow_override: false, priority: 1, notes: "" };
 

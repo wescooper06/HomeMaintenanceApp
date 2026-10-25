@@ -1,5 +1,7 @@
-// Planner data normalization and state transitions retain the legacy storage contracts.
+import { appConfig } from "./appConfig.js";
+import { calendarReminders } from "./calendarReminderService.js";
 import { plannerStorage } from "./plannerSupabaseStorage.js";
+import { assertProjectWriteAllowed } from "./projectPolicy.js";
 
 export const DAY_ORDER = [
   { key: "mon", label: "Mon" },
@@ -83,9 +85,8 @@ export function parseResourceLinkEntries(value) {
       if (parsedLinks.length) {
         return parsedLinks;
       }
-    // eslint-disable-next-line no-unused-vars -- Preserve the legacy delimited-link fallback.
     } catch (error) {
-      // Fall through to comma-separated parsing.
+      throw new Error(`Invalid resource links JSON: ${error.message}`, { cause: error });
     }
   }
 
@@ -187,11 +188,7 @@ export function firstDefined(obj, keys) {
 }
 
 export function normalizeSource(source) {
-  const text = cleanSource(source);
-  if (text.includes("list_a") || text.includes("home")) return "home";
-  if (text.includes("list_b") || text.includes("vehicle")) return "vehicle";
-  if (text.includes("list_c") || text.includes("repeating")) return "repeating";
-  return text;
+  return cleanSource(source);
 }
 
 export function getWeekStartISO(dateValue) {
@@ -252,27 +249,7 @@ export function buildWeeklyTaskId(taskType, sourceId, dateKey) {
 }
 
 export function parseWeeklySourceId(task) {
-  const id = cleanText(task && (task.id || task.taskId), "");
-  if (!id) {
-    return "";
-  }
-
-  const taskType = cleanText(task && (task.taskType || task.type), "curated");
-  if (taskType === "adhoc") {
-    return "";
-  }
-
-  const projectId = cleanText(task.projectId, "");
-  if (projectId) {
-    return projectId;
-  }
-
-  const match = id.match(/^(curated|repeatable)-(.+)-(\d{4}-\d{2}-\d{2})-\d+(?:-\d+)?$/);
-  if (!match) {
-    return cleanText(task.projectId, "");
-  }
-
-  return cleanText(match[2], "");
+  return cleanText(task?.metadata?.sourceTaskId || task?.projectId, "");
 }
 
 export function buildEmptyPlanner(weekStartDate) {
@@ -323,39 +300,10 @@ export function normalizeWeeklyTask(task, fallbackDate, fallbackTimeSlot) {
     deletedInstance: Boolean(task.deletedInstance),
     metadata: task.metadata && typeof task.metadata === "object" ? { ...task.metadata } : {},
     reminder: {
+      ...(task.reminder || {}),
       active: Boolean(task.reminder && task.reminder.active && reminderSendAt),
       ...(reminderSendAt ? { sendAt: reminderSendAt } : {}),
     },
-  };
-}
-
-export function migrateLegacyPlanner(parsed, weekStartDate) {
-  const legacyWeekStart = cleanText(parsed.weekStartDate || parsed.weekStart, weekStartDate);
-  const tasks = [];
-
-  DAY_ORDER.forEach((day, dayIndex) => {
-    const existingDay = parsed.days && parsed.days[day.key] ? parsed.days[day.key] : {};
-    SLOT_ORDER.forEach((slot) => {
-      const slotItems = Array.isArray(existingDay[slot]) ? existingDay[slot] : [];
-      const date = getWeekDateKey(legacyWeekStart, dayIndex);
-      slotItems.forEach((item, index) => {
-        const normalized = normalizeWeeklyTask({
-          ...item,
-          id: cleanText(item.id || item.taskId, `legacy-${day.key}-${slot}-${index + 1}`),
-          taskId: cleanText(item.taskId || item.id, `legacy-${day.key}-${slot}-${index + 1}`),
-          date,
-          timeSlot: slot,
-        }, date, slot);
-        if (normalized) {
-          tasks.push(normalized);
-        }
-      });
-    });
-  });
-
-  return {
-    weekStartDate: legacyWeekStart,
-    tasks,
   };
 }
 
@@ -364,6 +312,7 @@ export function toProjectView(project) {
   const resourceLinkEntries = parseResourceLinkEntries(project.resourceLinks || metadata.resourceLinks);
   return {
     projectId: cleanText(project.id, "unknown"),
+    externalId: cleanText(project.externalId || project.external_id, ""),
     title: cleanText(project.title, "Untitled Project"),
     source: normalizeSource(project.source),
     category: cleanText(project.category, "uncategorized"),
@@ -586,7 +535,7 @@ const WEATHER_FALLBACK_ICON = "\u26c5";
 const WEATHER_FALLBACK_VALUE = "\u2014";
 
 export function buildWeatherApiUrl() {
-    const apiKey = cleanText(window.APP_CONFIG && window.APP_CONFIG.WEATHERAPI_KEY, "");
+    const apiKey = cleanText(appConfig.WEATHERAPI_KEY, "");
     const base = `https://api.weatherapi.com/v1/forecast.json?q=${WEATHER_LOCATION.latitude},${WEATHER_LOCATION.longitude}&days=7&aqi=no&alerts=no`;
     return apiKey ? `${base}&key=${encodeURIComponent(apiKey)}` : base;
   }
@@ -969,7 +918,7 @@ export function getSeriesEditorValues(master, current) {
   };
 }
 
-export function createPlannerController() {
+export function createPlannerController({ reminderService = calendarReminders } = {}) {
   const state = {
     curatedTasks: [], repeatableTasks: [], repeatableOverrideMap: new Map(),
     planner: buildEmptyPlanner(getWeekStartISO(new Date())), allProjects: [],
@@ -979,6 +928,9 @@ export function createPlannerController() {
     reminderTaskId: "", seriesTaskId: "", activeAdhocChecklist: null,
     linkProject: null, confirmations: {}, error: "",
     gridRevision: 0,
+    backupBusy: false,
+    reminderBusy: false,
+    backupReloadRequired: false,
   };
   const listeners = new Set();
   const timers = new Set();
@@ -1045,16 +997,6 @@ export function createPlannerController() {
   function showReminderConfirmation(taskId, message) {
     state.confirmations[taskId] = cleanText(message, "");
     later(() => { delete state.confirmations[taskId]; }, 3000);
-  }
-  async function postReminderAction(action, payload) {
-    const response = await fetch(getReminderEndpoint(action), {
-      method: "POST", body: JSON.stringify({ action, ...payload }),
-    });
-    if (!response.ok) throw new Error(`Reminder request failed (${response.status}).`);
-    const result = await response.json();
-    if (result?.ok === false) throw new Error(cleanText(result.error, "Reminder request failed."));
-    if (!result || typeof result !== "object") throw new Error("The reminder service returned an invalid response.");
-    return result;
   }
   function selectTaskMasterProject(task, projects) {
     const source = normalizeSource(task.source);
@@ -1131,46 +1073,17 @@ export function createPlannerController() {
       return null;
     }
 
-    return state.allProjects.find((project) => cleanText(project.projectId, "") === targetId) || null;
-  }
-
-  function getProjectByTitle(title, sourceHint) {
-    const targetTitle = cleanText(title, "").toLowerCase();
-    if (!targetTitle) {
-      return null;
-    }
-
-    const normalizedSourceHint = cleanText(sourceHint, "");
-    const titleMatches = state.allProjects.filter((project) => cleanText(project.title, "").toLowerCase() === targetTitle);
-    if (!titleMatches.length) {
-      return null;
-    }
-
-    if (!normalizedSourceHint) {
-      return titleMatches[0] || null;
-    }
-
-    return titleMatches.find((project) => cleanText(project.source, "") === normalizedSourceHint) || titleMatches[0] || null;
+    return findExplicitProject(state.allProjects, targetId);
   }
 
   function getTaskProject(task) {
-    const sourceId = parseWeeklySourceId(task)
-      || cleanText(task && task.projectId, "")
-      || cleanText(task && task.taskId, "");
-    const byId = getProjectById(sourceId);
-    if (byId) {
-      return byId;
-    }
-
-    const title = cleanText(task && task.title, "");
-    const sourceHint = normalizeSource(cleanText(task && task.source, ""));
-    return getProjectByTitle(title, sourceHint);
+    return getProjectById(task?.projectId || task?.external_id || task?.externalId);
   }
 
-  function getProjectFromTaskId(taskId, fallbackTitle, fallbackSource) {
+  function getProjectFromTaskId(taskId) {
     const normalizedTaskId = cleanText(taskId, "");
     if (!normalizedTaskId) {
-      return getProjectByTitle(fallbackTitle, normalizeSource(cleanText(fallbackSource, "")));
+      return null;
     }
 
     const scheduledTask = state.planner.tasks.find((item) => getSlotItemId(item) === normalizedTaskId);
@@ -1191,13 +1104,9 @@ export function createPlannerController() {
         }
       }
 
-      const byCuratedTitle = getProjectByTitle(curatedTask.title, normalizeSource(cleanText(curatedTask.source, "")));
-      if (byCuratedTitle) {
-        return byCuratedTitle;
-      }
     }
 
-    return getProjectByTitle(fallbackTitle, normalizeSource(cleanText(fallbackSource, "")));
+    return getProjectById(normalizedTaskId);
   }
 
   function loadRepeatableOverrides() {
@@ -1466,12 +1375,19 @@ export function createPlannerController() {
     return true;
   }
 
+  function requireCancelledReminders(tasks) {
+    if (tasks.some((task) => task.reminder?.active)) {
+      throw new Error("Cancel active Google Calendar notifications before removing these tasks.");
+    }
+  }
+
   function removeTask(taskId) {
     const existing = findWeeklyTaskById(taskId);
     if (!existing) {
       return false;
     }
 
+    requireCancelledReminders([existing.item]);
     if (cleanText(existing.item.parentRepeatableId, "")) {
       existing.item.deletedInstance = true;
     } else {
@@ -1483,6 +1399,9 @@ export function createPlannerController() {
   }
 
   function removeTaskFromPlanner(taskId) {
+    requireCancelledReminders(state.planner.tasks.filter((item) =>
+      cleanText(item.taskType || item.type, "curated") === "curated"
+      && parseWeeklySourceId(item) === cleanText(taskId, "")));
     const beforeCurated = state.curatedTasks.length;
     state.curatedTasks = state.curatedTasks.filter((task) => task.taskId !== taskId);
     const removedFromCurated = state.curatedTasks.length !== beforeCurated;
@@ -1516,6 +1435,10 @@ export function createPlannerController() {
   }
 
   function removeWeeklyCopiesForRepeatable(projectId) {
+    requireCancelledReminders(state.planner.tasks.filter((item) =>
+      cleanText(item.taskType || item.type, "curated") === "repeatable"
+      && (cleanText(item.parentRepeatableId, "") === cleanText(projectId, "")
+        || parseWeeklySourceId(item) === cleanText(projectId, ""))));
     const before = state.planner.tasks.length;
     state.planner.tasks = state.planner.tasks.filter((item) => {
       if (cleanText(item.taskType || item.type, "curated") !== "repeatable") {
@@ -1632,6 +1555,7 @@ export function createPlannerController() {
       recurrence: cleanText(taskLike.recurrence, ""),
       projectId: cleanText(taskLike.projectId, ""),
       priority: parseNumber(taskLike.priority, null),
+      metadata: { ...(taskLike.metadata || {}), sourceTaskId: sourceId },
     });
 
     if (existingIndex >= 0) {
@@ -1701,8 +1625,8 @@ export function createPlannerController() {
         .filter((task) => {
           try {
             const metadata = JSON.parse(cleanText(task.metadataJson, "{}"));
-            return metadata && metadata.plannerRepeatable === true;
-          } catch (error) { console.warn("Invalid legacy task metadata", error); return false; }
+            return Boolean(metadata?.series);
+          } catch (error) { throw new Error(`Invalid Planner task metadata: ${error.message}`, { cause: error }); }
         })
         .filter((task) => !repeatableProjectIds.has(cleanText(task.projectId, "")))
         .forEach((task, index) => {
@@ -1765,7 +1689,7 @@ export function createPlannerController() {
     }
     const taskType = getWeeklyTaskType(match.item);
     const isProject = taskType === "project" || taskType === "curated" || match.item.source === "project";
-    const projectId = cleanText(match.item.projectId, "") || parseWeeklySourceId(match.item);
+    const projectId = cleanText(match.item.projectId || match.item.externalId || match.item.external_id, "");
     const title = cleanText(newTitle, "");
     if (!title) {
       return false;
@@ -1815,14 +1739,16 @@ export function createPlannerController() {
   }
 
   async function resolveTaskMasterProjectId(task) {
-    const id = cleanText(task.projectId, "") || parseWeeklySourceId(task);
+    const id = cleanText(task.projectId || task.externalId || task.external_id, "");
     let projects = plannerStorage.getCachedProjects();
-    if (!Array.isArray(projects) || !projects.some(project => cleanText(project.id, "") === id)) {
+    let project = findExplicitProject(projects, id);
+    if (!project) {
       projects = await plannerStorage.getProjects();
       plannerStorage.setCachedProjects(projects);
+      project = findExplicitProject(projects, id);
     }
-    if (projects.some(project => cleanText(project.id, "") === id)) {
-      return id;
+    if (project) {
+      return project.id;
     }
     return selectTaskMasterProject(task, projects);
   }
@@ -1849,8 +1775,6 @@ export function createPlannerController() {
       title,
       metadata: {
         ...(project.metadata || {}),
-        _originalTitle: project.title,
-        _originalId: id,
       },
     };
     const result = await plannerStorage.updateProject(updated);
@@ -2033,59 +1957,22 @@ export function createPlannerController() {
     return map;
   }
 
-  function getReminderEndpoint(action) {
-    const baseUrl = cleanText(window.APP_CONFIG && window.APP_CONFIG.GOOGLE_SHEETS_WRITE_URL, "");
-    if (!baseUrl) {
-      throw new Error("Google Apps Script reminder endpoint is not configured.");
-    }
-
-    const separator = baseUrl.includes("?") ? "&" : "?";
-    return `${baseUrl}${separator}action=${encodeURIComponent(action)}`;
-  }
-
   async function sendReminder(task, sendAt) {
-    const config = window.APP_CONFIG || {};
-    const phoneNumber = cleanText(config.USER_PHONE_NUMBER, "");
-    const smsGateway = cleanText(config.USER_SMS_GATEWAY, "");
-    if (!phoneNumber || !smsGateway) {
-      throw new Error("Set USER_PHONE_NUMBER and USER_SMS_GATEWAY in app-config.js first.");
-    }
-
-    const payload = {
-      phoneNumber,
-      smsGateway,
-      message: `Reminder: ${task.title}`,
-      sendAt: sendAt.toISOString(),
-      taskId: task.id,
-    };
-
-    await postReminderAction("sendReminder", payload);
-    task.reminder = { active: true, sendAt: payload.sendAt };
-    savePlanner();
-    showReminderConfirmation(task.id, `Reminder set for ${formatReminderTime(sendAt)}`);
+    await persistence;
+    if (persistenceError) throw persistenceError;
+    task.reminder = await reminderService.schedule(structuredClone(task), sendAt);
+    showReminderConfirmation(task.id, `Google Calendar notification set for ${formatReminderTime(sendAt)}`);
   }
 
   async function resetReminder(task, newSendAt) {
-    const config = window.APP_CONFIG || {};
-    const payload = {
-      phoneNumber: cleanText(config.USER_PHONE_NUMBER, ""),
-      smsGateway: cleanText(config.USER_SMS_GATEWAY, ""),
-      message: `Reminder: ${task.title}`,
-      taskId: task.id,
-      newSendAt: newSendAt.toISOString(),
-    };
-
-    await postReminderAction("resetReminder", payload);
-    task.reminder = { active: true, sendAt: payload.newSendAt };
-    savePlanner();
-    showReminderConfirmation(task.id, `Reminder updated to ${formatReminderTime(newSendAt)}`);
+    await sendReminder(task, newSendAt);
   }
 
   async function deleteReminder(task) {
-    await postReminderAction("deleteReminder", { taskId: task.id });
-    task.reminder = { active: false };
-    savePlanner();
-    showReminderConfirmation(task.id, "Reminder deleted");
+    await persistence;
+    if (persistenceError) throw persistenceError;
+    task.reminder = await reminderService.cancel(structuredClone(task));
+    showReminderConfirmation(task.id, "Google Calendar notification disabled.");
   }
 
   function findRepeatableMaster(parentRepeatableId) {
@@ -2096,6 +1983,9 @@ export function createPlannerController() {
   function removeGeneratedSeriesInstances(parentRepeatableId, fromDate) {
     const parentId = cleanText(parentRepeatableId, "");
     const threshold = cleanText(fromDate, "");
+    requireCancelledReminders(state.planner.tasks.filter((item) =>
+      cleanText(item.parentRepeatableId, "") === parentId && !item.overridden
+      && (!threshold || cleanText(item.occurrenceDate, item.date) >= threshold)));
     state.planner.tasks = state.planner.tasks.filter((item) => {
       if (cleanText(item.parentRepeatableId, "") !== parentId || item.overridden) {
         return true;
@@ -2106,6 +1996,8 @@ export function createPlannerController() {
 
   function saveSeriesChanges(master, currentInstance, values) {
     const parentId = cleanText(master.id || master.projectId, "");
+    requireCancelledReminders(state.planner.tasks.filter((item) =>
+      cleanText(item.parentRepeatableId, "") === parentId || parseWeeklySourceId(item) === parentId));
     const currentDate = cleanText(currentInstance.date, currentInstance.occurrenceDate);
     let threshold;
 
@@ -2155,6 +2047,8 @@ export function createPlannerController() {
 
   function deleteRepeatableSeries(master) {
     const parentId = cleanText(master.id || master.projectId, "");
+    requireCancelledReminders(state.planner.tasks.filter((item) =>
+      cleanText(item.parentRepeatableId, "") === parentId || parseWeeklySourceId(item) === parentId));
     const override = state.repeatableOverrideMap.get(parentId) || {};
     state.repeatableOverrideMap.set(parentId, {
       ...override,
@@ -2412,6 +2306,7 @@ export function createPlannerController() {
     await consumeStagedQueue();
     if (destroyed || token !== generation) return;
     state.loading = false;
+    state.backupReloadRequired = false;
     if (!state.error && !state.status.startsWith("Unable")) setStatus(`Planning week of ${state.planner.weekStartDate}.`);
     unsubscribe?.();
     unsubscribe = plannerStorage.onChange((detail) => {
@@ -2420,7 +2315,7 @@ export function createPlannerController() {
         report(persistenceError);
         return;
       }
-      if (detail?.type !== "weekly-snapshot-saved" && !pendingWrites) void refreshParking().catch(report);
+      if (detail?.type !== "weekly-snapshot-saved" && !pendingWrites && !state.backupBusy) void refreshParking().catch(report);
     });
     void refreshWeather();
     notify();
@@ -2482,8 +2377,7 @@ export function createPlannerController() {
     return { master, current };
   }
   async function openLinks(taskId) {
-    const task = findWeeklyTaskById(taskId)?.item;
-    const project = getProjectFromTaskId(taskId, task?.title, task?.source);
+    const project = getProjectFromTaskId(taskId);
     if (!project) throw new Error("Unable to locate project resource links.");
     const entries = parseResourceLinkEntries(project.resourceLinkEntries || project.resourceLinks);
     if (!entries.length) { setStatus("No resource links available for this project."); return; }
@@ -2506,6 +2400,37 @@ export function createPlannerController() {
     state.linkProject = null;
   }
   const operations = {
+    async backupOperation(operation) {
+      if (state.loading) throw new Error("Wait for Planner to finish loading before using backups.");
+      if (state.reminderBusy) throw new Error("Wait for the Calendar notification operation before using backups.");
+      state.backupBusy = true;
+      notify();
+      let operationError;
+      let result;
+      try {
+        await persistence;
+        if (persistenceError) throw persistenceError;
+        result = await operation();
+      } catch (error) {
+        operationError = error;
+      }
+      const wasReloadRequired = state.backupReloadRequired;
+      state.backupReloadRequired = true;
+      let reloadError;
+      try {
+        await refreshParking();
+        await loadRepeatableTasks();
+        state.backupReloadRequired = false;
+        if (wasReloadRequired) {
+          state.error = "";
+          state.status = "Planner reloaded after backup.";
+        }
+      } catch (error) { reloadError = error; }
+      finally { state.backupBusy = false; notify(); }
+      if (reloadError) throw new Error(`${operationError ? `${operationError.message} ` : ""}Planner reload failed: ${reloadError.message}. Editing is blocked; retry a backup operation or reload Planner.`, { cause: reloadError });
+      if (operationError) throw operationError;
+      return result;
+    },
     initialize, refreshParking, shiftPlannerWeek, goToCurrentWeek, jumpPlannerToDate,
     assignTask, addAdHocTask, removeTask, removeTaskFromPlanner, removeTaskFromCurated,
     removeRepeatableMaster, saveTaskTitleEdit, updateTaskTitle, updateProjectMasterTitle,
@@ -2522,6 +2447,7 @@ export function createPlannerController() {
     openMove(taskId) { state.moveTaskId = taskId; },
     closeMove() { state.moveTaskId = ""; },
     openReminder(taskId) { state.reminderTaskId = taskId; },
+    connectReminders: () => reminderService.connect(),
     closeReminder() { state.reminderTaskId = ""; },
     openSeries(taskId) { getSeries(taskId); state.seriesTaskId = taskId; },
     closeSeries() { state.seriesTaskId = ""; },
@@ -2543,10 +2469,13 @@ export function createPlannerController() {
     async reminder(taskId, action, selection, time) {
       const task = findWeeklyTaskById(taskId)?.item;
       if (!task) throw new Error("Unable to locate that Planner task.");
-      if (action === "delete") await deleteReminder(task);
-      else if (action === "reset") await resetReminder(task, getReminderSendAt(task, selection, time));
-      else await sendReminder(task, getReminderSendAt(task, selection, time));
-      state.reminderTaskId = "";
+      state.reminderBusy = true;
+      try {
+        if (action === "delete") await deleteReminder(task);
+        else if (action === "reset") await resetReminder(task, getReminderSendAt(task, selection, time));
+        else await sendReminder(task, getReminderSendAt(task, selection, time));
+        state.reminderTaskId = "";
+      } finally { state.reminderBusy = false; }
     },
     dropOnSlot,
   };
@@ -2554,6 +2483,11 @@ export function createPlannerController() {
     if (destroyed && name !== "initialize") return undefined;
     try {
       if (name === "getTaskProject" || name === "getSeries") return operation(...args);
+      if (state.backupReloadRequired && name !== "backupOperation" && name !== "initialize") {
+        throw new Error("Planner must reload after a backup operation before editing. Retry a backup operation or reload Planner.");
+      }
+      if (state.backupBusy) throw new Error("Planner backup is in progress. Wait before editing.");
+      if (state.reminderBusy) throw new Error("A Calendar notification operation is in progress. Wait before editing.");
       const result = operation(...args);
       if (!state.loading && [
         "shiftPlannerWeek", "goToCurrentWeek", "jumpPlannerToDate", "assignTask", "addAdHocTask",
@@ -2668,56 +2602,18 @@ async function loadParkingDropdowns() {
 }
 
 function parkingProjectSource(source) {
-  const text = cleanText(source, "").toLowerCase();
-  if (text.includes("list_b") || text.includes("vehicle")) return "vehicle";
-  if (text.includes("list_c") || text.includes("repeating")) return "repeating";
-  if (text.includes("list_d") || text.includes("misc")) return "misc";
-  if (text.includes("list_a") || text.includes("home")) return "home";
-  return "";
+  const value = cleanSource(source);
+  return ["home", "vehicle", "repeating", "misc"].includes(value) ? value : "";
 }
 
-function parkingConvertedSource(conversion) {
-  return cleanText(conversion?.sheetSource, "") || (conversion?.type === "repeatable" ? "repeating" : "home");
-}
-
-function parkingBestMatch(projects, rowHint) {
-  const withRows = projects.filter((project) => Number(project.metadata?.sheetRowNumber) > 0);
-  withRows.sort((a, b) => rowHint > 0
-    ? Math.abs(Number(a.metadata.sheetRowNumber) - rowHint) - Math.abs(Number(b.metadata.sheetRowNumber) - rowHint)
-    : Number(b.metadata.sheetRowNumber) - Number(a.metadata.sheetRowNumber));
-  return withRows[0] || projects[0] || null;
-}
-
-function findParkingProject(projects, id, source, rowHint, titleHint) {
-  if (!Array.isArray(projects)) return null;
-  const matchingSource = (project) => parkingProjectSource(project.source) === source;
-  return projects.find((project) => cleanText(project.id, "") === id && matchingSource(project))
-    || projects.find((project) => cleanText(project.id, "") === id)
-    || (rowHint > 0 ? projects.find((project) => Number(project.metadata?.sheetRowNumber) === rowHint && matchingSource(project)) : null)
-    || (titleHint ? parkingBestMatch(projects.filter((project) => matchingSource(project) && cleanText(project.title, "") === titleHint), rowHint)
-      || parkingBestMatch(projects.filter((project) => matchingSource(project) && cleanText(project.metadata?.property, "") === titleHint), rowHint) : null);
-}
-
-function assertParkingResult(result, fallback) {
-  if (!result || result.ok === false) throw new Error(cleanText(result?.error, fallback));
-  return result;
-}
-
-async function createParkingProject(item, convertTo) {
-  const result = assertParkingResult(await plannerStorage.createProject({
-    source: "home", property: "", vehicle: "", title: item.title, area: "",
-    category: "uncategorized", priority: "3", order: "", resourceLinks: "",
-    state: "unknown", dateCompleted: "", hours: "", mileage: "", mechanic: "",
-    addToRepeating: convertTo === "repeatable", recurrence: "",
-  }), "Unable to create project.");
-  return {
-    ...item,
-    convertedTo: {
-      type: convertTo, id: cleanText(result.id, item.id),
-      tabName: cleanText(result.tabName, ""), rowNumber: result.rowNumber,
-    },
-    color: convertTo === "repeatable" ? PARKING_COLORS.repeatable : PARKING_COLORS.project,
-  };
+function findExplicitProject(projects, id, source = "") {
+  if (!Array.isArray(projects) || !cleanText(id, "")) return null;
+  const matches = projects.filter((project) =>
+    (!source || parkingProjectSource(project.source) === source)
+    && [project.id, project.projectId, project.externalId, project.external_id]
+      .some((value) => cleanText(value, "") === cleanText(id, "")));
+  if (matches.length > 1) throw new Error(`Project identity ${id} is ambiguous. An explicit unique UUID is required.`);
+  return matches[0] || null;
 }
 
 async function removeParkingConversion(conversion, targetType) {
@@ -2725,10 +2621,7 @@ async function removeParkingConversion(conversion, targetType) {
   if (conversion.type === "task-manager" || conversion.type === "ad-hoc") {
     await plannerStorage.deleteTaskManagerTask(conversion.id);
   } else if (conversion.type === "project" || conversion.type === "repeatable") {
-    assertParkingResult(await plannerStorage.deleteProject({
-      id: conversion.id, source: parkingConvertedSource(conversion),
-      tabName: cleanText(conversion.tabName, ""), metadata: { sheetRowNumber: Number(conversion.rowNumber || 0) },
-    }), "Unable to remove previous project conversion.");
+    assertProjectWriteAllowed("delete");
   } else if (conversion.type === "weekly") {
     await plannerStorage.deleteWeeklyTask(conversion.id, { hardDelete: false });
   }
@@ -2744,7 +2637,9 @@ async function createParkingConversion(item, convertTo) {
     });
     return { ...item, convertedTo: { type: "task-manager", id: converted.id || converted.taskId }, color: PARKING_COLORS.adHoc };
   }
-  if (convertTo === "project" || convertTo === "repeatable") return createParkingProject(item, convertTo);
+  if (convertTo === "project" || convertTo === "repeatable") {
+    throw new Error("Only edits to existing projects are authorized here; Parking project and repeatable conversions are not authorized.");
+  }
   return item;
 }
 
@@ -2776,7 +2671,6 @@ export async function saveParkingItem(existing, values) {
     deleted: existing.deleted, convertedFromParking: existing.convertedFromParking,
     title: values.title, notes: values.notes,
   });
-  // The legacy edit dialog's None choice retains an existing conversion.
   const converted = await createParkingConversion(next, values.convertTo);
   const saved = await plannerStorage.upsertParkingItem(converted);
   invalidateParkingProjects();
@@ -2813,36 +2707,33 @@ export async function parkPlannerPayload(payload) {
 
 export async function loadParkingProjectEditor(item) {
   const conversion = item.convertedTo || {};
-  const id = cleanText(conversion.id, item.id);
-  const source = parkingConvertedSource(conversion);
-  const rowHint = Number(conversion.rowNumber || 0);
-  let project = findParkingProject(plannerStorage.getCachedProjects(), id, source, rowHint, item.title);
+  const id = cleanText(conversion.id, "");
+  let project = findExplicitProject(plannerStorage.getCachedProjects(), id);
   if (!project) {
     try {
       const projects = await plannerStorage.getProjects();
-      project = findParkingProject(projects, id, source, rowHint, item.title);
+      project = findExplicitProject(projects, id);
     } catch (error) {
       throw new Error("Unable to load projects for in-place edit.", { cause: error });
     }
   }
-  if (!project) return null;
-  const identityConfirmed = cleanText(project.id, "") === id;
-  const row = Number(project.metadata?.sheetRowNumber || 0);
+  if (!project) throw new Error(`Project ${id} was not found. Supply an explicit UUID or external_id; title/row matching is disabled.`);
+  const source = parkingProjectSource(project.source);
   const nextItem = parseParkingItem({
     ...item,
-    convertedTo: { ...conversion, id: cleanText(project.id, id), ...(row > 0 ? { rowNumber: row } : {}) },
+    convertedTo: { type: conversion.type, id: project.id },
   });
-  const metadata = identityConfirmed ? { ...project.metadata } : {};
+  const metadata = { ...project.metadata };
   const dropdowns = await loadParkingDropdowns();
   const sourceDropdowns = dropdowns[source] || {};
   return {
     item: nextItem, source,
-    project: { ...project, category: identityConfirmed ? project.category : "", state: identityConfirmed ? project.state : "", metadata },
+    project: { ...project, metadata },
     dropdowns,
     values: {
       title: cleanText(item.title, cleanText(project.title, "Untitled Project")), source,
-      category: identityConfirmed ? cleanText(project.category, "uncategorized") : "uncategorized",
-      state: identityConfirmed ? cleanText(project.state, "unknown") : "unknown",
+      category: cleanText(project.category, "uncategorized"),
+      state: cleanText(project.state, "unknown"),
       priority: cleanText(metadata.priority, getParkingDropdownValues(sourceDropdowns, "priority")[0] || ""), order: cleanText(metadata.order, ""),
       area: cleanText(metadata.area, (sourceDropdowns.area || [])[0] || ""), property: cleanText(metadata.property, ""),
       dateCompleted: cleanText(metadata.dateCompleted, ""),
@@ -2864,48 +2755,13 @@ export async function saveParkingProjectEditor(editor, values, onStatus = () => 
     dateCompleted: cleanText(values.dateCompleted, cleanText(metadata.dateCompleted, "")),
   };
   if (values.source !== source) {
-    onStatus("Moving project...");
-    const result = assertParkingResult(await plannerStorage.createProject({
-      ...fields, source: values.source, title, property, vehicle: property,
-      recurrence: cleanText(metadata.recurrence, ""),
-    }), "Unable to create project in the new list.");
-    try {
-      assertParkingResult(await plannerStorage.deleteProject({
-        id: project.id, source, metadata: { sheetRowNumber: Number(metadata.sheetRowNumber || 0) },
-      }), "Unable to remove project from previous list.");
-    } catch (error) {
-      // Compensate the destination create rather than leaving a duplicate on a failed move.
-      try {
-        assertParkingResult(await plannerStorage.deleteProject({
-          id: result.id, source: values.source, metadata: { sheetRowNumber: Number(result.rowNumber || 0) },
-        }), "Unable to remove replacement project.");
-      } catch (rollbackError) {
-        invalidateParkingProjects();
-        throw new Error(`${error.message} Move rollback failed: ${rollbackError.message}`, { cause: rollbackError });
-      }
-      invalidateParkingProjects();
-      throw error;
-    }
-    const saved = await plannerStorage.upsertParkingItem({
-      ...item, title,
-      convertedTo: {
-        ...item.convertedTo, type: values.source === "repeating" ? "repeatable" : "project",
-        id: cleanText(result.id, project.id), tabName: cleanText(result.tabName, ""),
-        rowNumber: result.rowNumber, sheetSource: values.source,
-      },
-      color: values.source === "repeating" ? PARKING_COLORS.repeatable : PARKING_COLORS.project,
-    });
-    invalidateParkingProjects();
-    return parseParkingItem(saved);
+    assertProjectWriteAllowed("move");
   }
   const nextProject = {
     ...project, title, category: fields.category, state: fields.state,
     metadata: {
       ...metadata, priority: fields.priority, order: fields.order, area: fields.area,
       property, _clearProperty: property === "", dateCompleted: fields.dateCompleted,
-      _originalTitle: cleanText(metadata._originalTitle, ""),
-      _originalId: cleanText(metadata._originalId, cleanText(project.id, "")),
-      sheetRowNumber: metadata.sheetRowNumber,
     },
   };
   const nextItem = { ...item, title };

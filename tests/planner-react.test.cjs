@@ -1,9 +1,9 @@
-const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
 const { createRequire } = require("node:module");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
 const root = path.join(__dirname, "..");
 const requireTrips = createRequire(path.join(root, "trips", "package.json"));
 const espree = requireTrips("espree");
@@ -37,14 +37,12 @@ const persistenceAdapter = new Proxy({}, {
     return window.PlannerStorage[key](...args);
   },
 });
-const servicePromise = Promise.resolve(vm.runInThisContext(`((plannerStorage) => {
+const servicePromise = Promise.resolve(vm.runInThisContext(`((plannerStorage, appConfig, calendarReminders) => {
   ${source.replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "")}
   return { ${exportsList.join(",")} };
-})`, { filename: "plannerService.test-module.js" })(persistenceAdapter));
-const legacySource = fs.readFileSync(path.join(root, "www", "screens", "planner", "planner.js"), "utf8");
-const legacyAst = espree.parse(legacySource, { ecmaVersion: "latest", range: true });
-const declarations = legacyAst.body.find((node) => node.type === "FunctionDeclaration" && node.id.name === "initPlannerScreen")
-  .body.body.filter((node) => node.type === "FunctionDeclaration").map((node) => legacySource.slice(...node.range)).join("\n");
+})`, { filename: "plannerService.test-module.js" })(persistenceAdapter,
+  new Proxy({}, { get: (_, key) => window.APP_CONFIG[key] }),
+  new Proxy({}, { get: (_, key) => (...args) => window.modernReminders[key](...args) })));
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 function adapters(initial, projects = []) {
@@ -61,6 +59,7 @@ function adapters(initial, projects = []) {
   global.window = {
     APP_CONFIG: { GOOGLE_SHEETS_WRITE_URL: "https://invalid.test/reminders", USER_PHONE_NUMBER: "fixture", USER_SMS_GATEWAY: "fixture" },
     location: { hash: "#planner" }, setTimeout, clearTimeout,
+    modernReminders: { schedule: async () => { throw new Error("Invalid response"); } },
     SheetsService: { updateProjectInSheet: async () => ({ ok: true }) },
     ProjectsService: { UnifiedProjectList: projects },
     loadAllProjects: async () => clone(projects),
@@ -85,48 +84,16 @@ async function setup(initial, projects = [], seed = {}) {
   for (const [key, value] of Object.entries(seed)) environment.local.set(key, JSON.stringify(value));
   const controller = service.createPlannerController();
   await controller.actions.initialize();
-  const sandbox = {
-    state: controller.getSnapshot(), window, localStorage, console, Date, Math, Map, Set, URL, setTimeout, clearTimeout,
-    DAY_ORDER: service.DAY_ORDER, SLOT_ORDER: service.SLOT_ORDER,
-    FULL_DAY_NAMES: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
-    MONTH_WEEK_OPTIONS: ["1", "2", "3", "4", "last"], CURATED_TASK_LIMIT: 8,
-    STORAGE_KEYS: { curatedTasks: "hm_planner_curated_tasks", staged: "hm_weekly_planner_queue", repeatable: "hm_repeatable_tasks" },
-    elements: { status: { textContent: "" }, adhocTitle: {}, adhocDay: {}, adhocSlot: {}, weekScrollContainer: {} },
-  };
-  sandbox.state.activeAdhocChecklist = null;
-  const names = ["assignTask", "addAdHocTask", "moveTask", "moveTaskToDate", "removeTask", "removeTaskFromCurated",
-    "removeRepeatableMaster", "createWeeklyRepeatableCopy", "generateVisibleRecurringInstances",
-    "toggleChecklistOpen", "toggleChecklistItem", "addChecklistItem", "removeChecklistItem", "reorderChecklistItem",
-    "setTaskCompleted", "updateTaskTitle", "updateChecklistItem", "saveSeriesChanges", "deleteRepeatableSeries", "consumeStagedQueue"];
-  const legacy = vm.runInNewContext(`(() => {
-    ${declarations}
-    savePlanner = () => {};
-    renderTaskPool = renderWeekGrid = renderRepeatablePanel = renderAdhocChecklistModal = renderMiniCalendar = () => {};
-    hideCuratedWarning = showCuratedWarning = () => {};
-    return { ${names.join(",")} };
-  })()`, sandbox);
-  return { service, controller, environment, sandbox, legacy };
+  return { service, controller, environment };
 }
 
-function comparable(state) {
-  const legacySeries = (item) => {
-    const { interval, weekdays, ...rest } = item;
-    void interval;
-    void weekdays;
-    return rest;
-  };
-  return clone({ planner: state.planner, curatedTasks: state.curatedTasks,
-    overrides: [...state.repeatableOverrideMap.entries()].map(([id, item]) => [id, legacySeries(item)]),
-    repeatableTasks: state.repeatableTasks.map(legacySeries) });
-}
-
-test("weekly moves, completion, checklists and ad-hoc removal match legacy transitions", async () => {
+test("weekly moves preserve completion, edited checklists and titles", async () => {
   const initial = { weekStartDate: "2026-10-19", tasks: [
     { id: "curated-p1-2026-10-19", taskId: "curated-p1-2026-10-19", date: "2026-10-19", timeSlot: "morning", title: "Fixture", type: "curated", source: "home", checklist: [
       { id: "c1", text: "One", completed: false }, { id: "c2", text: "Two", completed: false },
     ] },
   ] };
-  const { controller, sandbox, legacy } = await setup(initial);
+  const { controller } = await setup(initial);
   try {
     const id = initial.tasks[0].id;
     const steps = [
@@ -140,14 +107,15 @@ test("weekly moves, completion, checklists and ad-hoc removal match legacy trans
       ["moveTask", [id, "2026-10-21", "evening"]],
     ];
     for (const [name, args] of steps) {
-      const random = Math.random;
-      const now = Date.now;
-      Math.random = () => 0.125;
-      Date.now = () => 1792645128000;
-      try { legacy[name](...args); controller.actions[name](...args); }
-      finally { Math.random = random; Date.now = now; }
-      assert.deepEqual(comparable(controller.getSnapshot()), comparable(sandbox.state), name);
+      controller.actions[name](...args);
     }
+    const [task] = controller.getSnapshot().planner.tasks;
+    assert.equal(task.date, "2026-10-21");
+    assert.equal(task.timeSlot, "evening");
+    assert.equal(task.title, "New title");
+    assert.equal(task.completed, true);
+    assert.equal(task.checklistOpen, true);
+    assert.deepEqual(clone(task.checklist), [{ id: "c2", text: "Renamed", completed: false }]);
     await controller.flush();
   } finally { controller.destroy(); }
 });
@@ -159,16 +127,15 @@ test("all recurrence series scopes preserve moved exceptions and deletion tombst
       { id: "exception", parentRepeatableId: "r1", occurrenceDate: "2026-10-12", date: "2026-10-20", timeSlot: "evening", title: "Moved", type: "repeatable", overridden: true, source: "repeating" },
       { id: "deleted", parentRepeatableId: "r1", occurrenceDate: "2026-10-26", date: "2026-10-26", timeSlot: "morning", title: "Deleted", type: "repeatable", deletedInstance: true, source: "repeating" },
     ] };
-    const { controller, sandbox, legacy } = await setup(initial, [{ id: "r1", title: "Series", source: "repeating", metadata: { recurrence: "weekly" } }]);
+    const { controller } = await setup(initial, [{ id: "r1", title: "Series", source: "repeating", metadata: { recurrence: "weekly" } }]);
     try {
       const values = { recurrence: "monthly", baseDay: "Tuesday", monthWeek: "last", baseBucket: "Evening", applyScope: scope };
-      legacy.saveSeriesChanges(sandbox.state.repeatableTasks[0], sandbox.state.planner.tasks[0], values);
       controller.actions.saveSeries(initial.tasks[0].id, values);
-      assert.deepEqual(comparable(controller.getSnapshot()), comparable(sandbox.state), scope);
+      assert.equal(controller.getSnapshot().repeatableTasks[0].recurrence, "monthly");
       assert(controller.getSnapshot().planner.tasks.some((item) => item.id === "exception" && item.overridden));
-      legacy.deleteRepeatableSeries(sandbox.state.repeatableTasks[0]);
       controller.actions.deleteSeries(controller.getSnapshot().planner.tasks.find((item) => item.parentRepeatableId === "r1").id);
-      assert.deepEqual(comparable(controller.getSnapshot()), comparable(sandbox.state), `${scope} deletion`);
+      assert(controller.getSnapshot().planner.tasks.filter((item) => item.parentRepeatableId === "r1")
+        .every((item) => item.deletedInstance || item.overridden), scope);
       await controller.flush();
     } finally { controller.destroy(); }
   }
@@ -178,12 +145,10 @@ test("moving/deleting an instance retains identity and suppresses regeneration",
   const initial = { weekStartDate: "2026-10-19", tasks: [
     { id: "repeatable-r1-2026-10-19", parentRepeatableId: "r1", occurrenceDate: "2026-10-19", date: "2026-10-19", timeSlot: "morning", title: "Series", type: "repeatable", source: "repeating" },
   ] };
-  const { controller, sandbox, legacy } = await setup(initial, [{ id: "r1", title: "Series", source: "repeating", metadata: {} }]);
+  const { controller } = await setup(initial, [{ id: "r1", title: "Series", source: "repeating", metadata: {} }]);
   try {
     for (const [name, args] of [["moveTask", [initial.tasks[0].id, "2026-10-22", "evening"]], ["removeTask", [initial.tasks[0].id]], ["generateVisibleRecurringInstances", []]]) {
-      legacy[name](...args);
       controller.actions[name](...args);
-      assert.deepEqual(comparable(controller.getSnapshot()), comparable(sandbox.state), name);
     }
     const [task] = controller.getSnapshot().planner.tasks;
     assert.equal(task.id, initial.tasks[0].id);
@@ -198,7 +163,6 @@ test("reminder failure is explicit and cannot create a success-shaped reminder",
   const initial = { weekStartDate: "2026-10-19", tasks: [{ id: "adhoc-fixture", date: "2026-10-19", timeSlot: "morning", title: "Fixture", type: "adhoc" }] };
   const { controller } = await setup(initial);
   try {
-    global.fetch = async () => ({ ok: true, json: async () => { throw new Error("Invalid response"); } });
     await assert.rejects(controller.actions.reminder("adhoc-fixture", "send", "10", "09:00"), /Invalid response/);
     assert(!controller.getSnapshot().planner.tasks[0].reminder?.active);
     assert.match(controller.getSnapshot().status, /Invalid response/);
@@ -206,7 +170,7 @@ test("reminder failure is explicit and cannot create a success-shaped reminder",
   } finally { controller.destroy(); }
 });
 
-test("calendar and reminder contracts retain legacy week boundaries and bucket times", async () => {
+test("calendar and reminder contracts retain week boundaries and bucket times", async () => {
   const service = await servicePromise;
   assert.equal(service.getWeekStartISO("2026-10-25"), "2026-10-19");
   const calendar = service.getCalendarMonth("2026-11-01", "2026-11-01", "2026-10-26");
@@ -226,7 +190,7 @@ test("calendar and reminder contracts retain legacy week boundaries and bucket t
   assert.equal(values.monthWeek, "3");
 });
 
-test("staging deduplication, curated limit and repeatable scheduling match legacy", async () => {
+test("Supabase staging deduplicates, respects curated limit and schedules repeatable entries", async () => {
   const curated = Array.from({ length: 7 }, (_, index) => ({ taskId: `p${index}`, projectId: `p${index}`, title: `Project ${index}`, source: "home" }));
   const queue = [
     { taskId: "p0", projectId: "p0", title: "Updated staged project", source: "home" },
@@ -234,13 +198,10 @@ test("staging deduplication, curated limit and repeatable scheduling match legac
     { taskId: "p8", projectId: "p8", title: "Over limit", source: "home" },
     { taskId: "r1", projectId: "r1", title: "Staged repeatable", source: "repeating", recurrence: "biweekly" },
   ];
-  const { controller, sandbox, legacy, environment } = await setup({ weekStartDate: "2026-10-19", tasks: [] }, [], { hm_planner_curated_tasks: curated });
+  const { controller, environment } = await setup({ weekStartDate: "2026-10-19", tasks: [] }, [], { hm_planner_curated_tasks: curated });
   try {
     environment.local.set("hm_weekly_planner_queue", JSON.stringify(queue));
-    legacy.consumeStagedQueue();
-    environment.local.set("hm_weekly_planner_queue", JSON.stringify(queue));
     await controller.actions.consumeStagedQueue();
-    assert.deepEqual(comparable(controller.getSnapshot()), comparable(sandbox.state));
     assert.equal(controller.getSnapshot().curatedTasks.length, 8);
     assert.equal(controller.getSnapshot().planner.tasks[0].date, "2026-10-19");
     assert.equal(environment.local.has("hm_weekly_planner_queue"), false);

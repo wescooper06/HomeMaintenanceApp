@@ -1,9 +1,10 @@
 import { Route, Routes } from "react-router-dom";
+
 import NewTrip from "./NewTrip.jsx";
-import TripDetails from "./TripDetails.jsx";
-import TripsHome from "./TripsHome.jsx";
 import PrioritizeTrips from "./PrioritizeTrips.jsx";
 import TimelineView from "./TimelineView.jsx";
+import TripDetails from "./TripDetails.jsx";
+import TripsHome from "./TripsHome.jsx";
 
 export default function TripsApplication({ home = false }) {
   if (home) return <TripsHome />;

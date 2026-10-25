@@ -1,9 +1,11 @@
 import { useRef } from "react";
+
 import { parseDateKey } from "../../../services/plannerService.js";
+import styles from "../PlannerPage.module.css";
+
 import CalendarWidget from "./CalendarWidget.jsx";
 import { usePlanner } from "./usePlanner.js";
 import usePlannerDialog from "./usePlannerDialog.js";
-import styles from "../PlannerPage.module.css";
 
 export default function PlannerMoveTaskModal({ task }) {
   const { actions } = usePlanner();

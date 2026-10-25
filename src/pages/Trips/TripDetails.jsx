@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+
 import {
   getTrips,
 } from "../../services/tripsService.js";
@@ -54,8 +55,8 @@ export default function TripDetails() {
     try {
       await updateWorkflowMetadata(tripId, { stage, stageNotes });
       setNotice("Workflow updated.");
-    } catch (error) {
-      setSaveError(error.message);
+    } catch (workflowError) {
+      setSaveError(workflowError.message);
     } finally {
       setSaving(false);
     }

@@ -1,7 +1,9 @@
 import { useRef, useState } from "react";
+
 import { formatDateLabel } from "../../../services/plannerService.js";
-import { usePlanner } from "./usePlanner.js";
 import styles from "../PlannerPage.module.css";
+
+import { usePlanner } from "./usePlanner.js";
 
 export default function ReminderModal({ task }) {
   const { actions } = usePlanner();
@@ -25,10 +27,23 @@ export default function ReminderModal({ task }) {
   return (
     <div className={styles["reminder-modal-card"]} role="dialog" aria-modal="true" aria-labelledby="reminder-modal-title">
       <div className={styles["reminder-modal-header"]}>
-        <div><h2 id="reminder-modal-title">Send Reminder</h2><p>{task.title} - {formatDateLabel(task.date)}</p></div>
+        <div><h2 id="reminder-modal-title">Google Calendar Notification</h2><p>{task.title} - {formatDateLabel(task.date)}</p></div>
         <button type="button" data-action="reminder-cancel" aria-label="Close reminder dialog" title="Close" disabled={busy} onClick={actions.closeReminder}>X</button>
       </div>
       <form className={styles["reminder-form"]} onSubmit={(event) => { event.preventDefault(); void run("send"); }}>
+        <p>Allow notifications in Google Calendar. Cancelling here disables
+          the notification but retains its Calendar entry for safe retries.</p>
+        {task.reminder?.needsReview && <p role="status">This reminder was imported for review.
+          Its original settings are preserved in the backup metadata; no notification was scheduled by restore.</p>}
+        <button type="button" disabled={busy} onClick={async () => {
+          if (pending.current) return;
+          pending.current = true;
+          setBusy(true);
+          setError("");
+          try { await actions.connectReminders(); }
+          catch (failure) { setError(failure.message || "Unable to connect Google Calendar."); }
+          finally { pending.current = false; setBusy(false); }
+        }}>Connect Google Calendar</button>
         <label><input type="radio" name="reminder-time" value="10" checked={choice === "10"} onChange={() => setChoice("10")} /> 10 minutes before bucket time</label>
         <label><input type="radio" name="reminder-time" value="30" checked={choice === "30"} onChange={() => setChoice("30")} /> 30 minutes before bucket time</label>
         <label><input type="radio" name="reminder-time" value="60" checked={choice === "60"} onChange={() => setChoice("60")} /> 1 hour before bucket time</label>

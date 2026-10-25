@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+
 import {
   convertParkingItem, deleteParkingItem, getParkingItemColor, loadParkingItems,
   loadParkingProjectEditor, parkPlannerPayload, removeParkingProject, subscribeParkingChanges,
 } from "../../../services/plannerService.js";
-import { usePlanner } from "./usePlanner.js";
-import ParkingLotDialogs from "./ParkingLotDialogs.jsx";
 import styles from "../PlannerPage.module.css";
+
+import ParkingLotDialogs from "./ParkingLotDialogs.jsx";
+import { usePlanner } from "./usePlanner.js";
 
 const css = (...names) => names.filter(Boolean).map((name) => styles[name]).filter(Boolean).join(" ");
 const convertedLabels = { "task-manager": "Ad-Hoc", "ad-hoc": "Ad-Hoc", project: "Project", repeatable: "Repeatable" };

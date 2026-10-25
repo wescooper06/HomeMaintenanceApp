@@ -1,4 +1,5 @@
 import styles from "../CalendarPage.module.css";
+
 import useCalendarDialogs from "./useCalendarDialogs.js";
 
 export default function CalendarEditDialog() {

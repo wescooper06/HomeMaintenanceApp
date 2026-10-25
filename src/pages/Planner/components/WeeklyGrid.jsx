@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
+
 import { selectWeeklyView } from "../../../services/plannerService.js";
+import styles from "../PlannerPage.module.css";
+
+import { WeeklyTaskCard } from "./ProjectCard.jsx";
 import { usePlanner } from "./usePlanner.js";
 import usePlannerDrag from "./usePlannerDrag.js";
-import { WeeklyTaskCard } from "./ProjectCard.jsx";
-import styles from "../PlannerPage.module.css";
 
 export default function WeeklyGrid() {
   const { snapshot, actions } = usePlanner();

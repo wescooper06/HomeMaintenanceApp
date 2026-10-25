@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
 import { createTrip } from "../../services/tripsService.js";
 
 export default function NewTrip() {
@@ -34,8 +35,8 @@ export default function NewTrip() {
       tripId.current ??= crypto.randomUUID();
       const trip = await createTrip({ tripId: tripId.current, ...form });
       navigate(`/${trip.tripId}`);
-    } catch (error) {
-      setError(error.message);
+    } catch (createError) {
+      setError(createError.message);
     } finally {
       setSaving(false);
     }

@@ -1,5 +1,6 @@
-import { getSupabaseClient } from "./supabaseClient.js";
 import { DAYS, formatDays, minutesToTime, parseDays, timeToMinutes } from "../utils/plannerUtils.js";
+
+import { getSupabaseClient } from "./supabaseClient.js";
 
 async function result(query, operation) {
   const { data, error } = await query;

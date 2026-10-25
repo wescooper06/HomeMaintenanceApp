@@ -1,8 +1,9 @@
-import { TimelineDropMonth, TimelineDropYear } from "./TimelineDragDrop.jsx";
 import { TIMELINE_MONTHS, timelineColor, timelineKey, timelineTripIds } from "../../../utils/timelineUtils.js";
+
 import MonthBox from "./MonthBox.jsx";
-import TripMarker from "./TripMarker.jsx";
+import { TimelineDropMonth, TimelineDropYear } from "./TimelineDragDrop.jsx";
 import TimelineYearRow from "./TimelineYearRow.jsx";
+import TripMarker from "./TripMarker.jsx";
 import "../TimelineView.css";
 
 export default function TimelineGrid({ timeline, trips, selectedMonth, onMonthSelect, onTripClick, extraYears = [], collapsedYears = {}, onToggleYearCollapse, disabled = false }) {
