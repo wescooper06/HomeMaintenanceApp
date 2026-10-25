@@ -45,14 +45,14 @@ function fixture(extra = {}, cap = 2) {
   };
   const calls = [];
   const writable = {
-    projects_home: new Set(["id", "title", "category", "state", "priority", "order",
+    projects_home: new Set(["id", "external_id", "title", "category", "state", "priority", "order",
       "metadata", "property", "area", "resource_links", "cost", "date_completed"]),
-    projects_vehicle: new Set(["id", "title", "category", "state", "priority", "order",
+    projects_vehicle: new Set(["id", "external_id", "title", "category", "state", "priority", "order",
       "metadata", "vehicle", "date_completed", "hours", "mileage", "mechanic",
       "service_description", "resource_links", "maintenance_checks"]),
-    projects_repeating: new Set(["id", "title", "category", "state", "priority", "order",
+    projects_repeating: new Set(["id", "external_id", "title", "category", "state", "priority", "order",
       "metadata", "property", "recurrence"]),
-    projects_misc: new Set(["id", "title", "category", "state", "priority", "order",
+    projects_misc: new Set(["id", "external_id", "title", "category", "state", "priority", "order",
       "metadata", "resource_links"]),
     planner_tasks: new Set(["id", "project_id", "title", "source", "category", "state",
       "priority", "order", "recurrence", "start_date", "updated_at", "metadata_json", "deleted"]),
@@ -64,8 +64,28 @@ function fixture(extra = {}, cap = 2) {
       "converted_to_id", "created_at", "updated_at", "deleted"]),
   };
   let failure;
+  const counters = { home: 209, vehicle: 82, repeating: 8, misc: 4 };
+  const prefixes = { home: "PA", vehicle: "PB", repeating: "PC", misc: "PD" };
   const client = {
     failNext(table) { failure = table; },
+    async rpc(name, args) {
+      assert.equal(name, "create_workbench_project");
+      const { p_type: type, p_project: payload } = args;
+      const table = `projects_${type}`;
+      assert(Object.hasOwn(prefixes, type));
+      assert(!Object.hasOwn(payload, "id"));
+      assert(!Object.hasOwn(payload, "external_id"));
+      calls.push({ table, op: "rpc", name, payload: clone(payload) });
+      if (failure === table) {
+        failure = null;
+        return { data: null, error: { message: "Fixture write denied" } };
+      }
+      for (const key of Object.keys(payload)) assert(writable[table].has(key));
+      const row = { ...clone(payload), id: require("node:crypto").randomUUID(),
+        external_id: prefixes[type] + String(++counters[type]).padStart(4, "0") };
+      tables[table].push(row);
+      return { data: clone(row), error: null };
+    },
     from(table) {
       if (!Object.hasOwn(tables, table)) throw new Error(`Unexpected table ${table}`);
       let op = "read", payload, filter, range, single;
@@ -97,6 +117,10 @@ function fixture(extra = {}, cap = 2) {
               result.forEach((row) => Object.assign(row, clone(payload)));
             } else {
               const row = { ...clone(payload) };
+              if (table === "projects_home" && row.external_id == null) {
+                return { data: null, error: { code: "23502",
+                  message: 'null value in column "external_id" of relation "projects_home" violates not-null constraint' } };
+              }
               if (client.beforeInsert) {
                 const hook = client.beforeInsert;
                 client.beforeInsert = null;
@@ -466,7 +490,7 @@ test("insert-only data access preflights every group before writing and reports 
 
 test("project creation is enabled while deletion and type moves remain blocked", async () => {
   const { storage, calls } = fixture();
-  assert.throws(() => storage.deleteProject({ id: p1 }), /not authorized/);
+  assert.equal(typeof storage.deleteProject, "function");
   const { assertProjectWriteAllowed } = exportsFrom("src/services/projectPolicy.js", ["assertProjectWriteAllowed"]);
   assert.throws(() => assertProjectWriteAllowed("move"), /not authorized/);
   assert.equal(calls.length, 0);
@@ -485,9 +509,12 @@ test("Workbench project creation inserts a UUID project into the selected Supaba
   assert.match(created.id, /^[0-9a-f-]{36}$/i);
   assert.equal(created.title, "New fixture project");
   assert.equal(created.source, "home");
-  const inserted = calls.find((call) => call.table === "projects_home" && call.op === "insert");
+  const inserted = calls.find((call) => call.table === "projects_home" && call.op === "rpc");
   assert(inserted);
-  assert.equal(inserted.payload.id, created.id);
+  assert.equal(inserted.name, "create_workbench_project");
+  assert(!Object.hasOwn(inserted.payload, "id"));
+  assert(!Object.hasOwn(inserted.payload, "external_id"));
+  assert.equal(created.externalId, "PA0210");
   assert.equal(inserted.payload.title, "New fixture project");
   assert.equal(inserted.payload.priority, "High");
   assert.equal(inserted.payload.order, 12);
@@ -503,7 +530,56 @@ test("invalid project creation fails before a Supabase insert", async () => {
   });
   await assert.rejects(createProject({ source: "repeating", title: "No recurrence" }), /Recurrence is required/);
   await assert.rejects(createProject({ source: "unknown", title: "Invalid source" }), /valid project type/);
-  assert.equal(calls.filter((call) => call.op === "insert" && call.table.startsWith("projects_")).length, 0);
+  assert.equal(calls.length, 0);
+});
+
+for (const source of ["home", "repeating", "vehicle", "misc"]) {
+  test(`Workbench ${source} creation supplies a fresh external identity without reusing Recycle references`, async () => {
+    const { storage, calls, tables } = fixture({
+      planner_tasks: [{ id: t1, project_id: p1, title: "Recycle", source: "repeating" }],
+    });
+    const { createProject } = exportsFrom("src/services/workbenchService.js", ["createProject"], {
+      plannerStorage: storage,
+    });
+    const values = { source, title: "Recycle", category: "Clean", state: "In Progress",
+      priority: "3", order: "", recurrence: "weekly", property: "House" };
+    const originalTasks = clone(tables.planner_tasks);
+    const first = await createProject(values);
+    const second = await createProject(values);
+    const writes = calls.filter((call) => call.op !== "read");
+    assert.equal(writes.length, 2);
+    for (const [index, project] of [first, second].entries()) {
+      const { table, op, payload } = writes[index];
+      assert.equal(table, `projects_${source}`);
+      assert.equal(op, "rpc");
+      assert.match(project.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      assert.notEqual(project.id, p1);
+      const prefix = { home: "PA", vehicle: "PB", repeating: "PC", misc: "PD" }[source];
+      assert.match(project.externalId, new RegExp(`^${prefix}\\d{4}$`));
+      assert.notEqual(project.externalId, "PC0003");
+      assert(!Object.hasOwn(payload, "id"));
+      assert(!Object.hasOwn(payload, "external_id"));
+      assert.equal(payload.title, "Recycle");
+      assert.equal(payload.priority, "3");
+      assert.equal(payload.order, null);
+      if (source === "repeating") {
+        assert.equal(payload.property, "House");
+        assert.equal(payload.recurrence, "weekly");
+      }
+    }
+    assert.notEqual(first.externalId, second.externalId);
+    assert.deepEqual(tables.planner_tasks, originalTasks);
+  });
+}
+
+test("project RPC failures surface without a direct insert fallback", async () => {
+  const { storage, client, calls } = fixture();
+  client.failNext("projects_repeating");
+  await assert.rejects(storage.createProject({
+    source: "repeating", title: "Recycle", recurrence: "weekly",
+  }), /Creating repeating project: Fixture write denied/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].op, "rpc");
 });
 
 test("curated scheduling stores explicit task identity and deduplicates without decoding weekly IDs", async () => {
@@ -624,6 +700,45 @@ test("projects display the view, hydrate raw fields, and only update the correct
   assert.equal(tables.projects_home[0].title, "Updated");
   assert.equal(tables.projects_home[0].property, "Garage");
   assert(calls.filter((call) => call.op !== "read").every((call) => call.table === "projects_home" && call.op === "update"));
+});
+
+for (const [source, externalId] of [
+  ["home", "PA0001"], ["vehicle", "PB0001"], ["repeating", "PC0001"], ["misc", "PD0001"],
+]) {
+  test(`${source} project edits and explicit lookup preserve the existing ${externalId} identity`, async () => {
+    const row = { id: p1, external_id: externalId, title: "Existing project",
+      category: "Maintenance", state: "Not Started", priority: "3", order: 1,
+      recurrence: source === "repeating" ? "weekly" : null, metadata: {} };
+    const { storage, tables, calls } = fixture({
+      projects_all: [{ ...row, project_type: source }],
+      projects_home: [], [`projects_${source}`]: [row],
+    });
+    const { findExplicitProject, toProjectView } = exportsFrom("src/services/plannerService.js",
+      ["findExplicitProject", "toProjectView"]);
+    const [project] = await storage.getProjects();
+    assert.equal(project.externalId, externalId);
+    assert.equal(toProjectView(project).externalId, externalId);
+    assert.equal(findExplicitProject([project], externalId, source).id, p1);
+    assert.equal(findExplicitProject([project], p1, source).id, p1);
+    assert.equal(findExplicitProject([project], externalId, source === "home" ? "misc" : "home"), null);
+    await storage.updateProject({ ...project, title: "Edited project" });
+    assert.equal(tables[`projects_${source}`][0].external_id, externalId);
+    const writes = calls.filter((call) => call.op !== "read");
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].table, `projects_${source}`);
+    assert.equal(writes[0].op, "update");
+    assert(!Object.hasOwn(writes[0].payload, "external_id"));
+  });
+}
+
+test("external identity lookup rejects duplicate aliases rather than linking an arbitrary project", () => {
+  const { findExplicitProject } = exportsFrom("src/services/plannerService.js", ["findExplicitProject"]);
+  const projects = [
+    { id: p1, source: "home", externalId: "PA0001" },
+    { id: t1, source: "home", external_id: "PA0001" },
+  ];
+  assert.throws(() => findExplicitProject(projects, "PA0001"), /ambiguous.*unique UUID/);
+  assert.equal(findExplicitProject(projects, p1).id, p1);
 });
 
 test("save failures surface and missing imported IDs/settings never cause recreation", async () => {

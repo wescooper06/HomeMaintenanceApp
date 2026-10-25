@@ -1,0 +1,67 @@
+candidate_reference
+{
+	"deleted": null,
+	"archived": null,
+	"relation": "public.projects_home",
+	"completed": null,
+	"record_id": "3ad885b1-d2dc-43e2-931c-2d802ced63f8",
+	"overridden": null,
+	"queue_state": null,
+	"series_state": null,
+	"reminder_state": null,
+	"candidate_field": "external_id",
+	"deleted_instance": null,
+	"identity_context": {},
+	"matched_identity": "PA0211",
+	"candidate_row_key": {
+		"id": "3ad885b1-d2dc-43e2-931c-2d802ced63f8"
+	},
+	"historical_reminder_state": null,
+	"historical_deleted_instance": null
+}
+
+candidate_reference
+{
+	"deleted": null,
+	"archived": null,
+	"relation": "public.projects_home",
+	"completed": null,
+	"record_id": "3ad885b1-d2dc-43e2-931c-2d802ced63f8",
+	"overridden": null,
+	"queue_state": null,
+	"series_state": null,
+	"reminder_state": null,
+	"candidate_field": "id",
+	"deleted_instance": null,
+	"identity_context": {},
+	"matched_identity": "3ad885b1-d2dc-43e2-931c-2d802ced63f8",
+	"candidate_row_key": {
+		"id": "3ad885b1-d2dc-43e2-931c-2d802ced63f8"
+	},
+	"historical_reminder_state": null,
+	"historical_deleted_instance": null
+}
+
+identity_check
+{
+	"requested_type": "home",
+	"requested_uuid": "3ad885b1-d2dc-43e2-931c-2d802ced63f8",
+	"matching_masters": 1,
+	"valid_for_review": true
+}
+
+inspection_context
+{
+	"role": "postgres",
+	"scope": "public base tables; candidate references are not ownership",
+	"is_superuser": false,
+	"row_security": "on",
+	"has_bypass_rls": true
+}
+
+profile_scope
+{
+	"relation": "public.parking_lot",
+	"row_count": 2,
+	"profile_id": "default"
+}

@@ -156,6 +156,37 @@ export default function WorkbenchPage() {
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
+  async function deleteProject(project) {
+    if (operation.current) throw new Error("Another Workbench action is in progress.");
+    operation.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await service.deleteProject(project);
+      if (mounted.current) {
+        setModal(null);
+        setData((current) => ({
+          projects: current.projects.filter((item) => item.id !== project.id),
+          tasks: current.tasks.filter((item) => item.projectId !== project.id),
+        }));
+        setStatus(`Deleted project ${project.id}. Refreshing Workbench...`);
+      }
+      try {
+        const next = await service.loadWorkbench(true);
+        if (mounted.current) {
+          applyData(next);
+          setStatus(`Deleted project ${project.id}.`);
+        }
+      } catch (refreshError) {
+        console.error("Post-deletion refresh failed", refreshError);
+        if (mounted.current) setError(`Deletion committed, but refresh failed. Reload Workbench; do not retry deletion. ${refreshError.message}`);
+      }
+    } finally {
+      operation.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
+
   const projects = service.filterProjects(data.projects, filters);
   const groups = service.groupTasks(data.tasks, taskSort);
   const disabled = loading || busy;
@@ -209,6 +240,15 @@ export default function WorkbenchPage() {
                   <div className={styles.actions}>
                     <button type="button" className={styles.action} disabled={disabled} onClick={() => projectAction(project, "edit")}>Edit Details</button>
                     <button type="button" className={styles.action} disabled={disabled} onClick={() => projectAction(project, "add-task")}>Add to Task Manager</button>
+                    {service.canDeleteProject(project) && (
+                      <button type="button" className={`${styles.action} ${styles.danger} ${styles.projectDelete}`} disabled={disabled}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setError("");
+                          setModal({ project, deleteOnly: true });
+                        }}>Delete Project</button>
+                    )}
                   </div>
                 </article>
               );
@@ -251,8 +291,9 @@ export default function WorkbenchPage() {
           </div>
         </section>
       </div>
-      {modal && <ProjectEditor mode="edit" project={modal.project} busy={busy} error={error}
-        onClose={() => setModal(null)} onSubmit={submitProject} />}
+      {modal && <ProjectEditor key={`${modal.project.source}-${modal.project.id}-${Boolean(modal.deleteOnly)}`}
+        mode="edit" project={modal.project} deleteOnly={Boolean(modal.deleteOnly)} busy={busy} error={error}
+        onClose={() => setModal(null)} onSubmit={submitProject} onDelete={deleteProject} />}
     </section>
   );
 }

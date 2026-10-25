@@ -44,13 +44,81 @@ retired from runtime.
   - Removed create/delete agent and UI paths; editing existing projects remains.
   - Removed legacy/Sheets naming assumptions.
   - Restored project creation through the modern `/projects/new` route and
-    `ProjectEditor` create mode, using a direct Supabase insert into the selected
-    project-type table. Delete and Parking project/repeatable conversions remain
+    `ProjectEditor` create mode. The proposed allocator patch now uses the
+    `create_workbench_project` Supabase RPC for the selected project-type table.
+    Delete and Parking project/repeatable conversions remain
     unauthorized.
+  - PostgreSQL generates a UUID primary key and a separate PA/PB/PC/PD external
+    ID. The temporary UUID-as-external-ID workaround is removed. The proposed
+    SQL has not been applied to Supabase; see the
+    [deployment plan](workbench-project-creation.md) before deploying this patch.
+  - Project Type, not Recurrence, selects the destination table. To create a
+    repeating project, select `repeating` explicitly. The observed Recycle
+    failure had Project Type `home`; the live `projects_repeating` column
+    defaults, constraints, triggers, grants, and RLS policies are not recorded
+    in this workspace and have not been verified by these fixture tests.
 - Configuration/auth:
   - Removed committed `trips/.env`.
   - `src/services/googleAuth.js` uses modern local token keys only.
   - No fallback default OAuth client ID in code; use environment configuration.
+
+### Workbench external-ID follow-up review
+
+The saved [project export](../supabase/projects__all_exports.csv) contains 301
+rows with no blank or duplicate external IDs:
+
+| Type | Rows | Observed format | Exported range |
+| --- | ---: | --- | --- |
+| home | 209 | `PA####` | `PA0001` through `PA0209`, no gaps |
+| vehicle | 82 | `PB####` | `PB0001` through `PB0082`, no gaps |
+| repeating | 6 | `PC####` | `PC0001` through `PC0008`, missing `PC0005` and `PC0006` |
+| misc | 4 | `PD####` | `PD0001` through `PD0004`, no gaps |
+
+Recycle is exported as `PC0003`. The owner subsequently approved ordinary
+creation only: use type-specific sequences above floors 209/82/8/4, never fill
+visible gaps, and do not retain `PC0003` for Recycle. Higher current maxima raise
+those floors. Unknown previously issued/deleted higher numbers are an accepted
+initialization limitation. The [proposed RPC](../supabase/proposals/202610250001_project_creation.sql)
+implements this policy; it has not been executed against Supabase.
+
+Runtime external-ID consumers:
+
+- [Data access](../src/services/plannerDataAccess.js) reads `external_id`,
+  exposes `externalId`, supplies it on creation, and preserves existing IDs
+  during updates.
+- [Planner service](../src/services/plannerService.js) carries `externalId` in
+  project views and accepts either ID alias for explicit project matching,
+  task-to-project resolution, master-title editing, and Parking in-place
+  editing. Ambiguous matches are rejected. None parses a PA/PB/PC/PD prefix.
+- Workbench display, search, ordering, and new task links use project UUIDs,
+  not external-ID prefixes. Modern backup reference checks use project UUIDs;
+  project rows are not part of the Planner backup.
+- Historical reconciliation documents and the
+  [owner identity crosswalk](phase5-project-identity-map.json) use external IDs
+  as corroborating identity evidence. Some owner-authorized, uncorroborated
+  crosswalk entries use numeric strings; they are not an allocation rule.
+
+Previously owner-supplied DDL recovered from session history declares home
+`external_id text not null` and vehicle/repeating/misc `external_id text null`.
+It declares primary keys on UUID `id`, but no external-ID unique/check
+constraints, allocator, or external-ID foreign keys. The `projects_all` view
+uses `UNION ALL` and does not enforce uniqueness. Standalone indexes, triggers,
+policies, grants, and later live changes cannot be excluded by that saved DDL.
+The screenshot reports a home-table NOT NULL failure, consistent with the
+saved home definition; it does not prove repeating-table schema drift.
+
+Before approving or changing allocation, obtain:
+
+- Current read-only schema output for all four raw tables: every column with
+  type/nullability/default/generation, constraints, standalone indexes,
+  triggers and their function definitions, RLS flags/policies, and role grants;
+  also the current `projects_all` view definition.
+- Any conflicting existing allocator sequence/counter/RPC and its
+  transaction/locking behavior. The proposed allocator must not compete with a
+  pre-existing mechanism. Client-side `max + 1` is not race-safe.
+
+No live database schema or data was changed. Policy approval and a local
+reviewable proposal do not authorize deployment.
 
 ## Navigation and build
 

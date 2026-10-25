@@ -33,6 +33,7 @@
 .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 5px 10px; color: #475569; font-size: 0.82rem; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .action.danger { border-color: #dc2626; background: #fff; color: #b91c1c; }
+.action.projectDelete { border-color: #b91c1c; background: #b91c1c; color: #fff; }
 .screen button:disabled { opacity: 0.6; cursor: not-allowed; }
 .skeleton { height: 92px; border-radius: 8px; background: linear-gradient(90deg, #e8eef5 25%, #f7fafc 50%, #e8eef5 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
 @keyframes shimmer { to { background-position: -200% 0; } }
@@ -48,8 +49,11 @@
 .modal input, .modal select, .modal textarea { width: 100%; min-height: 34px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px; background: #fff; color: #0f172a; font: inherit; }
 .modal textarea { min-height: 72px; resize: vertical; }
 .modal select { appearance: auto; cursor: pointer; }
+.editGrid .repeatingControl { display: flex; align-items: center; align-self: end; gap: 8px; min-height: 34px; }
+.editGrid .repeatingControl input { width: auto; min-height: auto; margin: 0; padding: 0; }
 .modalActions { grid-column: 1 / -1; display: flex; justify-content: end; gap: 8px; margin-top: 5px; }
 .modalActions button { border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 10px; background: #fff; cursor: pointer; }
 .modalActions .primary { border-color: #0f766e; background: #0f766e; color: #fff; }
+.modalCard .danger { border: 1px solid #b91c1c; background: #b91c1c; color: #fff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
 @media (max-width: 760px) { .editGrid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 600px) { .modal form, .editGrid { grid-template-columns: 1fr; } .modalActions { grid-column: auto; } }
