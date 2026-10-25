@@ -58,6 +58,15 @@ export function createPlannerSupabaseStorage(getData) {
     return saved;
   }
 
+  async function deleteProject(project) {
+    assertProjectWriteAllowed("deleteWorkbench");
+    const result = await enqueue(() => getData().deleteProject(copy(project)));
+    projects = null;
+    weekly = [];
+    emit({ type: "project-deleted", id: result.id });
+    return result;
+  }
+
   async function getWeeklyPlanner() {
     const state = await loadPlannerState();
     return { weekStartDate: state.weekStartDate, tasks: state.weeklyTasks };
@@ -270,7 +279,7 @@ export function createPlannerSupabaseStorage(getData) {
 
   return {
     loadPlannerState, savePlannerState, restorePlannerState, getProjects, updateProject,
-    createProject, deleteProject: () => assertProjectWriteAllowed("delete"),
+    createProject, deleteProject,
     getWeeklyPlanner, saveWeeklyPlannerState, upsertWeeklyTask, deleteWeeklyTask,
     getParkingLot: async () => (await loadPlannerState()).parkingItems,
     upsertParkingItem, deleteParkingItem,

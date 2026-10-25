@@ -4,6 +4,12 @@ import { plannerStorage } from "./plannerSupabaseStorage.js";
 export const clean = (value, fallback = "") => String(value ?? "").trim() || fallback;
 export const number = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
+export function canDeleteProject(project) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(project?.id || "")
+    && project.id !== "00000000-0000-0000-0000-000000000000"
+    && ["home", "vehicle", "repeating", "misc"].includes(project.source);
+}
+
 export function sourceTag(value) {
   const source = clean(value, "unknown").toLowerCase();
   return source;
@@ -90,13 +96,23 @@ export async function addProjectTask(project, tasks) {
 }
 
 export async function createProject(values) {
-  const source = sourceTag(values.source);
-  if (!["home", "vehicle", "repeating", "misc"].includes(source)) {
+  const selectedSource = sourceTag(values.source);
+  if (!["home", "vehicle", "repeating", "misc"].includes(selectedSource)) {
     throw new Error("Select a valid project type.");
   }
+
+  const explicitRepeating = Object.hasOwn(values, "repeatingProject");
+  if (explicitRepeating && typeof values.repeatingProject !== "boolean") {
+    throw new Error("Repeating project must be a boolean.");
+  }
+  if (explicitRepeating && selectedSource === "repeating") {
+    throw new Error("Select a non-repeating project type and use the Repeating project checkbox.");
+  }
+  const source = values.repeatingProject === true ? "repeating" : selectedSource;
+  const recurrence = source === "repeating" ? clean(values.recurrence) : "";
   const title = clean(values.title);
   if (!title) throw new Error("Project title is required.");
-  if (source === "repeating" && !clean(values.recurrence)) {
+  if (source === "repeating" && !recurrence) {
     throw new Error("Recurrence is required for repeating projects.");
   }
   const metadata = {};
@@ -108,9 +124,13 @@ export async function createProject(values) {
   return plannerStorage.createProject({
     source, title, category: clean(values.category, "uncategorized"),
     state: clean(values.state, "Not Started"), priority: clean(values.priority),
-    order: clean(values.order), recurrence: clean(values.recurrence),
+    order: clean(values.order), recurrence,
     metadata,
   });
+}
+
+export function deleteProject(project) {
+  return plannerStorage.deleteProject(project);
 }
 
 export async function moveTask(task, tasks, action) {
@@ -249,9 +269,5 @@ export async function updateProject(project, values) {
 export function cacheProjects(projects) {
   plannerStorage.setCachedProjects(projects);
 }
-
-
-
-
 
 

@@ -346,10 +346,8 @@ export function createPlannerDataAccess(supabase) {
     if (!table) throw new Error("Select a valid project type.");
     const title = text(project.title);
     if (!title) throw new Error("Project title is required.");
-    const id = crypto.randomUUID();
     const metadata = json(project.metadata, {}, "project metadata");
     const payload = {
-      id,
       title,
       category: text(project.category) || "uncategorized",
       state: text(project.state) || "Not Started",
@@ -380,18 +378,42 @@ export function createPlannerDataAccess(supabase) {
     if (type === "repeating" && !payload.recurrence) {
       throw new Error("Recurrence is required for repeating projects.");
     }
-    const { data, error } = await supabase.from(table).insert(payload).select("*").single();
+    const { data, error } = await supabase.rpc("create_workbench_project", {
+      p_type: type, p_project: payload,
+    });
     check(error, `Creating ${type} project`);
-    if (!data) throw new Error("Project creation returned no row.");
+    if (!data?.id || !data.external_id) throw new Error("Project creation returned no project identity.");
     return projectFromRows({
-      id, project_type: type, external_id: data.external_id || "",
+      id: data.id, project_type: type, external_id: data.external_id,
       title: data.title, category: data.category, state: data.state,
       priority: data.priority, order: data.order, recurrence: data.recurrence || null,
       metadata: data.metadata,
     }, data);
   }
 
+  async function deleteProject(project) {
+    const id = text(project.id);
+    const type = sourceType(project.project_type || project.source);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+      || !Object.hasOwn(PROJECT_TABLES, type)) {
+      throw new Error("An existing project UUID and canonical type are required.");
+    }
+    if (project.source && sourceType(project.source) !== type) {
+      throw new Error("Project UUID/type identities conflict.");
+    }
+    const { data, error } = await supabase.rpc("delete_workbench_project", { p_id: id, p_type: type });
+    check(error, `Deleting ${type} project`);
+    if (data?.deleted !== true || data.id !== id || data.project_type !== type
+      || data.table !== PROJECT_TABLES[type] || !data.external_id
+      || data.counts?.[PROJECT_TABLES[type]] !== 1
+      || !["planner_tasks", "planner_weekly_tasks", "planner_parking_lot"]
+        .every((name) => Number.isSafeInteger(data.counts[name]) && data.counts[name] >= 0)) {
+      throw new Error("Deletion response could not be verified. Refresh before retrying.");
+    }
+    return data;
+  }
+
   return { loadPlannerState, savePlannerState,
     restorePlannerState: (changes) => savePlannerState(changes, { insertOnly: true }),
-    loadProjects, saveProject, createProject };
+    loadProjects, saveProject, createProject, deleteProject };
 }

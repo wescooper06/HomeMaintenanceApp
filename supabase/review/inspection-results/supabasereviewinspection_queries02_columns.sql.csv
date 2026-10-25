@@ -1,0 +1,68 @@
+table_name,ordinal_position,column_name,data_type,udt_name,is_nullable,column_default,is_identity,identity_generation,is_generated,generation_expression
+projects_all,1,id,uuid,uuid,YES,null,NO,null,NEVER,null
+projects_all,2,external_id,text,text,YES,null,NO,null,NEVER,null
+projects_all,3,project_type,text,text,YES,null,NO,null,NEVER,null
+projects_all,4,category,text,text,YES,null,NO,null,NEVER,null
+projects_all,5,title,text,text,YES,null,NO,null,NEVER,null
+projects_all,6,state,text,text,YES,null,NO,null,NEVER,null
+projects_all,7,priority,text,text,YES,null,NO,null,NEVER,null
+projects_all,8,order,integer,int4,YES,null,NO,null,NEVER,null
+projects_all,9,recurrence,text,text,YES,null,NO,null,NEVER,null
+projects_all,10,metadata,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_home,1,id,uuid,uuid,NO,gen_random_uuid(),NO,null,NEVER,null
+projects_home,2,external_id,text,text,NO,null,NO,null,NEVER,null
+projects_home,6,category,text,text,YES,null,NO,null,NEVER,null
+projects_home,7,state,text,text,YES,null,NO,null,NEVER,null
+projects_home,8,priority,text,text,YES,null,NO,null,NEVER,null
+projects_home,9,order,bigint,int8,YES,null,NO,null,NEVER,null
+projects_home,10,metadata,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_home,11,created_at,timestamp without time zone,timestamp,YES,now(),NO,null,NEVER,null
+projects_home,12,updated_at,timestamp without time zone,timestamp,YES,now(),NO,null,NEVER,null
+projects_home,13,property,text,text,YES,null,NO,null,NEVER,null
+projects_home,14,area,text,text,YES,null,NO,null,NEVER,null
+projects_home,15,title,text,text,YES,null,NO,null,NEVER,null
+projects_home,16,resource_links,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_home,17,cost,numeric,numeric,YES,null,NO,null,NEVER,null
+projects_home,18,date_completed,date,date,YES,null,NO,null,NEVER,null
+projects_misc,1,id,uuid,uuid,NO,gen_random_uuid(),NO,null,NEVER,null
+projects_misc,2,created_at,timestamp with time zone,timestamptz,NO,now(),NO,null,NEVER,null
+projects_misc,3,external_id,text,text,YES,null,NO,null,NEVER,null
+projects_misc,4,category,text,text,YES,null,NO,null,NEVER,null
+projects_misc,5,title,text,text,YES,null,NO,null,NEVER,null
+projects_misc,6,priority,text,text,YES,null,NO,null,NEVER,null
+projects_misc,7,order,bigint,int8,YES,null,NO,null,NEVER,null
+projects_misc,8,resource_links,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_misc,9,state,text,text,YES,null,NO,null,NEVER,null
+projects_misc,10,updated_at,timestamp without time zone,timestamp,YES,now(),NO,null,NEVER,null
+projects_misc,11,metadata,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_repeating,1,id,uuid,uuid,NO,gen_random_uuid(),NO,null,NEVER,null
+projects_repeating,2,created_at,timestamp with time zone,timestamptz,NO,now(),NO,null,NEVER,null
+projects_repeating,3,external_id,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,4,property,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,5,state,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,6,category,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,7,task_description,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,8,recurrence,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,9,priority,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,10,order,bigint,int8,YES,null,NO,null,NEVER,null
+projects_repeating,11,updated_at,timestamp without time zone,timestamp,YES,now(),NO,null,NEVER,null
+projects_repeating,12,title,text,text,YES,null,NO,null,NEVER,null
+projects_repeating,13,metadata,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_vehicle,1,id,uuid,uuid,NO,gen_random_uuid(),NO,null,NEVER,null
+projects_vehicle,2,created_at,timestamp with time zone,timestamptz,NO,now(),NO,null,NEVER,null
+projects_vehicle,3,external_id,text,text,YES,null,NO,null,NEVER,null
+projects_vehicle,4,vehicle,text,text,YES,null,NO,null,NEVER,null
+projects_vehicle,5,state,text,text,YES,null,NO,null,NEVER,null
+projects_vehicle,6,category,text,text,YES,null,NO,null,NEVER,null
+projects_vehicle,7,date_completed,date,date,YES,null,NO,null,NEVER,null
+projects_vehicle,8,hours,numeric,numeric,YES,null,NO,null,NEVER,null
+projects_vehicle,9,mileage,numeric,numeric,YES,null,NO,null,NEVER,null
+projects_vehicle,10,mechanic,text,text,YES,null,NO,null,NEVER,null
+projects_vehicle,11,service_description,text,text,YES,null,NO,null,NEVER,null
+projects_vehicle,12,resource_links,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_vehicle,13,order,bigint,int8,YES,null,NO,null,NEVER,null
+projects_vehicle,14,maintenance_checks,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_vehicle,15,updated_at,timestamp without time zone,timestamp,YES,now(),NO,null,NEVER,null
+projects_vehicle,16,metadata,jsonb,jsonb,YES,null,NO,null,NEVER,null
+projects_vehicle,17,title,text,text,YES,null,NO,null,NEVER,null
+projects_vehicle,18,priority,text,text,YES,null,NO,null,NEVER,null

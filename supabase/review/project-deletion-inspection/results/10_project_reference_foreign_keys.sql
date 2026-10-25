@@ -1,0 +1,4 @@
+schema_name,relation_name,conname,referenced_schema,referenced_relation,referencing_attribute_numbers,referenced_attribute_numbers,on_delete_behavior,condeferrable,condeferred,convalidated,definition
+public,curated_queue,curated_queue_profileId_fkey,public,planner_profiles,[1],[1],no action,false,false,true,"FOREIGN KEY (""profileId"") REFERENCES planner_profiles(id)"
+public,parking_lot,parking_lot_profileId_fkey,public,planner_profiles,[1],[1],no action,false,false,true,"FOREIGN KEY (""profileId"") REFERENCES planner_profiles(id)"
+public,staged_queue,staged_queue_profileId_fkey,public,planner_profiles,[1],[1],no action,false,false,true,"FOREIGN KEY (""profileId"") REFERENCES planner_profiles(id)"

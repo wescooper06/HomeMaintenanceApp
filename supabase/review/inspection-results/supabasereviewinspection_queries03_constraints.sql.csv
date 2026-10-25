@@ -1,0 +1,5 @@
+relation,conname,contype,convalidated,definition
+projects_home,projects_pkey,p,true,PRIMARY KEY (id)
+projects_vehicle,project_vehicle_pkey,p,true,PRIMARY KEY (id)
+projects_repeating,projects_repeating_pkey,p,true,PRIMARY KEY (id)
+projects_misc,projects_misc_pkey,p,true,PRIMARY KEY (id)

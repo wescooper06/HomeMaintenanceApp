@@ -1,0 +1,5 @@
+kind,prefix,floor_value,row_count,null_external_ids,format_blockers,view_order_blockers,current_max,duplicate_id_blockers,bigint_exhaustion_blockers,proposed_next_number
+home,PA,209,209,0,0,0,209,0,0,210
+misc,PD,4,4,0,0,0,4,0,0,5
+repeating,PC,8,2,0,0,0,8,0,0,9
+vehicle,PB,82,82,0,0,0,82,0,0,83

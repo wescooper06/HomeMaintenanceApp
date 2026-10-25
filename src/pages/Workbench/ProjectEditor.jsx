@@ -7,14 +7,15 @@ import { EDIT_OPTIONS, getEditFields } from "../../services/workbenchService.js"
 import styles from "./WorkbenchPage.module.css";
 
 const EMPTY_PROJECT = {
-  source: "home", title: "", category: "Repair", state: "Not Started",
+  source: "home", title: "", repeatingProject: false, category: "Repair", state: "Not Started",
   priority: "3", order: "", recurrence: "", area: "", property: "",
   actualCost: "", dateCompleted: "", vehicle: "", mileage: "", engineHours: "",
   mechanic: "", serviceDescription: "", resourceLinks: "", notes: "",
 };
 
 const CREATE_FIELDS = [
-  ["source", "Project Type"], ["title", "Title"], ["category", "Category"],
+  ["source", "Project Type"], ["repeatingProject", "Repeating project"],
+  ["title", "Title"], ["category", "Category"],
   ["state", "State"], ["priority", "Priority"], ["order", "Order"],
   ["recurrence", "Recurrence"], ["area", "Area"], ["property", "Property"],
   ["actualCost", "Cost"], ["dateCompleted", "Date Completed"], ["vehicle", "Vehicle / Small Engine"],
@@ -22,7 +23,7 @@ const CREATE_FIELDS = [
   ["serviceDescription", "Service Description"], ["resourceLinks", "Resource Links"], ["notes", "Notes"],
 ];
 
-export default function ProjectEditor({ mode = "edit", project, busy = false, error = "", onClose, onSubmit }) {
+export default function ProjectEditor({ mode = "edit", project, busy = false, error = "", onClose, onSubmit, onDelete, deleteOnly = false }) {
   const creating = mode === "create";
   const navigate = useNavigate();
   const fields = creating ? CREATE_FIELDS : getEditFields(project);
@@ -33,6 +34,9 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
     ])));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(() =>
+    !creating && deleteOnly && service.canDeleteProject(project));
+  const deleting = useRef(false);
   const titleId = useId();
   const closeButton = useRef(null);
 
@@ -48,19 +52,34 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
   }
 
   function change(key, value) {
-    setValues((current) => ({ ...current, [key]: value }));
+    setValues((current) => ({
+      ...current, [key]: value,
+      ...(creating && key === "repeatingProject" && !value ? { recurrence: "" } : {}),
+    }));
   }
 
   function field([key, label]) {
+    if (creating && key === "recurrence" && !values.repeatingProject) return null;
+    if (creating && key === "repeatingProject") {
+      return (
+        <label key={key} className={styles.repeatingControl}>
+          <input type="checkbox" name={key} checked={values.repeatingProject}
+            onChange={(event) => change(key, event.target.checked)} />
+          {label}
+        </label>
+      );
+    }
     const value = values[key] ?? "";
-    const options = creating && key === "source" ? ["home", "vehicle", "repeating", "misc"] : EDIT_OPTIONS[key];
+    const options = creating && key === "source" ? ["home", "vehicle", "misc"] : EDIT_OPTIONS[key];
     const choices = options ? [...new Set([value, ...options])] : null;
     const multiline = ["notes", "resourceLinks", "serviceDescription"].includes(key) || value.length > 80;
     return (
       <label key={key}>
         {label}
         {choices ? (
-          <select name={key} value={value} onChange={(event) => change(key, event.target.value)} required={key === "source"}>
+          <select name={key} value={value} onChange={(event) => change(key, event.target.value)}
+            disabled={creating && key === "source" && values.repeatingProject}
+            required={key === "source" || (creating && key === "recurrence" && values.repeatingProject)}>
             {choices.map((option) => <option key={option} value={option}>{option || "-"}</option>)}
           </select>
         ) : multiline ? (
@@ -88,6 +107,24 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
     } finally {
       setSaving(false);
     }
+
+  }
+
+  async function confirmDelete() {
+    if (deleting.current || busy || saving) return;
+    deleting.current = true;
+    setSaving(true);
+    setSaveError("");
+    try {
+      await onDelete(project);
+      setConfirmingDelete(false);
+    } catch (failure) {
+      console.error("Project deletion failed", failure);
+      setSaveError(failure.message || "Unable to delete project.");
+    } finally {
+      deleting.current = false;
+      setSaving(false);
+    }
   }
 
   return (
@@ -95,22 +132,38 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
       onClick={(event) => { if (creating && event.target === event.currentTarget) close(); }}>
       <div className={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className={styles.modalHeader}>
-          <h1 id={titleId}>{creating ? "Create Project" : `Edit Project Details (ID: ${project.id || "-"})`}</h1>
+          <h1 id={titleId}>{creating ? "Create Project" : deleteOnly ? "Delete Project" : `Edit Project Details (ID: ${project.id || "-"})`}</h1>
           <button ref={closeButton} type="button" aria-label="Close" onClick={close}
             disabled={busy || saving}>X</button>
         </div>
         {(error || saveError) && <p role="alert">{error || saveError}</p>}
-        <form onSubmit={(event) => void submit(event)}>
+        {confirmingDelete ? (
+          <div role="alertdialog" aria-label="Confirm project deletion">
+            <p>Permanently delete &quot;{project.title}&quot; (UUID: {project.id})?</p>
+            <p>Modern Planner tasks, weekly records, and linked modern Parking records owned by this project will also be permanently deleted. This cannot be undone.</p>
+            <button type="button" disabled={busy || saving}
+              onClick={() => { if (deleteOnly) close(); else setConfirmingDelete(false); }}>Cancel</button>
+            <button type="button" className={styles.danger} disabled={busy || saving}
+              onClick={() => void confirmDelete()}>Delete Project</button>
+          </div>
+        ) : <form onSubmit={(event) => void submit(event)}>
           <fieldset className={styles.editGrid} disabled={busy || saving}>
             {fields.map(field)}
+            {creating && values.repeatingProject && (
+              <p role="status">Project Type: repeating. Uncheck Repeating project to use the selected non-repeating type.</p>
+            )}
           </fieldset>
           <div className={styles.modalActions}>
+            {!creating && onDelete && service.canDeleteProject(project) && (
+              <button type="button" className={styles.danger} disabled={busy || saving}
+                onClick={() => setConfirmingDelete(true)}>Delete Project</button>
+            )}
             <button type="button" onClick={close} disabled={busy || saving}>Cancel</button>
             <button className={styles.primary} type="submit" disabled={busy || saving}>
               {busy || saving ? "Saving..." : creating ? "Create Project" : "Save Changes"}
             </button>
           </div>
-        </form>
+        </form>}
       </div>
     </div>
   );

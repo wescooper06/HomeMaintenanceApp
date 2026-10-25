@@ -1,0 +1,5 @@
+tablename,indexname,indexdef
+projects_home,projects_pkey,CREATE UNIQUE INDEX projects_pkey ON public.projects_home USING btree (id)
+projects_misc,projects_misc_pkey,CREATE UNIQUE INDEX projects_misc_pkey ON public.projects_misc USING btree (id)
+projects_repeating,projects_repeating_pkey,CREATE UNIQUE INDEX projects_repeating_pkey ON public.projects_repeating USING btree (id)
+projects_vehicle,project_vehicle_pkey,CREATE UNIQUE INDEX project_vehicle_pkey ON public.projects_vehicle USING btree (id)
