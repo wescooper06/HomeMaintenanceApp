@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+
 import { assignTripToMonth, getTrips } from "../../../services/tripsService.js";
 import { getTimelineMonth, updateTimelineMonth } from "../../../services/tripsTimelineService.js";
-import { TIMELINE_MONTHS, timelineColor, timelineMonthNumber, timelineTripIds } from "../../../utils/timelineUtils.js";
 import { tripPriority } from "../../../utils/priorityUtils.js";
+import { TIMELINE_MONTHS, timelineColor, timelineMonthNumber, timelineTripIds } from "../../../utils/timelineUtils.js";
 import "./MonthDetailsModal.css";
 
 export default function MonthDetailsModal({ month, tripList = [], refreshVersion, onSave, onTripsChange, onClose, onTripClick }) {

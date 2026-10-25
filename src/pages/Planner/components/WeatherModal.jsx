@@ -1,6 +1,7 @@
 import { formatFullDayLabel, toWeekWeatherFallback } from "../../../services/plannerService.js";
-import { usePlanner } from "./usePlanner.js";
 import styles from "../PlannerPage.module.css";
+
+import { usePlanner } from "./usePlanner.js";
 
 export default function WeatherModal({ date }) {
   const { snapshot, actions } = usePlanner();

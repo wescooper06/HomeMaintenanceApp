@@ -5,16 +5,31 @@
   "main": "index.js",
   "scripts": {
     "dev": "npm --prefix trips run dev",
-    "test": "node tests/misc-sheet.test.js",
+    "test": "node --test tests/*.test.cjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "build": "npm --prefix trips run build && npm --prefix trips run build:activity-planner && node scripts/publish-modern.cjs",
     "dev:activity-planner": "npm --prefix trips run dev:activity-planner",
-    "mobile:sync": "npm --prefix trips run build && cap sync android"
+    "mobile:sync": "npm run build && cap sync android",
+    "android:debug": "cd android && gradlew.bat assembleDebug",
+    "android:release": "cd android && gradlew.bat assembleRelease",
+    "capacitor:sync:after": "node scripts/android-java17.cjs",
+    "capacitor:update:after": "node scripts/android-java17.cjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "@electric-sql/pglite": "^0.3.0"
+    "@electric-sql/pglite": "^0.3.0",
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-import-resolver-node": "^0.4.0",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.0.0",

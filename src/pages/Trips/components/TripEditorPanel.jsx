@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+
 import { getTripById, updateTrip } from "../../../services/tripsService.js";
 import { getWorkflowMetadata, updateWorkflowMetadata } from "../../../services/tripsWorkflowService.js";
 import { tripPriority } from "../../../utils/priorityUtils.js";

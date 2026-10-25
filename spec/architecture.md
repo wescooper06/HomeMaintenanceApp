@@ -1,52 +1,24 @@
-# Architecture Overview
+# Architecture
 
-## Purpose
-Central hub for all travel planning features. Defines scope, components, and relationships.
+Life Manager uses a single responsive React shell for web and Capacitor Android.
+The [shared router](../src/router/LifeManagerRouter.jsx) renders Dashboard,
+Workbench, Planner/Parking, Calendar, Daily Activities and Trips. CSS modules
+scope screen styles; shared React navigation is the only active navigation.
 
-## Core Features
-- Trips Home
-- Active Trips
-- Prioritization
-- Annual Timeline
-- Workflow Modals
-- Resources
-- Checklists
-- Itinerary
-- Travel Mode
-- Review
+Supabase is authoritative for projects, Planner, Trips and Activity Planner data.
+Services translate existing PostgreSQL rows into React contracts and report
+database/RLS failures explicitly. Reads do not seed, import or reconcile data.
+Projects remain edit-only. Planner user operations retain the current
+queue/series/override/deletion contracts; these are not legacy migrations.
 
-## Workflow Stages
-Define → Research → Book → Prepare → Itinerary → Travel Mode → Review
+Google Identity Services authorizes Calendar explicitly. Calendar event CRUD and
+notification services call Calendar API directly. There is no Sheets/Apps Script
+backend, global authentication/config loader or local Planner storage fallback.
+Modern Planner JSON backups retain conflict-checked, insert-only restore;
+historical formats are permanently unsupported.
 
-## Sheets Used
-- Trips
-- Workflow Metadata
-- Resources
-- Checklists
-- Itinerary
-- Month Constraints
-
-## Web Screens
-- Trips Home
-- Idea List
-- Prioritization Table
-- Annual Timeline
-- Trip Overview
-- Workflow Modals (7)
-- Resources Page
-- Checklists Page
-- Itinerary Page
-
-## Mobile Screens
-- Trips Home
-- Essentials Mode
-- Timeline (Mobile)
-- Prepare Lists
-- Research Notes
-- Quick Edit
-
-## Future Features (v2)
-- Price Tracking Agent
-- Supabase Migration
-- File Storage
-- Realtime Sync
+The [Trips package](../trips/README.md) supplies Vite and dependencies; application
+source lives in `src`. Main production output is `dist/trips`; Capacitor copies
+that output to Android. Build publishing also updates `www/trips`.
+Historical reconciliation records in `spec` are documentation only and must not
+be deployed or used as application inputs.

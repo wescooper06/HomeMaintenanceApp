@@ -1,10 +1,12 @@
-import styles from "../PlannerPage.module.css";
 import { useState } from "react";
+
+import styles from "../PlannerPage.module.css";
+
+import { MiniCalendar } from "./CalendarWidget.jsx";
+import ParkingLot from "./ParkingLot.jsx";
+import ProjectCard, { RepeatableCard } from "./ProjectCard.jsx";
 import { usePlanner } from "./usePlanner.js";
 import usePlannerDrag from "./usePlannerDrag.js";
-import ProjectCard, { RepeatableCard } from "./ProjectCard.jsx";
-import ParkingLot from "./ParkingLot.jsx";
-import { MiniCalendar } from "./CalendarWidget.jsx";
 
 export default function PlannerSidebar() {
   const { snapshot, actions } = usePlanner();

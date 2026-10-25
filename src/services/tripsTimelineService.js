@@ -1,5 +1,6 @@
-import { getSupabaseClient } from "./supabaseClient.js";
 import { TIMELINE_MONTHS, timelineKey, timelineMonthNumber } from "../utils/timelineUtils.js";
+
+import { getSupabaseClient } from "./supabaseClient.js";
 import { tripFields, tripResult, tripRows } from "./tripsSupabase.js";
 
 const fields = { color: "color", notes: "notes", blocks: "blocks" };

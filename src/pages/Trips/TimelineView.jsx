@@ -1,13 +1,16 @@
+import { ArrowLeft, ListOrdered } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, ListOrdered } from "lucide-react";
-import TimelineGrid from "./components/TimelineGrid.jsx";
-import TripEditorPanel from "./components/TripEditorPanel.jsx";
-import MonthDetailsModal from "./components/MonthDetailsModal.jsx";
-import { TimelineDragDrop } from "./components/TimelineDragDrop.jsx";
+
+
 import { assignTripToMonth, getTrips } from "../../services/tripsService.js";
 import { getTimeline, propagateTimelineYear } from "../../services/tripsTimelineService.js";
 import { timelineKey } from "../../utils/timelineUtils.js";
+
+import MonthDetailsModal from "./components/MonthDetailsModal.jsx";
+import { TimelineDragDrop } from "./components/TimelineDragDrop.jsx";
+import TimelineGrid from "./components/TimelineGrid.jsx";
+import TripEditorPanel from "./components/TripEditorPanel.jsx";
 import "./TimelineView.css";
 
 const COLLAPSED_YEARS_SESSION_KEY = "timelineCollapsedYears";

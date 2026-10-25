@@ -1,8 +1,10 @@
 import { useMemo } from "react";
-import styles from "./WeeklyGrid.module.css";
+
 import {
   DAYS, DAY_LABELS, SLOT_COUNT, buildActivityBlocks, formatTimeLabel, normalizeSelection, slotToMinutes,
 } from "../../../utils/plannerUtils.js";
+
+import styles from "./WeeklyGrid.module.css";
 
 const SLOT_INDEXES = Array.from({ length: SLOT_COUNT }, (_, index) => index);
 

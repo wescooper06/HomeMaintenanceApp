@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+
 import { tripPriority } from "../../../utils/priorityUtils.js";
 
 function linkEntries(value) {

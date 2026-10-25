@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+
 import { getTripById, updateTrip } from "../../../services/tripsService.js";
 import { tripPriority } from "../../../utils/priorityUtils.js";
 

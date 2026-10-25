@@ -1,8 +1,9 @@
-import { getSupabaseClient } from "./supabaseClient.js";
-import { createTripsWorkflowService } from "./tripsWorkflowService.js";
-import { createTripsTimelineService, validateTimelineMonth } from "./tripsTimelineService.js";
-import { tripFields, tripResult, tripRows, tripUuid } from "./tripsSupabase.js";
 import { timelineMonthNumber } from "../utils/timelineUtils.js";
+
+import { getSupabaseClient } from "./supabaseClient.js";
+import { tripFields, tripResult, tripRows, tripUuid } from "./tripsSupabase.js";
+import { createTripsTimelineService, validateTimelineMonth } from "./tripsTimelineService.js";
+import { createTripsWorkflowService } from "./tripsWorkflowService.js";
 
 const fields = {
   destination: "destination", startDate: "start_date", endDate: "end_date",

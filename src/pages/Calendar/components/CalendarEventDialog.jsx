@@ -1,8 +1,9 @@
 import styles from "../CalendarPage.module.css";
-import useCalendarState from "./useCalendarState.js";
+
 import CalendarCreateDialog from "./CalendarCreateDialog.jsx";
-import CalendarEditDialog from "./CalendarEditDialog.jsx";
 import CalendarDetailsDialog from "./CalendarDetailsDialog.jsx";
+import CalendarEditDialog from "./CalendarEditDialog.jsx";
+import useCalendarState from "./useCalendarState.js";
 
 export default function CalendarEventDialog() {
   const { snapshot, actions, selectedEvent } = useCalendarState();

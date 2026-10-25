@@ -1,12 +1,10 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
 const { test } = require("node:test");
+const vm = require("node:vm");
 
-// Supply PLANNER_PARKING_FRAGMENT while the fragment is awaiting integration.
-const sourcePath = process.env.PLANNER_PARKING_FRAGMENT
-  || path.resolve(__dirname, "..", "src", "services", "plannerService.js");
+const sourcePath = path.resolve(__dirname, "..", "src", "services", "plannerService.js");
 const source = fs.readFileSync(sourcePath, "utf8");
 const start = source.indexOf("const PARKING_COLORS =");
 assert.ok(start >= 0, "Parking service fragment must be appended or PLANNER_PARKING_FRAGMENT supplied.");
@@ -36,6 +34,7 @@ function harness() {
       invalidateCachedProjects: () => {},
     },
     window, console, ensurePlannerAdapters: async () => {},
+    assertProjectWriteAllowed: () => { throw new Error("Only edits to existing projects are enabled."); },
     cleanText: (value, fallback) => String(value ?? "").trim() || fallback,
   });
   vm.runInContext(fragment.replace(/export /g, "") + `\nglobalThis.api = {${names.join(",")}};`, context);
@@ -44,7 +43,7 @@ function harness() {
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
-test("ordinary edit sends the exact legacy parking payload, including tag/priority reset", async () => {
+test("ordinary Parking edit retains its snapshot contract", async () => {
   const { api, calls } = harness();
   const existing = {
     id: "p1", title: "Old", notes: "Old notes", createdAt: "created", updatedAt: "updated",
@@ -75,19 +74,12 @@ test("ad-hoc title edit persists through the shared store without mutating the i
   assert.deepEqual(calls.weeklyDeletes, []);
 });
 
-test("project and repeatable conversions use exact legacy create payloads", async () => {
+test("project and repeatable conversions reject before creating any project or Parking row", async () => {
   for (const type of ["project", "repeatable"]) {
     const { api, calls } = harness();
-    await api.convertParkingItem({ id: "p1", title: "Idea" }, type);
-    assert.deepEqual(plain(calls.projects[0]), {
-      source: "home", property: "", vehicle: "", title: "Idea", area: "",
-      category: "uncategorized", priority: "3", order: "", resourceLinks: "",
-      state: "unknown", dateCompleted: "", hours: "", mileage: "", mechanic: "",
-      addToRepeating: type === "repeatable", recurrence: "",
-    });
-    assert.deepEqual(plain(calls.parking[0].convertedTo), {
-      type, id: "project-1", tabName: "Project List_A", rowNumber: 8,
-    });
+    await assert.rejects(api.convertParkingItem({ id: "p1", title: "Idea" }, type), /Only edits/);
+    assert.equal(calls.projects.length, 0);
+    assert.equal(calls.parking.length, 0);
   }
 });
 
@@ -105,7 +97,7 @@ test("ad-hoc conversion leaves the optional project link empty instead of linkin
   });
 });
 
-test("weekly drop preserves the legacy snapshot and archive payload", async () => {
+test("weekly drop preserves the modern snapshot and archive payload", async () => {
   const { api, calls } = harness();
   await api.parkPlannerPayload({ kind: "weekly-move", weeklyTask: {
     id: "w1", title: "Weekly", tags: "tag", checklist: [{ text: "one" }],

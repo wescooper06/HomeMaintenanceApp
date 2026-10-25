@@ -1,6 +1,8 @@
 import { useEffect, useId, useState } from "react";
-import styles from "./ActivityRuleModal.module.css";
+
 import { DAYS, TIME_OPTIONS, formatTimeLabel, timeToMinutes } from "../../../utils/plannerUtils.js";
+
+import styles from "./ActivityRuleModal.module.css";
 
 function validate(draft) {
   if (!draft.activity_type_id) return "Choose an activity type.";

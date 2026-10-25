@@ -1,9 +1,11 @@
 import { cleanText, getWeeklyTaskType, parseResourceLinkEntries, parseWeeklySourceId } from "../../../services/plannerService.js";
-import { usePlanner } from "./usePlanner.js";
-import usePlannerDrag from "./usePlannerDrag.js";
+import styles from "../PlannerPage.module.css";
+
 import Checklist from "./Checklist.jsx";
 import InlinePlannerText from "./InlinePlannerText.jsx";
-import styles from "../PlannerPage.module.css";
+import { usePlanner } from "./usePlanner.js";
+import usePlannerDrag from "./usePlannerDrag.js";
+
 
 export default function ProjectCard({ task, index, globalIndex }) {
   const { actions } = usePlanner();

@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, CalendarDays, GripVertical } from "lucide-react";
-import TripEditorPanel from "./components/TripEditorPanel.jsx";
-import PriorityTimelinePreview from "./components/PriorityTimelinePreview.jsx";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+
+
 import { getTrips, updateTrip } from "../../services/tripsService.js";
 import { prioritizedTrips, tripPriority } from "../../utils/priorityUtils.js";
+
+import PriorityTimelinePreview from "./components/PriorityTimelinePreview.jsx";
+import TripEditorPanel from "./components/TripEditorPanel.jsx";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 

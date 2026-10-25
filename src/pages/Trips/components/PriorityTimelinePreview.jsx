@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+
 import { assignTripToMonth, getTrips } from "../../../services/tripsService.js";
 import { getTimeline, propagateTimelineYear } from "../../../services/tripsTimelineService.js";
 import { TIMELINE_MONTHS, timelineColor, timelineTripIds } from "../../../utils/timelineUtils.js";
+
 import MonthBox from "./MonthBox.jsx";
 import MonthDetailsModal from "./MonthDetailsModal.jsx";
 import { TimelineDragDrop, TimelineDropMonth, TimelineDropYear } from "./TimelineDragDrop.jsx";
-import TripMarker from "./TripMarker.jsx";
 import TimelineYearRow from "./TimelineYearRow.jsx";
+import TripMarker from "./TripMarker.jsx";
 import "./PriorityTimelinePreview.css";
 
 export default function PriorityTimelinePreview({ trips, onSelectTrip, onTimelineRefresh, refreshVersion = 0 }) {

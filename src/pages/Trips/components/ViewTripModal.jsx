@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
-import TripDetailsPanel from "./TripDetailsPanel.jsx";
+
 import { resolveLinkTitle } from "../../../utils/resolveLinkTitle.js";
+
+import TripDetailsPanel from "./TripDetailsPanel.jsx";
 
 export default function ViewTripModal({ trip, onClose }) {
   const dialog = useRef(null);

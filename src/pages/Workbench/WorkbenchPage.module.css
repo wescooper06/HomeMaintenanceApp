@@ -45,11 +45,6 @@
 .modal form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .editGrid { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, 1fr); gap: 12px; border: 0; padding: 0; margin: 0; min-width: 0; }
 .modal label { display: grid; gap: 5px; min-width: 0; color: #475569; font-size: 0.82rem; }
-.modal .checkbox { display: flex; grid-column: 1 / -1; align-items: center; gap: 7px; min-height: 34px; }
-.modal .checkbox input { width: auto; min-height: auto; }
-.repeatingControls { grid-column: 1 / -1; display: flex; align-items: end; gap: 18px; }
-.repeatingControls .checkbox { grid-column: auto; }
-.repeatingControls > label:not(.checkbox) { width: min(176px, 100%); }
 .modal input, .modal select, .modal textarea { width: 100%; min-height: 34px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px; background: #fff; color: #0f172a; font: inherit; }
 .modal textarea { min-height: 72px; resize: vertical; }
 .modal select { appearance: auto; cursor: pointer; }
@@ -58,6 +53,3 @@
 .modalActions .primary { border-color: #0f766e; background: #0f766e; color: #fff; }
 @media (max-width: 760px) { .editGrid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 600px) { .modal form, .editGrid { grid-template-columns: 1fr; } .modalActions { grid-column: auto; } }
-.agentCommandBar { display: flex; gap: 12px; margin: 0 0 14px; padding: 12px; border: 1px solid #dbe3ec; border-radius: 10px; background: #f8fbff; }
-.agentInput { flex: 1 1 auto; min-width: 0; min-height: 36px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 10px; background: #fff; font: inherit; }
-.agentResponse { margin: 0 0 14px; color: #0f172a; font-size: 0.9rem; }

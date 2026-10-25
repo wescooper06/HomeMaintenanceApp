@@ -1,9 +1,11 @@
 import { useState } from "react";
+
 import { normalizeChecklist } from "../../../services/plannerService.js";
+import styles from "../PlannerPage.module.css";
+
+import InlinePlannerText from "./InlinePlannerText.jsx";
 import { usePlanner } from "./usePlanner.js";
 import usePlannerDrag from "./usePlannerDrag.js";
-import InlinePlannerText from "./InlinePlannerText.jsx";
-import styles from "../PlannerPage.module.css";
 
 export default function Checklist({ task, day, slot }) {
   const { actions } = usePlanner();
