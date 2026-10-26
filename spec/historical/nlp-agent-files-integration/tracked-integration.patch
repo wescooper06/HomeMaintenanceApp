@@ -1,0 +1,115 @@
+diff --git a/www/index.html b/www/index.html
+index 880b2db3710653b6e22e2530ffe47e629b18a8e1..1bebbbb460ca0740737f3cb21c5ea90e902174c0 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -2,19 +2,19 @@
+ <html lang="en">
+ <head>
+ 	<base href="/HomeMaintenanceApp/www/">
+-	<link rel="stylesheet" href="styles/main.css?v=20260811-7" />
++	<link rel="stylesheet" href="styles/main.css?v=20260822-2" />
+ </head>
+ <body>
+ 	<div id="app"></div>
+ 	<script src="https://accounts.google.com/gsi/client" async defer></script>
+-	<script src="js/app-config.js?v=20260811-7"></script>
+-	<script src="js/migration/weekly-planner-migration.js?v=20260814-1"></script>
+-	<script src="js/migration/weekly-planner-restore.js?v=20260814-1"></script>
++	<script src="js/app-config.js?v=20260822-2"></script>
++	<script src="js/migration/weekly-planner-migration.js?v=20260822-2"></script>
++	<script src="js/migration/weekly-planner-restore.js?v=20260822-2"></script>
+ 	<script>
+   window.APP_CONFIG = window.APP_CONFIG || {};
+   window.APP_CONFIG.GOOGLE_CLIENT_ID = "902309416260-4v04g0nc6fa4lt9otb2gm4ijkfhgoc1s.apps.googleusercontent.com";
+ </script>
+-	<script src="js/router.js?v=20260811-7"></script>
++	<script src="js/router.js?v=20260822-2"></script>
+ ti
+ </body>
+ </html>
+diff --git a/www/js/router.js b/www/js/router.js
+index 7c6166177daafe6dbad3ac3f68d4fa8eaf79beff..9b38e4eb662970c708df5b2e2e7a98fbbe4f429b 100644
+--- a/www/js/router.js
++++ b/www/js/router.js
+@@ -1,5 +1,5 @@
+ // test
+-const BUILD_VERSION = "20260811-7";
++const BUILD_VERSION = "20260822-2";
+ 
+ const routes = {
+   dashboard: {
+diff --git a/www/screens/workbench/workbench.html b/www/screens/workbench/workbench.html
+index 0bb4a73cd1fd18004ebc9b7c4885d43324fe7ed2..08fe04f3ad190158bface205aa6e4b2d8454d0dd 100644
+--- a/www/screens/workbench/workbench.html
++++ b/www/screens/workbench/workbench.html
+@@ -1,5 +1,11 @@
+ <section class="workbench-screen hm-card">
+   <div data-main-nav></div>
++  <link rel="stylesheet" href="/www/workbench/workbench.css">
++  <script src="/www/workbench/agent-ui.js"></script>
++  <div id="agent-command-bar">
++    <input id="agent-input" type="text" placeholder="Ask the Agent..." autocomplete="off" />
++  </div>
++  <div id="agent-response"></div>
+   <header class="workbench-header">
+     <div>
+       <p class="workbench-kicker">Operations view</p>
+@@ -55,4 +61,5 @@
+       </form>
+     </div>
+   </div>
++  <script src="workbench/agent-ui.js?v=20260822-1"></script>
+ </section>
+diff --git a/www/screens/workbench/workbench.js b/www/screens/workbench/workbench.js
+index 4157aa0ea76e0b0da118270d60ec7ddaa78f994e..7c2f972c207c9e2cd1add67f739f6f77dcd2e0ca 100644
+--- a/www/screens/workbench/workbench.js
++++ b/www/screens/workbench/workbench.js
+@@ -1,5 +1,5 @@
+ function initWorkbenchScreen() {
+-  const SERVICE_VERSION = "20260814-2";
++  const SERVICE_VERSION = "20260822-2";
+   const state = { projects: [], tasks: [], taskSort: "asc", projectSort: "order", search: "", source: [], category: [], projectState: [] };
+   const elements = {
+     status: document.getElementById("workbenchStatus"),
+@@ -42,6 +42,28 @@ function initWorkbenchScreen() {
+     document.body.appendChild(script);
+   });
+ 
++  function ensureAgentCommandBar() {
++    const screen = document.querySelector(".workbench-screen");
++    if (!screen || document.getElementById("agent-command-bar")) {
++      return;
++    }
++
++    const header = screen.querySelector(".workbench-header");
++    if (!header) {
++      return;
++    }
++
++    const bar = document.createElement("div");
++    bar.id = "agent-command-bar";
++    bar.innerHTML = '<input id="agent-input" type="text" placeholder="Ask the Agent..." autocomplete="off" />';
++
++    const response = document.createElement("div");
++    response.id = "agent-response";
++
++    screen.insertBefore(response, header);
++    screen.insertBefore(bar, response);
++  }
++
+   const clean = (value, fallback = "") => {
+     const result = value == null ? "" : String(value).trim();
+     return result || fallback;
+@@ -256,7 +278,11 @@ function initWorkbenchScreen() {
+     renderSkeleton();
+     elements.status.textContent = "Loading Workbench...";
+     console.time("workbench-load");
+-    await Promise.all([loadScript("js/utils/uuid.js"), loadScript("js/services/planner-storage.service.js"), loadScript("js/services/sheets.service.js"), loadScript("js/services/projects.service.js")]);
++    ensureAgentCommandBar();
++    await Promise.all([loadScript("js/utils/uuid.js"), loadScript("js/services/planner-storage.service.js"), loadScript("js/services/sheets.service.js"), loadScript("js/services/projects.service.js"), loadScript("/www/workbench/agent-ui.js")]);
++    if (window.WorkbenchAgentUI && typeof window.WorkbenchAgentUI.bootstrap === "function") {
++      await window.WorkbenchAgentUI.bootstrap();
++    }
+     const cachedProjects = window.PlannerStorage.getCachedProjects && window.PlannerStorage.getCachedProjects();
+     const [projects, tasks] = await Promise.all([cachedProjects || window.loadAllProjects(), window.PlannerStorage.getTaskManager()]);
+     state.projects = projects || [];
