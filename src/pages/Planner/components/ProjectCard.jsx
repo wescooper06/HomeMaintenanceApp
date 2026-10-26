@@ -1,4 +1,6 @@
-import { cleanText, getWeeklyTaskType, parseResourceLinkEntries, parseWeeklySourceId } from "../../../services/plannerService.js";
+import { useState } from "react";
+
+import { cleanText, DAY_ORDER, getWeeklyTaskType, parseResourceLinkEntries, parseWeeklySourceId, SLOT_ORDER } from "../../../services/plannerService.js";
 import styles from "../PlannerPage.module.css";
 
 import Checklist from "./Checklist.jsx";
@@ -10,6 +12,8 @@ import usePlannerDrag from "./usePlannerDrag.js";
 export default function ProjectCard({ task, index, globalIndex }) {
   const { actions } = usePlanner();
   const drag = usePlannerDrag();
+  const [day, setDay] = useState("mon");
+  const [slot, setSlot] = useState("morning");
   return (
     <article className={`${styles["pool-task-card"]} ${drag.drag?.kind === "curated-reorder" && drag.drag.taskId === task.taskId ? styles["is-dragging"] : ""} ${drag.dropTarget.startsWith("curated:") && drag.dropTarget.endsWith(`:${task.taskId}`) ? styles["is-drop-target"] : ""}`}
       data-curated-index={index} data-curated-global-index={globalIndex} data-task-id={task.taskId}>
@@ -28,6 +32,18 @@ export default function ProjectCard({ task, index, globalIndex }) {
             <span className={styles["pool-order-pill"]}>Order: {cleanText(task.order, "-")}</span>
           </div>
           <div className={styles["pool-task-meta"]}>ID: {task.projectId || "-"} | Source: {task.source}</div>
+          <div>
+            <label>Day <select aria-label={`Day for ${task.title}`} value={day} onChange={(event) => setDay(event.target.value)}>
+              {DAY_ORDER.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+            </select></label>
+            <label>Time <select aria-label={`Time for ${task.title}`} value={slot} onChange={(event) => setSlot(event.target.value)}>
+              {SLOT_ORDER.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select></label>
+            <button type="button" onClick={() => actions.assignTask(task.taskId, day, slot)}>Continue / assign</button>
+            <button type="button" disabled={task.checklistTemplate == null}
+              title={task.checklistTemplate == null ? "Save a checklist for future tasks from a scheduled task first" : "Start a separate task with all checklist items unchecked"}
+              onClick={() => actions.assignTask(task.taskId, day, slot, { fresh: true })}>Start fresh task</button>
+          </div>
         </div>
       </div>
     </article>
@@ -87,6 +103,10 @@ export function WeeklyTaskCard({ task, day, slot }) {
           </div>
           <div className={styles["slot-task-reminder-confirmation"]} data-role="reminder-confirmation" aria-live="polite" hidden={!snapshot.confirmations[task.id]}>{snapshot.confirmations[task.id]}</div>
           {(type === "curated" || type === "project") && <Checklist task={task} day={day} slot={slot} />}
+          {(type === "curated" || type === "project") && <button type="button"
+            onClick={() => { void actions.saveChecklistTemplate(task.id).catch((error) => console.warn("Checklist template was not saved", error)); }}>
+            Use this checklist for future tasks
+          </button>}
         </div>
       </div>
     </div>

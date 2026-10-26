@@ -11,6 +11,8 @@ export function createPlannerSupabaseStorage(getData) {
   const listeners = new Set();
   let projects = null;
   let weekly = [];
+  let submittedWeekly = new Map();
+  let weekStartDate;
   let queue = Promise.resolve();
   const emit = (detail) => listeners.forEach((listener) => listener(detail));
 
@@ -26,6 +28,8 @@ export function createPlannerSupabaseStorage(getData) {
     await queue;
     const state = await getData().loadPlannerState();
     weekly = copy(state.weeklyTasks);
+    submittedWeekly = new Map();
+    weekStartDate = state.weekStartDate;
     return state;
   }
 
@@ -72,28 +76,83 @@ export function createPlannerSupabaseStorage(getData) {
     return { weekStartDate: state.weekStartDate, tasks: state.weeklyTasks };
   }
 
-  function saveWeeklyPlannerState(planner) {
+  function saveWeeklyPlannerState(planner, { deletedTaskIds = [] } = {}) {
     const snapshot = copy(planner);
+    const deletions = new Set(deletedTaskIds);
     return enqueue(async () => {
       const current = await getData().loadPlannerState();
-      const ids = new Set(snapshot.tasks.map((task) => task.id));
-      const next = copy(snapshot.tasks);
-      for (const task of current.weeklyTasks) {
-        if (!ids.has(task.id)) next.push({ ...task, deleted: true, deletedInstance: true });
-      }
-
       const baseline = new Map(weekly.map((task) => [task.id, task]));
-      const changed = next.filter((task) => JSON.stringify(task) !== JSON.stringify(baseline.get(task.id)));
-      await getData().savePlannerState({
-        weeklyTasks: changed, weekStartDate: snapshot.weekStartDate,
+      const persisted = new Map(current.weeklyTasks.map((task) => [task.id, task]));
+      const changed = [];
+      for (const task of snapshot.tasks) {
+        const previous = submittedWeekly.get(task.id) || baseline.get(task.id);
+        if (previous && weeklyEqual(task, previous) && !deletions.has(task.id)) continue;
+        if (["curated", "project"].includes(task.taskType || task.type)) {
+          const related = (row) => !row.deleted && !row.deletedInstance
+            && ["curated", "project"].includes(row.taskType || row.type)
+            && (task.metadata?.sourceTaskId && row.metadata?.sourceTaskId
+              ? task.metadata.sourceTaskId === row.metadata.sourceTaskId
+              : task.projectId && row.projectId === task.projectId && row.source === task.source);
+          const ids = (rows) => rows.filter(related).map((row) => row.id).sort().join("\n");
+          if (ids(weekly) !== ids(current.weeklyTasks)) {
+            throw new Error(`Project occurrences for ${task.id} changed in another session. Reload before assigning.`);
+          }
+        }
+        const old = baseline.get(task.id);
+        const live = persisted.get(task.id);
+        if (old && !submittedWeekly.has(task.id) && task.updatedAt !== old.updatedAt) {
+          throw new Error(`Planner task ${task.id} was loaded from an older revision. Reload before editing.`);
+        }
+        if (old && (!live || !weeklyEqual(old, live) || old.updatedAt !== live.updatedAt)) {
+          throw new Error(`Planner task ${task.id} changed in another session. Reload Planner before editing.`);
+        }
+        if (!old && live) throw new Error(`Planner task ${task.id} already exists. Reload Planner before editing.`);
+        if (!deletions.has(task.id) && (task.deleted || task.deletedInstance)
+          && !(old?.deleted || old?.deletedInstance)) {
+          throw new Error(`Deleting Planner task ${task.id} requires explicit deletion intent.`);
+        }
+        changed.push({ ...task, updatedAt: live?.updatedAt });
+      }
+      for (const id of deletions) {
+        const old = baseline.get(id);
+        const live = persisted.get(id);
+        if (!old || !live || !weeklyEqual(old, live) || old.updatedAt !== live.updatedAt) {
+          throw new Error(`Planner task ${id} changed or is missing. Reload before deleting.`);
+        }
+        const index = changed.findIndex((task) => task.id === id);
+        const deleted = { ...live, deleted: true, deletedInstance: true };
+        if (index < 0) changed.push(deleted);
+        else changed[index] = deleted;
+      }
+      const changingWeek = snapshot.weekStartDate !== weekStartDate;
+      if (changingWeek && current.weekStartDate !== weekStartDate) {
+        throw new Error("Planner week changed in another session. Reload before navigating.");
+      }
+      const result = await getData().savePlannerState({
+        weeklyTasks: changed, deletedWeeklyTaskIds: [...deletions],
+        ...(changingWeek ? { weekStartDate: snapshot.weekStartDate, expectedWeekStartDate: current.weekStartDate } : {}),
       });
-      weekly = next.filter((task) => !task.deleted);
+      const saved = await getData().loadPlannerState();
+      for (const { table, row } of result) {
+        if (table === "planner_weekly_tasks" && row.id !== "week-settings"
+          && saved.weeklyTasks.find((task) => task.id === row.id)?.updatedAt !== row.updated_at) {
+          throw new Error(`Planner task ${row.id} changed after saving. Reload before editing again.`);
+        }
+      }
+      if (changingWeek && saved.weekStartDate !== snapshot.weekStartDate) {
+        throw new Error("Planner week changed after saving. Reload before navigating again.");
+      }
+      const writtenIds = new Set(changed.map((task) => task.id));
+      weekly = [...weekly.filter((task) => !writtenIds.has(task.id)),
+        ...saved.weeklyTasks.filter((task) => writtenIds.has(task.id))];
+      for (const task of snapshot.tasks) submittedWeekly.set(task.id, copy(task));
+      weekStartDate = snapshot.weekStartDate;
       emit({ type: "weekly-snapshot-saved" });
     });
   }
 
   async function getTaskManager() {
-    return (await loadPlannerState()).tasks;
+    return (await getData().loadPlannerState()).tasks;
   }
 
   function restorePlannerState(changes) {
@@ -204,7 +263,7 @@ export function createPlannerSupabaseStorage(getData) {
   }
 
   async function getRepeatableOverrides() {
-    const state = await loadPlannerState();
+    const state = await getData().loadPlannerState();
     return state.tasks.filter((task) => metadata(task).series).map((task) => {
       const series = metadata(task).series;
       const first = state.weeklyTasks.filter((row) => row.parentRepeatableId === task.projectId)
@@ -256,12 +315,61 @@ export function createPlannerSupabaseStorage(getData) {
     return task;
   }
 
+  function saveProjectChecklistTemplate(masterId, weeklyId, items) {
+    const definition = copy(items);
+    return enqueue(async () => {
+      if (!Array.isArray(definition) || definition.some((item) =>
+        !item || typeof item.id !== "string" || !item.id.trim()
+        || typeof item.text !== "string" || !item.text.trim()
+        || Object.keys(item).some((key) => !["id", "text"].includes(key)))
+        || new Set(definition.map((item) => item.id)).size !== definition.length) {
+        throw new Error("Checklist template requires unique item IDs and nonempty labels.");
+      }
+      const state = await getData().loadPlannerState();
+      const master = state.tasks.find((task) => task.id === masterId);
+      const task = state.weeklyTasks.find((row) => row.id === weeklyId);
+      const linkedId = task?.metadata?.sourceTaskId;
+      const matches = master && state.tasks.filter((row) =>
+        row.projectId === master.projectId && row.source === master.source);
+      if (!master || !task || !["curated", "project"].includes(task.taskType)
+        || task.deleted || task.deletedInstance || matches.length !== 1
+        || task.source !== master.source
+        || (linkedId ? linkedId !== masterId : !master.projectId || task.projectId !== master.projectId)
+        || JSON.stringify(task.checklist.map(({ id, text }) => ({ id, text }))) !== JSON.stringify(definition)) {
+        throw new Error("Project checklist changed or its ownership is ambiguous. Reload and review before saving a template.");
+      }
+      await getData().savePlannerState({ tasks: [{ ...master,
+        metadataJson: JSON.stringify({ ...metadata(master), checklistTemplate: { version: 1, items: definition } }),
+      }] });
+      emit({ type: "checklist-template-saved", id: masterId });
+    });
+  }
+
   async function deleteWeeklyTask(id) {
-    const task = (await loadPlannerState()).weeklyTasks.find((item) => item.id === id);
+    const task = (await getData().loadPlannerState()).weeklyTasks.find((item) => item.id === id);
     if (!task) throw new Error(`Weekly task ${id} no longer exists.`);
-    await savePlannerState({ weeklyTasks: [{ ...task, deleted: true, deletedInstance: true }] },
+    await savePlannerState({ weeklyTasks: [{ ...task, deleted: true, deletedInstance: true }],
+      deletedWeeklyTaskIds: [id] },
       { type: "weekly-task-delete" });
     return { ok: true, id };
+  }
+
+  function weeklyEqual(left, right) {
+    const shape = (task) => ({
+      id: task.id, date: task.date, timeSlot: task.timeSlot,
+      taskType: task.taskType || task.type || "curated", title: task.title,
+      projectId: task.projectId || "", source: task.source,
+      parentRepeatableId: task.parentRepeatableId || "", occurrenceDate: task.occurrenceDate || task.date || "",
+      completed: Boolean(task.completed), overridden: Boolean(task.overridden),
+      deleted: Boolean(task.deleted), deletedInstance: Boolean(task.deletedInstance),
+      checklist: task.checklist || [], checklistOpen: Boolean(task.checklistOpen),
+      reminder: { ...(task.reminder || {}), active: Boolean(task.reminder?.active && task.reminder?.sendAt) },
+      metadata: task.metadata || {},
+    });
+    const canonical = (value) => Array.isArray(value) ? value.map(canonical)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
+    return JSON.stringify(canonical(shape(left))) === JSON.stringify(canonical(shape(right)));
   }
 
   async function upsertParkingItem(item) {
@@ -280,8 +388,8 @@ export function createPlannerSupabaseStorage(getData) {
   return {
     loadPlannerState, savePlannerState, restorePlannerState, getProjects, updateProject,
     createProject, deleteProject,
-    getWeeklyPlanner, saveWeeklyPlannerState, upsertWeeklyTask, deleteWeeklyTask,
-    getParkingLot: async () => (await loadPlannerState()).parkingItems,
+    getWeeklyPlanner, saveWeeklyPlannerState, upsertWeeklyTask, deleteWeeklyTask, saveProjectChecklistTemplate,
+    getParkingLot: async () => (await getData().loadPlannerState()).parkingItems,
     upsertParkingItem, deleteParkingItem,
     getTaskManager, upsertTaskManagerTask, deleteTaskManagerTask,
     getCuratedTasks, saveCuratedTasks, upsertCuratedTask, getStagedTasks, deleteStagedTasks,

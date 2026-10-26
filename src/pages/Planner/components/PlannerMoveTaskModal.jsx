@@ -1,6 +1,6 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
-import { parseDateKey } from "../../../services/plannerService.js";
+import { parseDateKey, SLOT_ORDER } from "../../../services/plannerService.js";
 import styles from "../PlannerPage.module.css";
 
 import CalendarWidget from "./CalendarWidget.jsx";
@@ -10,9 +10,10 @@ import usePlannerDialog from "./usePlannerDialog.js";
 export default function PlannerMoveTaskModal({ task }) {
   const { actions } = usePlanner();
   const ref = useRef(null);
+  const [slot, setSlot] = useState(task.timeSlot);
   usePlannerDialog(ref, actions.closeMove, "button[aria-pressed='true'], button[aria-pressed]");
   const select = (date) => {
-    if (actions.moveTaskToDate(task.id, parseDateKey(date))) actions.closeMove();
+    if (actions.moveTaskToDate(task.id, parseDateKey(date), slot)) actions.closeMove();
     else actions.setStatus("Unable to move that Planner task. Please try again.");
   };
   return (
@@ -23,6 +24,12 @@ export default function PlannerMoveTaskModal({ task }) {
           <button type="button" className={styles["planner-move-close"]} aria-label="Close" title="Close" onClick={actions.closeMove}>{"\u00d7"}</button>
         </header>
         <p id="planner-move-task-title">{task.title || "Untitled Task"}</p>
+        <label>
+          Time slot
+          <select value={slot} onChange={(event) => setSlot(event.target.value)}>
+            {SLOT_ORDER.map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}
+          </select>
+        </label>
         <CalendarWidget initialDate={task.date} onSelectDate={select} />
       </section>
     </div>

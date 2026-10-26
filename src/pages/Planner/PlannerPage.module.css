@@ -981,6 +981,33 @@
   font-weight: 700;
 }
 
+.weekly-insertion-target {
+  position: relative;
+}
+
+.insert-before::before,
+.insert-after::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  height: 3px;
+  background: var(--planner-accent, #464feb);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.insert-before::before { top: -2px; }
+.insert-after::after { bottom: -2px; }
+
+.weekly-end-target {
+  position: relative;
+  min-height: 28px;
+  padding: 6px;
+  border: 1px dashed currentColor;
+  text-align: center;
+  font-size: 12px;
+}
+
 .slot-task-list {
   display: grid;
   gap: 0.45rem;

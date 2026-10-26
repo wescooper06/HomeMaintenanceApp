@@ -87,6 +87,150 @@ async function setup(initial, projects = [], seed = {}) {
   return { service, controller, environment };
 }
 
+test("weekly sort uses valid positions then deterministic IDs without mutating older records", async () => {
+  const { sortWeeklyTasks } = await servicePromise;
+  const tasks = [
+    { id: "z", metadata: {} }, { id: "a", metadata: { weeklyPosition: "0" } },
+    { id: "n", metadata: { weeklyPosition: -1 } }, { id: "f", metadata: { weeklyPosition: 1.5 } },
+    { id: "p2", metadata: { weeklyPosition: 1 } }, { id: "p1", metadata: { weeklyPosition: 0 } },
+    { id: "p0", metadata: { weeklyPosition: 0 } }, { id: "i", metadata: { weeklyPosition: Infinity } },
+  ];
+  const before = tasks.map((task) => task.id);
+  assert.deepEqual(sortWeeklyTasks(tasks).map((task) => task.id), ["p0", "p1", "p2", "a", "f", "i", "n", "z"]);
+  assert.deepEqual(tasks.map((task) => task.id), before);
+});
+
+test("Project cards distinguish ordinary continuation from explicitly starting fresh", async () => {
+  const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const service = await servicePromise;
+  const file = path.join(root, "src", "pages", "Planner", "components", "ProjectCard.jsx");
+  const componentSource = fs.readFileSync(file, "utf8").replace(/^import .*;\r?$/gm, "")
+    .replace("export default function", "function").replace(/^export /gm, "");
+  const { code } = await transformWithOxc(componentSource, file, { jsx: { runtime: "classic", pragma: "element" } });
+  const calls = [];
+  const ProjectCard = vm.runInNewContext(`(() => { ${code}; return ProjectCard; })()`, {
+    element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
+    useState: (initial) => [initial, () => {}],
+    usePlanner: () => ({ actions: { assignTask: (...args) => calls.push(clone(args)) } }),
+    usePlannerDrag: () => ({ drag: null, dropTarget: "" }),
+    cleanText: service.cleanText, DAY_ORDER: service.DAY_ORDER, SLOT_ORDER: service.SLOT_ORDER,
+    styles: new Proxy({}, { get: (_, key) => key }),
+  });
+  const buttons = (node) => !node || typeof node !== "object" ? []
+    : [...(node.type === "button" ? [node] : []), ...node.children.flatMap(buttons)];
+  const task = { taskId: "master", title: "Project", projectId: "project", source: "misc" };
+  let rendered = buttons(ProjectCard({ task, index: 0, globalIndex: 0 }));
+  const continuation = rendered.find((button) => button.children.includes("Continue / assign"));
+  continuation.props.onClick();
+  assert.deepEqual(calls.pop(), ["master", "mon", "morning"]);
+  assert.equal(rendered.find((button) => button.children.includes("Start fresh task")).props.disabled, true);
+  rendered = buttons(ProjectCard({ task: { ...task, checklistTemplate: [] }, index: 0, globalIndex: 0 }));
+  const fresh = rendered.find((button) => button.children.includes("Start fresh task"));
+  assert.equal(fresh.props.disabled, false);
+  fresh.props.onClick();
+  assert.deepEqual(calls.pop(), ["master", "mon", "morning", { fresh: true }]);
+});
+
+test("weekly drop targets detect before/after/end and isolate checklist drags", async () => {
+  const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const file = path.join(root, "src", "pages", "Planner", "components", "WeeklyGrid.jsx");
+  const gridSource = fs.readFileSync(file, "utf8").replace(/^import .*;\r?$/gm, "")
+    .replace("export default function", "function").replace(/^export /gm, "");
+  const { code } = await transformWithOxc(gridSource, file, { jsx: { runtime: "classic", pragma: "element" } });
+  const calls = [], targets = [];
+  let ended = 0;
+  const drag = {
+    drag: { kind: "weekly-move", taskId: "C" }, dropTarget: "",
+    target(event, key) { event.preventDefault(); event.stopPropagation(); targets.push(key); },
+    end: () => { ended += 1; }, leave() {},
+  };
+  const DaySlot = vm.runInNewContext(`(() => { ${code}; return DaySlot; })()`, {
+    element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
+    usePlanner: () => ({ actions: { dropOnSlot: (...args) => calls.push(clone(args)) } }),
+    usePlannerDrag: () => drag, WeeklyTaskCard: () => {}, styles: new Proxy({}, { get: (_, key) => key }),
+  });
+  const props = { day: "mon", date: "2026-10-19", slot: "morning", label: "Morning", tasks: [{ id: "A" }] };
+  const event = (clientY) => ({
+    clientY, currentTarget: { getBoundingClientRect: () => ({ top: 100, height: 100 }) },
+    preventDefault() {}, stopPropagation() {},
+  });
+  let tree = DaySlot(props);
+  let card = tree.children[1].children[0];
+  card.props.onDragOver(event(110));
+  assert.equal(targets.at(-1), "slot:2026-10-19:morning:before:A");
+  card.props.onDrop(event(110));
+  assert.deepEqual(calls.at(-1).at(-1), { targetId: "A", side: "before" });
+  card.props.onDragOver(event(190));
+  assert.equal(targets.at(-1), "slot:2026-10-19:morning:after:A");
+  card.props.onDrop(event(190));
+  assert.deepEqual(calls.at(-1).at(-1), { targetId: "A", side: "after" });
+  drag.dropTarget = targets.at(-1);
+  tree = DaySlot(props);
+  assert.match(tree.children[1].children[0].props.className, /insert-after/);
+  tree.props.onDrop(event(250));
+  assert.equal(calls.at(-1).length, 4, "Container background/end uses default append");
+  assert.equal(ended, 3);
+  drag.drag = { kind: "checklist-reorder", taskId: "A", checklistId: "check" };
+  tree = DaySlot(props);
+  card = tree.children[1].children[0];
+  const before = calls.length, beforeTargets = targets.length;
+  card.props.onDragOver(event(110));
+  card.props.onDrop(event(110));
+  tree.props.onDragOver(event(110));
+  tree.props.onDrop(event(110));
+  assert.equal(calls.length, before);
+  assert.equal(targets.length, beforeTargets);
+  assert.equal(ended, 3);
+});
+
+test("existing Move Task dialog retains date-only behavior and offers the same slot destination as drag", async () => {
+  const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const modalFile = path.join(root, "src", "pages", "Planner", "components", "PlannerMoveTaskModal.jsx");
+  const modalSource = fs.readFileSync(modalFile, "utf8").replace(/^import .*;\r?$/gm, "")
+    .replace("export default function", "function");
+  const { code } = await transformWithOxc(modalSource, modalFile, { jsx: { runtime: "classic", pragma: "element" } });
+  let selectedSlot, moved = [], closed = 0;
+  const calendar = () => {};
+  const modal = vm.runInNewContext(`(() => { ${code}; return PlannerMoveTaskModal; })()`, {
+    element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
+    useRef: () => ({ current: null }),
+    useState(initial) {
+      if (selectedSlot === undefined) selectedSlot = initial;
+      return [selectedSlot, (value) => { selectedSlot = value; }];
+    },
+    usePlanner: () => ({ actions: {
+      moveTaskToDate: (...args) => { moved.push(args); return true; },
+      closeMove: () => { closed += 1; },
+    } }),
+    usePlannerDialog: () => {}, parseDateKey: (date) => date,
+    SLOT_ORDER: ["morning", "afternoon", "evening"], CalendarWidget: calendar, styles: {},
+  });
+  const task = { id: "stable-id", title: "Move me", date: "2026-10-19", timeSlot: "morning" };
+  function find(node, predicate) {
+    if (!node || typeof node !== "object") return null;
+    if (predicate(node)) return node;
+    for (const child of node.children || []) {
+      const found = find(child, predicate);
+      if (found) return found;
+    }
+    return null;
+  }
+  let tree = modal({ task });
+  assert(find(tree, (node) => node.props.role === "dialog"));
+  assert.equal(find(tree, (node) => node.type === "h2").children[0], "Move Task");
+  assert.equal(find(tree, (node) => node.type === "select").props.value, "morning");
+  find(tree, (node) => node.type === calendar).props.onSelectDate("2026-10-20");
+  assert.deepEqual(moved[0], ["stable-id", "2026-10-20", "morning"]);
+  find(tree, (node) => node.type === "select").props.onChange({ target: { value: "afternoon" } });
+  tree = modal({ task });
+  find(tree, (node) => node.type === calendar).props.onSelectDate("2026-10-20");
+  assert.deepEqual(moved[1], ["stable-id", "2026-10-20", "afternoon"]);
+  assert.equal(closed, 2);
+  const card = fs.readFileSync(path.join(root, "src", "pages", "Planner", "components", "ProjectCard.jsx"), "utf8");
+  assert.match(card, /aria-label="Move Task" title="Move Task" onClick=\{\(\) => actions\.openMove\(task\.id\)\}/);
+  assert.match(card, /kind: "weekly-move", taskId: task\.id/);
+});
+
 test("weekly moves preserve completion, edited checklists and titles", async () => {
   const initial = { weekStartDate: "2026-10-19", tasks: [
     { id: "curated-p1-2026-10-19", taskId: "curated-p1-2026-10-19", date: "2026-10-19", timeSlot: "morning", title: "Fixture", type: "curated", source: "home", checklist: [

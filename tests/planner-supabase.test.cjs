@@ -89,10 +89,12 @@ function fixture(extra = {}, cap = 2) {
     from(table) {
       if (!Object.hasOwn(tables, table)) throw new Error(`Unexpected table ${table}`);
       let op = "read", payload, filter, range, single;
+      const filters = [];
       const query = {
         select() { return query; }, order() { return query; },
         range(start, end) { range = [start, end]; return query; },
-        eq(key, value) { filter = [key, value]; return query; },
+        eq(key, value) { if (!filter) filter = [key, value]; filters.push([key, value]); return query; },
+        is(key, value) { filters.push([key, value]); return query; },
         update(row) { op = "update"; payload = row; return query; },
         insert(row) { op = "insert"; payload = row; return query; },
         single() { single = true; return query; },
@@ -113,7 +115,13 @@ function fixture(extra = {}, cap = 2) {
               const [start, end] = range || [0, tables[table].length];
               result = tables[table].slice(start, Math.min(end + 1, start + cap));
             } else if (op === "update") {
-              result = tables[table].filter((row) => row[filter[0]] === filter[1]);
+              if (client.beforeUpdate) {
+                const hook = client.beforeUpdate;
+                client.beforeUpdate = null;
+                hook(table, clone(payload));
+              }
+              result = tables[table].filter((row) => filters.every(([key, value]) =>
+                value === null ? row[key] == null : row[key] === value));
               result.forEach((row) => Object.assign(row, clone(payload)));
             } else {
               const row = { ...clone(payload) };
@@ -133,7 +141,13 @@ function fixture(extra = {}, cap = 2) {
               result = [row];
             }
             if (single && result.length !== 1) return { data: null, error: { message: "Expected one row" } };
-            return { data: clone(single ? result[0] : result), error: null };
+            const data = clone(single ? result[0] : result);
+            if (op !== "read" && client.afterWrite) {
+              const hook = client.afterWrite;
+              client.afterWrite = null;
+              hook(table, clone(payload));
+            }
+            return { data, error: null };
           }).then(resolve, reject);
         },
       };
@@ -603,6 +617,176 @@ test("curated scheduling stores explicit task identity and deduplicates without 
   } finally { controller.destroy(); }
 });
 
+for (const type of ["curated", "adhoc", "repeatable"]) {
+  for (const entry of ["dialog", "drag"]) {
+    test(`${entry} moves ${type} Monday morning to Tuesday afternoon on the same persisted record`, async () => {
+      const row = {
+        id: "stable-weekly-identity", task_type: type, title: "Keep edited title",
+        project_id: type === "adhoc" ? null : p1, source: type === "repeatable" ? "repeating" : "home",
+        parent_rep: type === "repeatable" ? p1 : null, occurrence_date: "2026-10-19",
+        date: "2026-10-19", time_slot: "morning", bucket: "morning", completed: true,
+        checklist_json: [{ id: "check-1", text: "Keep checklist", completed: true }],
+        reminder_json: { active: false, notes: "Keep reminder" },
+        metadata_json: { sourceTaskId: t1, notes: "Keep metadata", resourceLinks: ["https://example.test"] },
+        checklist_open: true, deleted: false, deleted_instance: false, overridden: false,
+      };
+      const { storage, tables, calls } = fixture({
+        planner_weekly_tasks: [
+          { id: "week-settings", metadata_json: { weekStartDate: "2026-10-19" } }, row,
+        ],
+      });
+      const { createPlannerController, parseDateKey, selectWeeklyView } = exportsFrom(
+        "src/services/plannerService.js", ["createPlannerController", "parseDateKey", "selectWeeklyView"], {
+          plannerStorage: storage, window: { location: { hash: "#planner" } },
+          fetch: async () => { throw new Error("External network is forbidden"); },
+          setTimeout, clearTimeout, URL, Date,
+        });
+      const controller = createPlannerController();
+      let reloaded;
+      try {
+        await controller.actions.initialize();
+        const before = plain(controller.getSnapshot().planner.tasks.find((task) => task.id === row.id));
+        const start = calls.length;
+        if (entry === "dialog") {
+          controller.actions.openMove(row.id);
+          assert.equal(controller.getSnapshot().moveTaskId, row.id);
+          assert(controller.actions.moveTaskToDate(row.id, parseDateKey("2026-10-20"), "afternoon"));
+          controller.actions.closeMove();
+        } else {
+          assert(controller.actions.dropOnSlot({ kind: "weekly-move", taskId: row.id }, "tue", "2026-10-20", "afternoon"));
+        }
+        const after = plain(controller.getSnapshot().planner.tasks.find((task) => task.id === row.id));
+        assert.deepEqual(after, {
+          ...before, date: "2026-10-20", timeSlot: "afternoon", bucket: "afternoon",
+          metadata: { ...before.metadata, weeklyPosition: 0 },
+          ...(type === "repeatable" ? { overridden: true } : {}),
+        });
+        const view = selectWeeklyView(controller.getSnapshot());
+        const slotTasks = (date, slot) => view.days.find((day) => day.date === date).slots
+          .find((item) => item.slot === slot).tasks;
+        assert(!slotTasks("2026-10-19", "morning").some((task) => task.id === row.id));
+        assert.equal(slotTasks("2026-10-20", "afternoon").filter((task) => task.id === row.id).length, 1);
+        await controller.flush();
+        const writes = calls.slice(start).filter((call) => call.op !== "read");
+        assert(!writes.some((call) => call.op === "insert"));
+        const taskWrites = writes.filter((call) => call.table === "planner_weekly_tasks"
+          && call.filter?.[1] !== "week-settings");
+        assert.equal(taskWrites.length, 1);
+        assert(taskWrites.every((call) =>
+          call.op === "update" && call.filter[1] === row.id && !call.payload.deleted));
+        assert.equal(tables.planner_weekly_tasks.length, 2);
+        reloaded = createPlannerController();
+        await reloaded.actions.initialize();
+        const saved = reloaded.getSnapshot().planner.tasks.find((task) => task.id === row.id);
+        assert.equal(saved.date, "2026-10-20");
+        assert.equal(saved.timeSlot, "afternoon");
+        assert.equal(saved.completed, true);
+        assert.deepEqual(plain(saved.checklist), row.checklist_json);
+        assert.deepEqual(plain(saved.reminder), row.reminder_json);
+        assert.equal(saved.metadata.notes, "Keep metadata");
+        reloaded.actions.updateTaskTitle(row.id, "Editable after move");
+        await reloaded.flush();
+        assert.equal(tables.planner_weekly_tasks.find((item) => item.id === row.id).title, "Editable after move");
+        assert(controller.actions.moveTaskToDate(row.id, parseDateKey("2026-10-21")));
+        assert.equal(controller.getSnapshot().planner.tasks.find((task) => task.id === row.id).timeSlot, "afternoon",
+          "Existing date-only Move Task callers preserve their slot");
+        await controller.flush();
+      } finally {
+        controller.destroy();
+        reloaded?.destroy();
+      }
+    });
+  }
+}
+
+test("weekly positions reorder mixed cards, preserve rows and queues, reload, and compose with movement/editing", async () => {
+  const weekly = ["A", "B", "C", "D", "E"].map((id, index) => ({
+    id, task_type: ["curated", "adhoc", "repeatable", "curated", "adhoc"][index],
+    title: `Task ${id}`, project_id: p1, source: "home",
+    parent_rep: id === "C" ? p1 : null, occurrence_date: "2026-10-19",
+    date: index < 3 ? "2026-10-19" : "2026-10-20",
+    time_slot: "morning", bucket: "morning", completed: true, overridden: false,
+    checklist_json: [{ id: "check", text: "Retain me", completed: true }],
+    reminder_json: { active: true, sendAt: "2026-11-01T10:00:00Z", eventId: `event-${id}` },
+    metadata_json: { sourceTaskId: t1, links: ["https://example.test"], keep: { nested: true } },
+    checklist_open: true, deleted: false, deleted_instance: false,
+  }));
+  const { storage, tables, calls } = fixture({
+    planner_weekly_tasks: [{ id: "week-settings", metadata_json: { weekStartDate: "2026-10-19" } }, ...weekly],
+  });
+  const { createPlannerController, selectWeeklyView, parseDateKey } = exportsFrom(
+    "src/services/plannerService.js", ["createPlannerController", "selectWeeklyView", "parseDateKey"], {
+      plannerStorage: storage, window: { location: { hash: "#planner" } }, setTimeout, clearTimeout, URL, Date,
+      fetch: async () => { throw new Error("External network is forbidden"); },
+    });
+  const controller = createPlannerController();
+  let reload;
+  const ids = (instance, date = "2026-10-19") => plain(selectWeeklyView(instance.getSnapshot()).days
+    .find((day) => day.date === date).slots.find((slot) => slot.slot === "morning").tasks.map((task) => task.id));
+  try {
+    await controller.actions.initialize();
+    const original = plain(controller.getSnapshot().planner.tasks);
+    const tasksBefore = clone(tables.planner_tasks);
+    const projectsBefore = clone(tables.projects_home);
+    const otherBefore = clone(tables.planner_weekly_tasks.filter((row) => ["D", "E"].includes(row.id)));
+    const start = calls.length;
+    assert.deepEqual(ids(controller), ["A", "B", "C"]);
+    const drop = (taskId, placement) => controller.actions.dropOnSlot(
+      { kind: "weekly-move", taskId }, "mon", "2026-10-19", "morning", placement);
+    assert(drop("C", { targetId: "A", side: "before" }));
+    assert.deepEqual(ids(controller), ["C", "A", "B"]);
+    await controller.flush();
+    assert.deepEqual(ids(controller).map((id) =>
+      controller.getSnapshot().planner.tasks.find((task) => task.id === id).metadata.weeklyPosition), [0, 1, 2]);
+    assert(drop("C", { targetId: "B", side: "after" }));
+    assert.deepEqual(ids(controller), ["A", "B", "C"]);
+    assert(drop("B", { targetId: "A", side: "before" }));
+    assert.deepEqual(ids(controller), ["B", "A", "C"]);
+    assert(drop("B"));
+    assert.deepEqual(ids(controller), ["A", "C", "B"]);
+    await controller.flush();
+    const writesBeforeNoop = calls.filter((call) => call.op !== "read").length;
+    assert(drop("B"));
+    assert(drop("C", { targetId: "C", side: "before" }));
+    assert(drop("A", { targetId: "C", side: "before" }));
+    await controller.flush();
+    assert.equal(calls.filter((call) => call.op !== "read").length, writesBeforeNoop);
+    assert.throws(() => drop("A", { targetId: "D", side: "before" }), /insertion target/);
+    for (const task of controller.getSnapshot().planner.tasks) {
+      const { weeklyPosition, ...metadata } = task.metadata;
+      assert.deepEqual(plain({ ...task, metadata }), original.find((item) => item.id === task.id));
+      if (["A", "B", "C"].includes(task.id)) assert(Number.isSafeInteger(weeklyPosition));
+    }
+    assert.deepEqual(tables.planner_tasks, tasksBefore, "Curated queue must be unchanged");
+    assert.deepEqual(tables.projects_home, projectsBefore);
+    assert.deepEqual(tables.planner_weekly_tasks.filter((row) => ["D", "E"].includes(row.id)), otherBefore);
+    assert(calls.slice(start).filter((call) => call.op !== "read").every((call) =>
+      call.table === "planner_weekly_tasks" && call.op === "update" && !call.payload.deleted
+      && !call.payload.deleted_instance));
+    assert.equal(tables.planner_weekly_tasks.length, 6);
+    reload = createPlannerController();
+    await reload.actions.initialize();
+    assert.deepEqual(ids(reload), ["A", "C", "B"]);
+    assert(reload.actions.moveTaskToDate("C", parseDateKey("2026-10-20")));
+    assert.deepEqual(ids(reload, "2026-10-20"), ["D", "E", "C"], "Move Task appends");
+    assert(reload.actions.dropOnSlot({ kind: "weekly-move", taskId: "A" }, "tue", "2026-10-20", "morning",
+      { targetId: "E", side: "before" }));
+    assert.deepEqual(ids(reload, "2026-10-20"), ["D", "A", "E", "C"]);
+    assert(reload.actions.dropOnSlot({ kind: "weekly-move", taskId: "B" }, "tue", "2026-10-20", "morning"));
+    assert.deepEqual(ids(reload, "2026-10-20"), ["D", "A", "E", "C", "B"]);
+    reload.actions.updateTaskTitle("A", "Edited after reorder");
+    await reload.flush();
+    await storage.updateProject({ id: p1, projectId: p1, source: "home", title: "Project still editable" });
+    assert.equal(tables.projects_home[0].title, "Project still editable");
+    assert.equal(tables.planner_weekly_tasks.find((row) => row.id === "A").title, "Edited after reorder");
+    reload.destroy();
+    reload = createPlannerController();
+    await reload.actions.initialize();
+    assert.deepEqual(ids(reload, "2026-10-20"), ["D", "A", "E", "C", "B"]);
+    assert.deepEqual(ids(reload), []);
+  } finally { controller.destroy(); reload?.destroy(); }
+});
+
 test("loads all imported rows, excludes settings as a task, and never writes on read", async () => {
   const rows = Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, title: "Idea" }));
   const { data, calls } = fixture({ planner_parking_lot: rows });
@@ -612,6 +796,346 @@ test("loads all imported rows, excludes settings as a task, and never writes on 
   assert.equal(state.weekStartDate, "2026-10-19");
   assert.equal(state.parkingItems.length, 7);
   assert(calls.every((call) => call.op === "read"));
+});
+
+function incidentFixtureRows() {
+  return [
+    { id: "week-settings", metadata_json: { weekStartDate: "2026-10-26" } },
+    ...[["app", 11, 3], ["drone", 12, 2], ["estate", 3, 0], ["vinyl", 1, 0]].map(([name, count, checked], index) => ({
+      id: name, project_id: index ? `project-${name}` : p1, source: "home", task_type: "curated",
+      date: index < 2 ? "2026-10-26" : "2026-11-02", occurrence_date: "2026-10-26",
+      time_slot: "morning", bucket: "morning", title: name, completed: false,
+      deleted: false, deleted_instance: false, overridden: false, checklist_open: true,
+      metadata_json: { sourceTaskId: index ? `master-${name}` : t1, preserve: name },
+      reminder_json: { active: false, note: "preserve" }, updated_at: "2026-10-26T16:00:00",
+      checklist_json: Array.from({ length: count }, (_, i) => ({ id: `${name}-${i}`, text: `${name} item ${i}`, completed: i < checked })),
+    })),
+  ];
+}
+
+test("partial/current-week, empty and stale snapshots never tombstone omitted incident rows", async () => {
+  const { storage, tables, calls } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const loaded = await storage.loadPlannerState();
+  const before = clone(tables.planner_weekly_tasks);
+  await storage.saveWeeklyPlannerState({ weekStartDate: loaded.weekStartDate,
+    tasks: loaded.weeklyTasks.filter((row) => row.id === "app") });
+  await storage.saveWeeklyPlannerState({ weekStartDate: "2026-11-02", tasks: [] });
+  await storage.saveWeeklyPlannerState({ weekStartDate: "2026-10-26", tasks: [] });
+  assert.deepEqual(tables.planner_weekly_tasks.filter((row) => row.id !== "week-settings"), before.slice(1));
+  assert(calls.filter((call) => call.op !== "read").every((call) => call.filter[1] === "week-settings"));
+});
+
+test("explicit deletion requires exact IDs and leaves other checklist rows unchanged", async () => {
+  const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const loaded = await storage.loadPlannerState();
+  const before = clone(tables.planner_weekly_tasks);
+  await assert.rejects(storage.saveWeeklyPlannerState({ weekStartDate: loaded.weekStartDate,
+    tasks: [{ ...loaded.weeklyTasks[0], deletedInstance: true }] }), /explicit deletion intent/);
+  await storage.saveWeeklyPlannerState({ weekStartDate: loaded.weekStartDate, tasks: [] },
+    { deletedTaskIds: ["app"] });
+  assert.deepEqual(tables.planner_weekly_tasks.find((row) => row.id === "app"),
+    { ...before[1], deleted: true, deleted_instance: true,
+      updated_at: tables.planner_weekly_tasks.find((row) => row.id === "app").updated_at });
+  assert.deepEqual(tables.planner_weekly_tasks.slice(2), before.slice(2));
+});
+
+test("stale edits and deletions fail before overwriting a newer checklist", async () => {
+  for (const deleting of [false, true]) {
+    const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+    const state = await storage.loadPlannerState();
+    const app = tables.planner_weekly_tasks.find((row) => row.id === "app");
+    app.checklist_json.push({ id: "newer", text: "Another session", completed: true });
+    app.updated_at = "2026-10-26T17:00:00";
+    const before = clone(app);
+    await assert.rejects(storage.saveWeeklyPlannerState({
+      weekStartDate: state.weekStartDate, tasks: deleting ? [] : [{ ...state.weeklyTasks[0], title: "stale edit" }],
+    }, { deletedTaskIds: deleting ? ["app"] : [] }), /changed.*another session|changed or is missing/);
+    assert.deepEqual(app, before);
+  }
+});
+
+test("conditional row updates reject a race after read and retain the winning write", async () => {
+  const { data, client, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const state = await data.loadPlannerState();
+  client.beforeUpdate = () => {
+    const app = tables.planner_weekly_tasks.find((row) => row.id === "app");
+    app.title = "Winning concurrent edit";
+    app.updated_at = "2026-10-26T18:00:00";
+  };
+  await assert.rejects(data.savePlannerState({ weeklyTasks: [{ ...state.weeklyTasks[0], title: "losing edit" }] }), /Expected one row/);
+  assert.equal(tables.planner_weekly_tasks.find((row) => row.id === "app").title, "Winning concurrent edit");
+});
+
+test("a newer write immediately after save is not adopted as an unseen client baseline", async () => {
+  const { storage, tables, client } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const state = await storage.loadPlannerState();
+  client.afterWrite = () => Object.assign(tables.planner_weekly_tasks[1], {
+    updated_at: "2099-10-26T20:00:00",
+    checklist_json: [{ id: "other-client", text: "Newer definition", completed: true }],
+  });
+  await assert.rejects(storage.saveWeeklyPlannerState({ weekStartDate: state.weekStartDate,
+    tasks: [{ ...state.weeklyTasks[0], title: "My title edit" }] }), /changed after saving/);
+  await assert.rejects(storage.saveWeeklyPlannerState({ weekStartDate: state.weekStartDate,
+    tasks: [{ ...state.weeklyTasks[0], title: "Another stale edit" }] }), /changed in another session/);
+  assert.equal(tables.planner_weekly_tasks[1].checklist_json[0].id, "other-client");
+});
+
+test("unchanged stale submitted rows cannot overwrite concurrent changes during another edit", async () => {
+  const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const state = await storage.loadPlannerState();
+  await storage.saveWeeklyPlannerState({ weekStartDate: state.weekStartDate, tasks: state.weeklyTasks });
+  const drone = tables.planner_weekly_tasks.find((row) => row.id === "drone");
+  drone.title = "Newer remote title";
+  drone.updated_at = "2026-10-26T18:00:00";
+  const before = clone(drone);
+  state.weeklyTasks[0].title = "Only App edited";
+  await storage.saveWeeklyPlannerState({ weekStartDate: state.weekStartDate, tasks: state.weeklyTasks });
+  assert.deepEqual(drone, before);
+});
+
+function incidentController(storage) {
+  const { createPlannerController } = exportsFrom("src/services/plannerService.js", ["createPlannerController"], {
+    plannerStorage: storage, window: { location: { hash: "#planner" } },
+    fetch: async () => { throw new Error("External network is forbidden"); },
+    setTimeout, clearTimeout, URL, Date,
+  });
+  return createPlannerController();
+}
+
+test("Project restaging is same-ID continuation across weeks with checklist progress and metadata intact", async () => {
+  const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const controller = incidentController(storage);
+  try {
+    await controller.actions.initialize();
+    const before = clone(tables.planner_weekly_tasks.find((row) => row.id === "app"));
+    controller.actions.shiftPlannerWeek(7);
+    controller.actions.assignTask(t1, "tue", "afternoon");
+    await controller.flush();
+    const after = tables.planner_weekly_tasks.find((row) => row.id === "app");
+    assert.equal(after.date, "2026-11-03");
+    assert.deepEqual(after.checklist_json, before.checklist_json);
+    assert.deepEqual(after.reminder_json, before.reminder_json);
+    assert.equal(after.metadata_json.preserve, "app");
+    assert.equal(after.metadata_json.sourceTaskId, t1);
+    assert.equal(tables.planner_weekly_tasks.length, 5);
+  } finally { controller.destroy(); }
+});
+
+test("explicit template approval persists definition only; fresh work resets completion without altering history", async () => {
+  const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const controller = incidentController(storage);
+  try {
+    await controller.actions.initialize();
+    const old = clone(tables.planner_weekly_tasks.find((row) => row.id === "app"));
+    await controller.actions.saveChecklistTemplate("app");
+    const template = tables.planner_tasks[0].metadata_json.checklistTemplate;
+    assert.deepEqual(template, { version: 1, items: old.checklist_json.map(({ id, text }) => ({ id, text })) });
+    controller.actions.assignTask(t1, "tue", "evening", { fresh: true });
+    await controller.flush();
+    const fresh = tables.planner_weekly_tasks.find((row) => row.id !== "app" && row.metadata_json?.sourceTaskId === t1);
+    assert(fresh);
+    assert.equal(fresh.checklist_json.length, 11);
+    assert(fresh.checklist_json.every((item) => item.completed === false));
+    assert.deepEqual(fresh.checklist_json.map(({ id, text }) => ({ id, text })), template.items);
+    assert.deepEqual(tables.planner_weekly_tasks.find((row) => row.id === "app"), old);
+    assert.throws(() => controller.actions.assignTask(t1, "wed", "morning"), /multiple unfinished/);
+  } finally { controller.destroy(); }
+});
+
+test("historical/tombstoned checklist without approved template fails closed, never selects by title or recency", async () => {
+  const rows = incidentFixtureRows();
+  rows[1].deleted = true;
+  rows[1].deleted_instance = true;
+  const { storage, tables, calls } = fixture({ planner_weekly_tasks: rows });
+  const controller = incidentController(storage);
+  try {
+    await controller.actions.initialize();
+    const before = clone(tables.planner_weekly_tasks);
+    const start = calls.length;
+    assert.throws(() => controller.actions.assignTask(t1, "tue", "morning"), /no approved checklist template/);
+    assert.throws(() => controller.actions.assignTask(t1, "tue", "morning", { fresh: true }), /no approved checklist template/);
+    assert.deepEqual(tables.planner_weekly_tasks, before);
+    assert(calls.slice(start).every((call) => call.op === "read"));
+  } finally { controller.destroy(); }
+});
+
+test("same-date continuation never replaces an edited nonempty destination checklist", async () => {
+  const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const controller = incidentController(storage);
+  try {
+    await controller.actions.initialize();
+    const before = clone(tables.planner_weekly_tasks.find((row) => row.id === "app").checklist_json);
+    controller.actions.assignTask(t1, "mon", "evening");
+    await controller.flush();
+    assert.deepEqual(tables.planner_weekly_tasks.find((row) => row.id === "app").checklist_json, before);
+    assert.equal(tables.planner_weekly_tasks.length, 5);
+  } finally { controller.destroy(); }
+});
+
+test("weekly deletion actions persist exact occurrence and entire-series intent without touching other series", async () => {
+  for (const entire of [false, true]) {
+    const rows = [
+      { id: "week-settings", metadata_json: { weekStartDate: "2026-10-26" } },
+      ...["one", "two", "other"].map((id) => ({
+        id, title: id, project_id: id === "other" ? "other-project" : p1,
+        parent_rep: id === "other" ? "other-project" : p1,
+        occurrence_date: id === "two" ? "2026-11-02" : "2026-10-26",
+        date: id === "two" ? "2026-11-02" : "2026-10-26",
+        task_type: "repeatable", source: "repeating", time_slot: "morning",
+        deleted: false, deleted_instance: false, metadata_json: {},
+        checklist_json: [{ id: "retain", text: "Retain history", completed: true }],
+      })),
+    ];
+    const { storage, tables } = fixture({
+      projects_all: [{ id: p1, external_id: "PC0001", project_type: "repeating", title: "Series",
+        recurrence: "weekly", state: "In Progress" }],
+      projects_repeating: [{ id: p1, external_id: "PC0001", title: "Series",
+        recurrence: "weekly", state: "In Progress" }],
+      planner_tasks: [{ id: t1, project_id: p1, source: "repeating", title: "Series", recurrence: "weekly",
+        start_date: "2026-10-26", metadata_json: { series: { active: true, recurrence: "weekly",
+          baseDay: "Monday", startDate: "2026-10-26", originalStartDate: "2026-10-26", baseBucket: "Morning" } } }],
+      planner_weekly_tasks: rows,
+    });
+    const controller = incidentController(storage);
+    try {
+      await controller.actions.initialize();
+      const before = clone(tables.planner_weekly_tasks.find((row) => row.id === "other"));
+      if (entire) controller.actions.deleteSeries("one");
+      else controller.actions.removeTask("one");
+      await controller.flush();
+      assert.equal(tables.planner_weekly_tasks.find((row) => row.id === "one").deleted_instance, true);
+      assert.equal(tables.planner_weekly_tasks.find((row) => row.id === "one").deleted, true);
+      assert.equal(tables.planner_weekly_tasks.find((row) => row.id === "two").deleted_instance, entire);
+      assert.deepEqual(tables.planner_weekly_tasks.find((row) => row.id === "other"), before);
+      assert(tables.planner_weekly_tasks.find((row) => row.id === "one").checklist_json[0].completed);
+    } finally { controller.destroy(); }
+  }
+});
+
+test("newly concurrent Project occurrences and reloaded stale client revisions fail closed", async () => {
+  const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const state = await storage.loadPlannerState();
+  tables.planner_weekly_tasks.push({ ...clone(tables.planner_weekly_tasks[1]), id: "concurrent-app" });
+  await assert.rejects(storage.saveWeeklyPlannerState({ weekStartDate: state.weekStartDate,
+    tasks: [{ ...state.weeklyTasks[0], date: "2026-10-27" }] }), /occurrences.*changed/);
+  tables.planner_weekly_tasks.pop();
+  tables.planner_weekly_tasks[1].updated_at = "2026-10-26T19:00:00";
+  await storage.loadPlannerState();
+  await assert.rejects(storage.saveWeeklyPlannerState({ weekStartDate: state.weekStartDate,
+    tasks: [{ ...state.weeklyTasks[0], date: "2026-10-27" }] }), /older revision/);
+});
+
+test("all recurrence edit scopes persist explicit removals while preserving exceptions and other projects", async () => {
+  for (const scope of ["future", "this-future", "entire"]) {
+    const row = { id: `repeatable-${p1}-2026-10-26`, project_id: p1, parent_rep: p1,
+      title: "Series", source: "repeating", task_type: "repeatable", occurrence_date: "2026-10-26",
+      date: "2026-10-26", time_slot: "morning", metadata_json: {}, checklist_json: [],
+      deleted: false, deleted_instance: false, updated_at: "2026-10-26T11:00:00" };
+    const { storage, tables } = fixture({
+      projects_all: [{ id: p1, external_id: "PC0001", project_type: "repeating", title: "Series",
+        recurrence: "weekly", state: "In Progress" }],
+      projects_repeating: [{ id: p1, external_id: "PC0001", title: "Series", recurrence: "weekly", state: "In Progress" }],
+      planner_tasks: [{ id: t1, project_id: p1, source: "repeating", title: "Series", recurrence: "weekly",
+        metadata_json: { series: { active: true, recurrence: "weekly", baseDay: "Monday",
+          startDate: "2026-10-26", originalStartDate: "2026-10-26", baseBucket: "Morning" } } }],
+      planner_weekly_tasks: [
+        { id: "week-settings", metadata_json: { weekStartDate: "2026-10-26" } }, row,
+        { ...row, id: "exception", overridden: true, occurrence_date: "2026-10-19", date: "2026-10-27" },
+        { ...row, id: "unrelated-series", project_id: "unrelated", parent_rep: "unrelated" },
+      ],
+    });
+    const controller = incidentController(storage);
+    try {
+      await controller.actions.initialize();
+      const exception = clone(tables.planner_weekly_tasks.find((item) => item.id === "exception"));
+      const unrelated = clone(tables.planner_weekly_tasks.find((item) => item.id === "unrelated-series"));
+      controller.actions.saveSeries(row.id, { recurrence: "weekly", baseDay: "Monday",
+        baseBucket: "Evening", applyScope: scope });
+      await controller.flush();
+      assert.deepEqual(tables.planner_weekly_tasks.find((item) => item.id === "exception"), exception);
+      assert.deepEqual(tables.planner_weekly_tasks.find((item) => item.id === "unrelated-series"), unrelated);
+      assert.equal(tables.planner_weekly_tasks.find((item) => item.id === row.id).time_slot, scope === "future" ? "morning" : "evening");
+    } finally { controller.destroy(); }
+  }
+});
+
+test("approved templates hydrate on reload and explicit fresh creation cannot overwrite a same-day occurrence", async () => {
+  const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const controller = incidentController(storage);
+  let reload;
+  try {
+    await controller.actions.initialize();
+    await controller.actions.saveChecklistTemplate("app");
+    reload = incidentController(storage);
+    await reload.actions.initialize();
+    assert.equal(reload.getSnapshot().curatedTasks[0].checklistTemplate.length, 11);
+    const before = clone(tables.planner_weekly_tasks);
+    assert.throws(() => reload.actions.assignTask(t1, "mon", "evening", { fresh: true }), /already has a task on that date/);
+    assert.deepEqual(tables.planner_weekly_tasks, before);
+    reload.actions.assignTask(t1, "tue", "morning", { fresh: true });
+    await reload.flush();
+    assert.equal(tables.planner_weekly_tasks.length, before.length + 1);
+  } finally { controller.destroy(); reload?.destroy(); }
+});
+
+test("master checklist definitions are typed, ordered and cannot contain occurrence completion state", () => {
+  const { readProjectChecklistTemplate } = exportsFrom("src/services/plannerService.js", ["readProjectChecklistTemplate"]);
+  const read = (template) => readProjectChecklistTemplate({ metadataJson: JSON.stringify({ checklistTemplate: template }) });
+  assert.equal(readProjectChecklistTemplate({ metadataJson: "{}" }), null);
+  assert.deepEqual(clone(read({ version: 1, items: [{ id: "second", text: "Second" }, { id: "first", text: "First" }] })),
+    [{ id: "second", text: "Second", completed: false }, { id: "first", text: "First", completed: false }]);
+  for (const template of [
+    { version: 2, items: [] }, { version: 1, items: null },
+    { version: 1, items: [{ id: "", text: "Invalid" }] },
+    { version: 1, items: [{ id: "a", text: "A" }, { id: "a", text: "Duplicate" }] },
+    { version: 1, items: [{ id: "a", text: "A", completed: true }] },
+  ]) assert.throws(() => read(template), /checklist template/i);
+});
+
+test("conflicting explicit Project identities fail closed instead of moving or borrowing a checklist", async () => {
+  const rows = incidentFixtureRows();
+  rows[1].metadata_json.sourceTaskId = "different-master";
+  const { storage, calls } = fixture({ planner_weekly_tasks: rows });
+  const controller = incidentController(storage);
+  try {
+    await controller.actions.initialize();
+    assert.throws(() => controller.actions.assignTask(t1, "tue", "morning"), /ownership conflicts/);
+    assert.equal(calls.filter((call) => call.op !== "read").length, 0);
+  } finally { controller.destroy(); }
+});
+
+test("week navigation detects concurrent settings changes, including rows with null revisions", async () => {
+  const { storage, client, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
+  const state = await storage.loadPlannerState();
+  tables.planner_weekly_tasks[0].updated_at = null;
+  client.beforeUpdate = (table) => {
+    assert.equal(table, "planner_weekly_tasks");
+    Object.assign(tables.planner_weekly_tasks[0], {
+      metadata_json: { weekStartDate: "2026-10-19" }, updated_at: "2026-10-26T20:00:00",
+    });
+  };
+  await assert.rejects(storage.saveWeeklyPlannerState({ weekStartDate: "2026-11-02", tasks: state.weeklyTasks }), /Expected one row/);
+  assert.equal(tables.planner_weekly_tasks[0].metadata_json.weekStartDate, "2026-10-19");
+});
+
+test("same titles never supply Project lineage or choose historical checklist state", async () => {
+  const rows = incidentFixtureRows();
+  rows[1].metadata_json = {};
+  rows[1].project_id = "different-project";
+  rows[1].deleted = true;
+  rows[1].deleted_instance = true;
+  const { storage, tables } = fixture({ planner_weekly_tasks: rows });
+  tables.planner_tasks[0].title = "app";
+  const controller = incidentController(storage);
+  try {
+    await controller.actions.initialize();
+    controller.actions.assignTask(t1, "tue", "morning");
+    await controller.flush();
+    const created = tables.planner_weekly_tasks.find((row) => row.metadata_json?.sourceTaskId === t1);
+    assert(created);
+    assert.deepEqual(created.checklist_json, []);
+    assert.equal(tables.planner_weekly_tasks.find((row) => row.id === "app").checklist_json.length, 11);
+  } finally { controller.destroy(); }
 });
 
 test("saves existing weekly rows and settings with exact snake_case fields and preserved metadata", async () => {

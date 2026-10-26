@@ -78,8 +78,28 @@ export function DaySlot({ day, date, slot, label, tasks }) {
       }}>
       <h4 className={styles["day-slot-label"]}>{label}</h4>
       <div className={styles["slot-task-list"]}>
-        {tasks.length ? tasks.map((task) => <WeeklyTaskCard key={task.id} task={task} day={day} slot={slot} />)
+        {tasks.length ? tasks.map((task) => <div key={task.id}
+          className={`${styles["weekly-insertion-target"]} ${drag.dropTarget === `${target}:before:${task.id}` ? styles["insert-before"] : ""} ${drag.dropTarget === `${target}:after:${task.id}` ? styles["insert-after"] : ""}`}
+          onDragOver={(event) => {
+            if (drag.drag?.kind !== "weekly-move") return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            const side = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+            drag.target(event, `${target}:${side}:${task.id}`);
+          }} onDrop={(event) => {
+            if (drag.drag?.kind !== "weekly-move") return;
+            event.preventDefault();
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            const side = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+            try { actions.dropOnSlot(drag.drag, day, date, slot, { targetId: task.id, side }); }
+            finally { drag.end(); }
+          }}>
+          <WeeklyTaskCard task={task} day={day} slot={slot} />
+        </div>)
           : <div className={styles["slot-empty"]}>No tasks assigned</div>}
+        {drag.drag?.kind === "weekly-move" && <div
+          className={`${styles["weekly-end-target"]} ${drag.dropTarget === target ? styles["insert-before"] : ""}`}
+          aria-hidden="true">Drop at end</div>}
       </div>
     </section>
   );

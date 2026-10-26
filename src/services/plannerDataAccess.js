@@ -152,6 +152,10 @@ export function createPlannerDataAccess(supabase) {
         const requested = text(item.id || item.taskId);
         if (insertOnly && !requested) throw new Error(`Backup ${table} rows require stable IDs.`);
         const old = existing.find((row) => row.id === requested);
+        if (!insertOnly && table !== "planner_parking_lot" && old && Object.hasOwn(item, "updatedAt")
+          && item.updatedAt !== old.updated_at) {
+          throw new Error(`${table} row ${requested} changed. Reload before saving.`);
+        }
         if (requested === "week-settings") throw new Error("Use weekStartDate to update week settings.");
         if (requested && !old && !generateId && !insertOnly) {
           throw new Error(`Cannot update missing ${table} row ${requested}. Refresh and retry.`);
@@ -165,12 +169,22 @@ export function createPlannerDataAccess(supabase) {
         const rowChanges = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
           value !== undefined && (!old || JSON.stringify(insertOnly ? sortedJson(value) : value)
             !== JSON.stringify(insertOnly ? sortedJson(baseline[key]) : baseline[key]))));
+        if (!insertOnly && table === "planner_weekly_tasks"
+          && (next.deleted === true || next.deleted_instance === true)
+          && old?.deleted !== true && old?.deleted_instance !== true
+          && !changes.deletedWeeklyTaskIds?.includes(id)) {
+          throw new Error(`Deleting Planner task ${id} requires explicit deletion intent.`);
+        }
         if (insertOnly && old && Object.keys(rowChanges).length) {
           throw new Error(`Backup conflict in ${table} row ${id}. Existing rows were not overwritten.`);
         }
+        const oldTime = old?.updated_at ? Date.parse(
+          /Z$|[+-]\d\d:\d\d$/.test(old.updated_at) ? old.updated_at : `${old.updated_at}Z`) : NaN;
+        const updatedAt = Number.isFinite(oldTime) && oldTime >= Date.parse(now)
+          ? new Date(oldTime + 1).toISOString() : now;
         plans.push({ table, id, old,
           unchanged: Boolean(old) && !Object.keys(rowChanges).length,
-          row: { ...rowChanges, updated_at: now } });
+          row: { ...rowChanges, updated_at: updatedAt } });
       }
     }
     await plan("planner_tasks", changes.tasks, (item, old) => ({
@@ -224,6 +238,10 @@ export function createPlannerDataAccess(supabase) {
       const existing = await rows("planner_weekly_tasks");
       const old = existing.find((row) => row.id === "week-settings");
       if (!old) throw new Error('The existing "week-settings" row is missing. No settings row was inserted.');
+      if (Object.hasOwn(changes, "expectedWeekStartDate")
+        && json(old.metadata_json, {}, "week settings").weekStartDate !== changes.expectedWeekStartDate) {
+        throw new Error("Planner week changed in another session. Reload before navigating.");
+      }
       if (insertOnly) {
         if (json(old.metadata_json, {}, "week settings").weekStartDate !== changes.weekStartDate) {
           throw new Error("Backup week settings conflict. Merge restore cannot change the current planning week.");
@@ -244,6 +262,8 @@ export function createPlannerDataAccess(supabase) {
       }
       let query = supabase.from(table);
       query = old ? query.update(row).eq("id", id) : query.insert({ ...row, ...(id ? { id } : {}) });
+      if (old) query = old.updated_at == null
+        ? query.is("updated_at", null) : query.eq("updated_at", old.updated_at);
       try {
         const { data, error } = await query.select("*").single();
         check(error, `Saving ${table} ${id}`);
