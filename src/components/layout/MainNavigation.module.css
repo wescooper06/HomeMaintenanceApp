@@ -1,20 +1,43 @@
+.frame {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 16px 16px 0;
+}
+
 .hm-nav {
+  box-sizing: border-box;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
+  justify-content: flex-start;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  margin-top: 12px;
+  font: 400 16px "Segoe UI", Tahoma, sans-serif;
+  line-height: normal;
+  letter-spacing: normal;
+  text-align: left;
+  color-scheme: light;
+  font-synthesis: auto;
+  text-rendering: auto;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
 }
 
 .hm-nav a {
   text-decoration: none;
-  color: var(--primary, #245b4c);
-  border: 1px solid var(--primary, #245b4c);
+  box-sizing: border-box;
+  color: #0f766e;
+  border: 1px solid #0f766e;
   border-radius: 999px;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.9rem;
+  padding: 5.6px 12px;
+  font: 400 14.4px "Segoe UI", Tahoma, sans-serif;
+  line-height: normal;
+  letter-spacing: normal;
 }
 
 .hm-nav a.active {
-  background: var(--primary, #245b4c);
+  background: #0f766e;
   color: #ffffff;
 }

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import { createTrip } from "../../services/tripsService.js";
 
 export default function NewTrip() {
@@ -107,7 +108,7 @@ export default function NewTrip() {
         </form>
       </div>
 
-      <button disabled={saving} className="button-secondary" onClick={() => navigate("/")}>
+      <button disabled={saving} className="button-secondary" onClick={() => navigate(TRIPS_HOME_ROUTE)}>
         Cancel
       </button>
     </div>

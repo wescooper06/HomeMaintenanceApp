@@ -68,7 +68,7 @@ Apps Script triggers before deleting the isolated implementations.
 
 | Consumer | Replacement / changed import |
 | --- | --- |
-| React Planner page | Mounts `PlannerBackupPanel.jsx`; the panel imports `plannerBackupService.js` and coordinates with the Planner controller |
+| React Planner page (historical) | At that time mounted `PlannerBackupPanel.jsx`; that unused panel was retired during final housekeeping. Current backup service/controller behavior remains. |
 | Planner backup service | Imports `plannerSupabaseStorage.js`; export/preview read Supabase; restore uses a separate insert-only data-access path |
 | Planner controller | Imports `calendarReminders` from `calendarReminderService.js`; old Apps Script fetch/config/phone/gateway handling removed |
 | React reminder dialog | Explicit Connect Google Calendar action, notification controls, SMS-retirement warning and imported-reminder review notice |
@@ -80,8 +80,8 @@ Apps Script triggers before deleting the isolated implementations.
 The unused `src/services/googleSheetsClient.js` had no importers and was
 deleted. All 29 files isolated under `www/legacy/` remain: their protected
 consumers are still active. No protected screen or generated asset was deleted.
-The exact retained inventory and dependency map are in
-[`www/legacy/README.md`](../www/legacy/README.md).
+The then-retained inventory and dependency map were in
+`www/legacy/README.md` (subsequently retired; not a current runtime path).
 
 ## Backup behavior and boundaries
 
@@ -195,3 +195,8 @@ Backup JSON is user data, not a deletion candidate.
 `www/index.html`, `www/js/router.js`, protected screen templates and existing
 React/Android output are preserved. A later deployment/cutover must be explicitly
 verified before deleting their legacy implementations.
+# Historical archive notice
+
+This Phase 4 document is non-runtime migration history. It is not permission to
+execute old commands or restore historical data. See [current architecture](architecture.md)
+and the [canonical SQL index](../supabase/review/README.md).

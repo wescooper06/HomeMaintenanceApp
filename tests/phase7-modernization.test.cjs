@@ -18,7 +18,11 @@ test("retired runtime modules, protected templates, backend and public backup ar
     "www/js/migration", "www/mobile/mobile.js", "www/mobile/mobile.css", "www/mobile/screens",
     "www/mobile/settings.html", "www/localStorage_backup_2026-08-13.json", "google-apps-script",
     "scripts/reconcile-legacy-backup.cjs", "scripts/sync-auth.js", "auth.js",
-    "src/services/plannerLegacyBackup.js", "src/pages/Workbench/components/AgentCommandBar.jsx"]) {
+    "src/services/plannerLegacyBackup.js", "src/pages/Workbench/components/AgentCommandBar.jsx",
+    "src/components/layout/AppLayout.jsx", "src/components/layout/NavBar.jsx",
+    "src/pages/Trips/components/ExpandedTripModal.jsx", "src/pages/Trips/TripsPage.jsx",
+    "src/pages/Planner/components/PlannerBackupPanel.jsx",
+    "src/pages/Planner/components/PlannerBackupPanel.module.css"]) {
     assert.equal(fs.existsSync(path.join(root, ...file.split("/"))), false, file);
   }
   assert(fs.existsSync(path.join(root, "spec", "historical", "localStorage_backup_2026-08-13.json")));

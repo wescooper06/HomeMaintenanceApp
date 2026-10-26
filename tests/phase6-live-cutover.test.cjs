@@ -35,6 +35,31 @@ test("modern routes support parking and shell basenames including www hosting an
   assert.equal(api.resolveLifeManagerRoute({ pathname: "/", hash: "#parking" }), "planner");
 });
 
+test("static launchers and Capacitor share the React Planner default without an injected dashboard redirect", () => {
+  const api = vm.runInNewContext(`(() => {
+    ${read("src/router/lifeManagerRoutes.js").replace(/^export /gm, "")}
+    return { lifeManagerBasename, resolveLifeManagerRoute };
+  })()`);
+  for (const prefix of ["", "/www"]) {
+    let target;
+    vm.runInNewContext(read("www/js/modern-entry.js"), {
+      URL, document: { currentScript: { src: `https://fixture.invalid${prefix}/js/modern-entry.js` } },
+      window: { location: { hash: "", search: "?fixture=1", replace: (url) => { target = new URL(url); } } },
+    });
+    assert.equal(target.hash, "");
+    assert.equal(target.search, "?fixture=1");
+    const basename = api.lifeManagerBasename(target.pathname);
+    assert.equal(api.resolveLifeManagerRoute({
+      pathname: target.pathname.slice(basename.length), hash: target.hash,
+    }), "planner");
+  }
+  const capacitor = JSON.parse(read("capacitor.config.json"));
+  assert.equal(capacitor.webDir, "dist/trips");
+  assert.equal(api.resolveLifeManagerRoute({ pathname: "/", hash: "" }), "planner");
+  assert.equal(api.resolveLifeManagerRoute({ pathname: "/planner", hash: "" }), "planner");
+  assert.match(read("src/router/LifeManagerRouter.jsx"), /route !== "trips".*<MainApplication route=\{route\}/);
+});
+
 test("production singleton rejects historical envelopes before conversion, target queries or storage reads/writes", async () => {
   const source = read("src/services/plannerBackupService.js").replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
   const forbidden = () => { throw new Error("No conversion, reads, retries or writes allowed"); };

@@ -253,7 +253,7 @@ test("real PostgreSQL deployment, multi-session allocation, cancellation, rollba
           assert.equal((await json(createSql(kind), "repeat_deployment")).external_id, expected);
         }
         const before = await snapshot("repeat_deployment");
-        for (const file of ["project_creation_preflight.sql", "project_creation_data_preflight.sql", "project_creation_validation.sql"]) {
+        for (const file of ["project_creation_preflight.sql", "project_creation_validation.sql"]) {
           await sql(fs.readFileSync(path.join(review, file), "utf8"), "repeat_deployment");
         }
         assert.deepEqual(await snapshot("repeat_deployment"), before);

@@ -117,3 +117,7 @@ The browser was navigated away and the temporary server stopped after validation
   remains deferred.
 - Historical failed imports remain documented in the
   [execution report](phase6-cutover-execution.md); they are not retried.
+# Historical archive notice
+
+This records earlier build/installation evidence, not the latest verification
+or current device state. See the [final health report](final-modernization-health.md).

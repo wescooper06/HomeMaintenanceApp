@@ -3,30 +3,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
+const { schema } = require("./fixtures/workbench-live-schema.cjs");
+
 const root = path.resolve(__dirname, "..");
 const review = path.join(root, "supabase", "review");
 const migration = fs.readFileSync(path.join(review, "202610250001_project_creation.sql"), "utf8");
-const columnsCsv = fs.readFileSync(path.join(review, "inspection-results",
-  "supabasereviewinspection_queries02_columns.sql.csv"), "utf8").trim().split(/\r?\n/);
-const columns = columnsCsv.slice(1).map((line) => {
-  const fields = line.split(",");
-  assert.equal(fields.length, 11, "Column export format changed; use a CSV parser before comparing.");
-  return { table: fields[0], name: fields[2] };
-});
 
 test("reviewed RPC insert allowlists use only actual live columns for every type", () => {
   const names = (text) => [...text.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
   const common = names(migration.match(/allowed := array\[([\s\S]*?)\]\s*\|\| case p_type/)[1]);
   for (const kind of ["home", "vehicle", "repeating", "misc"]) {
     const fields = names(migration.match(new RegExp(`when '${kind}' then array\\[([\\s\\S]*?)\\]`))[1]);
-    const actual = new Set(columns.filter((column) => column.table === `projects_${kind}`).map((column) => column.name));
+    const table = schema.match(new RegExp(`create table public\\.projects_${kind} \\(([\\s\\S]*?)\\);`))[1];
+    const actual = new Set([...table.matchAll(/(?:^|\n)"([^"]+)" /g)].map((match) => match[1]));
     for (const field of ["id", "external_id", ...common, ...fields]) {
       assert(actual.has(field), `${kind}.${field} is not in the live schema`);
     }
   }
 });
 
-test("review proposal preserves invoker execution, atomic sequences and unified-view order bounds", () => {
+test("canonical creation SQL preserves invoker execution, atomic sequences and unified-view order bounds", () => {
   assert.match(migration, /NOT EXECUTED/);
   assert.match(migration, /security invoker/i);
   assert.doesNotMatch(migration, /security definer/i);

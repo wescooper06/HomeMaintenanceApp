@@ -155,3 +155,9 @@ Final verification:
   Node fixtures, not this browser attempt.
 - Temporary browser test servers were stopped. No generated output was synced,
   and all protected web/mobile implementation files were retained.
+# Historical archive notice
+
+This Phase 3 document records superseded migration work, not the current runtime
+or an execution plan. See [current architecture](architecture.md) and the
+[canonical SQL index](../supabase/review/README.md). Do not execute old commands
+or restore historical data from this document.

@@ -103,3 +103,7 @@ Record authorization, input fingerprints, preview/audit counts, restore outcome
 checks, asset-request findings, rollback references, frozen behavior acceptance
 and remaining work. Never equate owner-assumed targets with verified constraints
 or an offline pass with a successful live import.
+# Historical archive notice
+
+This superseded Phase 6 plan is retained only as documentation. Do not execute
+its old migration/import steps. See [current architecture](architecture.md).

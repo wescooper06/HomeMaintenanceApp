@@ -1,2 +1,0 @@
-Query completed successfully.
-Zero rows returned.

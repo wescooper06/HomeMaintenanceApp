@@ -29,6 +29,27 @@ retired from runtime.
 
 ## Modern behavior finalization
 
+- Root navigation now defaults to the existing modern Planner route for `/`
+  and `/index.html`. Static web/mobile launchers preserve explicit hashes but
+  no longer inject a Dashboard hash, so the React route resolver owns the default.
+  Explicit Trips navigation and its nested routes remain unchanged.
+- Removed the redundant visible Life Manager navigation link; the application
+  shell, title, Planner link and other module navigation remain intact.
+- Trips subpage returns use the semantic `TRIPS_HOME_ROUTE` (`/#trips`), matching
+  shared Trips navigation instead of depending on the Planner root default.
+  Timeline, Prioritize, Trip Details/Workflow and New Trip Cancel share this
+  destination; BrowserRouter retains its hosting/Capacitor basename handling.
+- Shared navigation presentation is isolated in `MainNavigation.module.css`.
+  It explicitly uses the existing main-shell Segoe UI typography and fixed
+  pixel equivalents of its 16px-root dimensions, rather than inheriting Trips'
+  18px root, 145% line-height, letter-spacing or theme variables. Trips content
+  styles remain unchanged; only its navigation has a shared 16px inset frame.
+  Trips/Prioritize/Timeline already use MainNavigation from the router, not a
+  duplicate page navigation. Standalone Activity retains its ordinary-anchor
+  adapter because it links to a separate shell, but shares the same CSS/frame.
+- Capacitor uses the same modern build/default. Run `npm run mobile:sync`
+  before the next Android APK rebuild/install to copy the updated web bundle;
+  no native assets need regeneration for this source change.
 - Planner backup:
   - `src/services/plannerBackupService.js` now permanently rejects legacy/hm_ envelopes.
   - Only versioned modern `homemaintenance-planner` backups are accepted.
@@ -41,22 +62,19 @@ retired from runtime.
   - Removed token-expiration retry/sign-in fallback behavior from data mutations.
   - API failures remain explicit.
 - Workbench:
-  - Removed create/delete agent and UI paths; editing existing projects remains.
-  - Removed legacy/Sheets naming assumptions.
-  - Restored project creation through the modern `/projects/new` route and
-    `ProjectEditor` create mode. The proposed allocator patch now uses the
-    `create_workbench_project` Supabase RPC for the selected project-type table.
-    Delete and Parking project/repeatable conversions remain
-    unauthorized.
+  - Removed legacy/Sheets naming assumptions and obsolete mutation paths.
+  - Restored project creation through `/projects/new` and `ProjectEditor`.
+    The owner reports `create_workbench_project` deployed and working.
+  - Permanent deletion now uses one shared editor/card confirmation and the
+    owner-deployed `delete_workbench_project` modern-only cascade.
+    Parking project/repeatable conversion removal remains unauthorized.
   - PostgreSQL generates a UUID primary key and a separate PA/PB/PC/PD external
-    ID. The temporary UUID-as-external-ID workaround is removed. The proposed
-    SQL has not been applied to Supabase; see the
-    [deployment plan](workbench-project-creation.md) before deploying this patch.
-  - Project Type, not Recurrence, selects the destination table. To create a
-    repeating project, select `repeating` explicitly. The observed Recycle
-    failure had Project Type `home`; the live `projects_repeating` column
-    defaults, constraints, triggers, grants, and RLS policies are not recorded
-    in this workspace and have not been verified by these fixture tests.
+    ID. The temporary UUID-as-external-ID workaround is removed. See the
+    [canonical SQL index](../supabase/review/README.md).
+  - Project Type, not Recurrence, selects the destination table. The explicit
+    repeating checkbox selects `repeating`; its separate recurrence dropdown
+    selects the rule. Schema evidence is distilled into permanent regression
+    fixtures, not a runtime schema fallback.
 - Configuration/auth:
   - Removed committed `trips/.env`.
   - `src/services/googleAuth.js` uses modern local token keys only.
@@ -64,7 +82,7 @@ retired from runtime.
 
 ### Workbench external-ID follow-up review
 
-The saved [project export](../supabase/projects__all_exports.csv) contains 301
+The historical project export (retired during final housekeeping) contained 301
 rows with no blank or duplicate external IDs:
 
 | Type | Rows | Observed format | Exported range |
@@ -78,13 +96,13 @@ Recycle is exported as `PC0003`. The owner subsequently approved ordinary
 creation only: use type-specific sequences above floors 209/82/8/4, never fill
 visible gaps, and do not retain `PC0003` for Recycle. Higher current maxima raise
 those floors. Unknown previously issued/deleted higher numbers are an accepted
-initialization limitation. The [proposed RPC](../supabase/proposals/202610250001_project_creation.sql)
-implements this policy; it has not been executed against Supabase.
+initialization limitation. The [canonical RPC](../supabase/review/202610250001_project_creation.sql)
+implements this policy; the owner subsequently reported it deployed.
 
 Runtime external-ID consumers:
 
 - [Data access](../src/services/plannerDataAccess.js) reads `external_id`,
-  exposes `externalId`, supplies it on creation, and preserves existing IDs
+  exposes `externalId`, retains the server-generated value on creation, and preserves existing IDs
   during updates.
 - [Planner service](../src/services/plannerService.js) carries `externalId` in
   project views and accepts either ID alias for explicit project matching,
@@ -107,7 +125,7 @@ policies, grants, and later live changes cannot be excluded by that saved DDL.
 The screenshot reports a home-table NOT NULL failure, consistent with the
 saved home definition; it does not prove repeating-table schema drift.
 
-Before approving or changing allocation, obtain:
+For any future separately approved allocation/schema change, obtain fresh evidence:
 
 - Current read-only schema output for all four raw tables: every column with
   type/nullability/default/generation, constraints, standalone indexes,
@@ -117,8 +135,8 @@ Before approving or changing allocation, obtain:
   transaction/locking behavior. The proposed allocator must not compete with a
   pre-existing mechanism. Client-side `max + 1` is not race-safe.
 
-No live database schema or data was changed. Policy approval and a local
-reviewable proposal do not authorize deployment.
+No live database schema or data was changed by this audit. The owner-reported
+deployment is recorded separately from historical preparation evidence.
 
 ## Navigation and build
 

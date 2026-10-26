@@ -1,5 +1,9 @@
 # UI Screens
 
+Historical planning inventory, not a current route manifest. Some proposed
+screens were never implemented. See [current architecture](architecture.md)
+and the [final route audit](final-modernization-health.md).
+
 ## Web Screens
 | Screen | Data Needed | Actions |
 |--------|-------------|---------|

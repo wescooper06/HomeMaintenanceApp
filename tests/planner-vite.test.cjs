@@ -92,7 +92,10 @@ test("Life Manager resolves all required hash routes, aliases and existing Trips
   for (const alias of ["activities", "daily-activities", "activity-planner"]) {
     assert.equal(resolveLifeManagerRoute({ pathname: "/", hash: `#${alias}` }), "trips");
   }
-  for (const pathname of ["/", "/index.html", "/prioritize", "/timeline", "/new", "/fixture-trip-id", "/constructor"]) {
+  for (const pathname of ["/", "/index.html"]) {
+    assert.equal(resolveLifeManagerRoute({ pathname, hash: "" }), "planner");
+  }
+  for (const pathname of ["/prioritize", "/timeline", "/new", "/fixture-trip-id", "/constructor"]) {
     assert.equal(resolveLifeManagerRoute({ pathname, hash: "" }), "trips");
   }
 });

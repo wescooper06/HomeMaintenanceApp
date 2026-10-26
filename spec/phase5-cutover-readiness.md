@@ -1,5 +1,8 @@
 # Phase 5 final readiness decision
 
+Historical non-runtime record. Safe-mode/import statements below describe the
+old decision, not current functionality. See [current architecture](architecture.md).
+
 ## Current scope: CUTOVER-READY; live-data-only local cutover completed
 
 The owner's skip-all-legacy directive excludes all backup rows/identities from
@@ -89,14 +92,14 @@ matching week settings. Production restore must continue to surface such errors.
 ## Evidence and next phase
 
 - [Historical reconciliation](phase5-backup-reconciliation.md) and
-  [73-row source classifications](phase5-backup-reconciliation.json) retain their
+  archived 73-row source-classification summary retain their
   original syntax/export-validation findings. Their older blocked status is
   historical evidence, not the current owner-policy attempt-readiness verdict.
 - [Owner crosswalk](phase5-project-identity-map.json) remains unchanged.
   Its original planning context is historical; executable exceptions are explicit
   in the production adapter audit and this final decision, not rewritten values.
-- [Dependency map](../www/legacy/README.md) and
-  [safe-mode preparation](phase5-safe-mode.md) record the current boundary.
+- The now-retired legacy dependency map and
+  [safe-mode preparation](phase5-safe-mode.md) recorded the boundary at that time.
 - [Phase 6 execution plan](phase6-cutover-plan.md) is prepared, not executed.
 
 ## Validation and preservation

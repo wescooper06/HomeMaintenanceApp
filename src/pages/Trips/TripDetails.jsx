@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
+import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import {
   getTrips,
 } from "../../services/tripsService.js";
@@ -111,7 +112,7 @@ export default function TripDetails() {
         <button disabled={saving} onClick={handleSaveWorkflow}>{saving ? "Saving..." : "Save Workflow"}</button>
       </div>
 
-      <button className="button-secondary" onClick={() => navigate("/")}>
+      <button className="button-secondary" onClick={() => navigate(TRIPS_HOME_ROUTE)}>
         Back to Trips
       </button>
     </div>
