@@ -12,10 +12,10 @@ function PlannerScreen({ navigation }) {
   const { snapshot } = usePlanner();
   return (
     <DragDropLayer>
-      <section className={`${styles["planner-screen"]} ${styles["hm-card"]}`} aria-busy={snapshot.backupBusy || snapshot.reminderBusy}>
+      <section className={`${styles["planner-screen"]} ${styles["hm-card"]}`} aria-busy={snapshot.backupBusy || snapshot.reminderBusy || snapshot.restoreBusy}>
         <div data-main-nav>{navigation}</div>
         <PlannerHeader />
-        <div inert={snapshot.backupBusy || snapshot.backupReloadRequired}>
+        <div inert={snapshot.backupBusy || snapshot.backupReloadRequired || Boolean(snapshot.restoreProposal)}>
           <PlannerSidebar />
           <WeeklyGrid />
           <PlannerFooter />

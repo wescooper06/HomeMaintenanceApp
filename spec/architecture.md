@@ -65,7 +65,21 @@ exact occurrence is active at the requested date/bucket. Persistence errors
 reject through controller error reporting. These separate saves are not atomic:
 partial persistence is reported explicitly, without automatic rollback or retry.
 Concurrent placement of the same series in one controller is blocked while saving.
-This corrective policy does not introduce a deleted-occurrence restoration action.
+Ordinary placement never implicitly restores a deleted occurrence.
+
+Explicit Repeatable restoration extends `previously-deleted` with a transient
+controller-owned confirmation proposal. Cancel performs no write. Restore
+reactivates the exact deterministic occurrence at its saved effective location;
+it never moves it or changes its master. Only `deleted`, `deleted_instance` and
+the monotonic `updated_at` revision change. A dedicated update-only CAS path
+checks the proposal revision, exact identity, live master, tombstone and location,
+rejects conflicting ownership, and verifies the returned and re-read raw row
+preserves every other field. It never inserts or uses normalized weekly upsert.
+Storage adopts the authoritative baseline before the controller reports
+`restored`. Busy/error guards prevent repeated submission and incompatible edits.
+Uncertain write outcomes require reload, not automatic retry. Per-row CAS still
+cannot atomically prevent a concurrent different-ID occurrence insertion; this
+feature adds no database lock or uniqueness guarantee.
 
 Weekly edits compare the loaded/submitted baseline with a fresh read, skip
 unchanged rows, and condition existing-row updates on their exact `updated_at`

@@ -131,6 +131,63 @@ test("Project cards distinguish ordinary continuation from explicitly starting f
   assert.deepEqual(calls.pop(), ["master", "mon", "morning", { fresh: true }]);
 });
 
+test("restoration dialog distinguishes saved locations, explicit consent, pending and dismissible errors", async () => {
+  const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const file = path.join(root, "src", "pages", "Planner", "components", "RestoreOccurrenceDialog.jsx");
+  const input = fs.readFileSync(file, "utf8").replace(/^import .*;\r?$/gm, "")
+    .replace("export default function", "function");
+  const { code } = await transformWithOxc(input, file, {
+    jsx: { runtime: "classic", pragma: "element", pragmaFrag: "fragment" },
+  });
+  const snapshot = {
+    restoreProposal: { title: "Synthetic series", occurrenceDate: "2026-11-11",
+      date: "2026-11-11", timeSlot: "morning", requestedDate: "2026-11-11", requestedTimeSlot: "morning" },
+    restoreBusy: false, restoreError: "",
+  };
+  let cancels = 0, restores = 0;
+  const cancel = () => { cancels += 1; };
+  const dialogCalls = [];
+  const Dialog = vm.runInNewContext(`(() => { ${code}; return RestoreOccurrenceDialog; })()`, {
+    element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
+    fragment: "fragment", useRef: () => ({ current: null }),
+    usePlannerDialog: (...args) => dialogCalls.push(args),
+    usePlanner: () => ({ snapshot, actions: { cancelRestore: cancel,
+      restoreRepeatableOccurrence: async () => { restores += 1; } } }),
+    styles: new Proxy({}, { get: (_, key) => key }), console,
+  });
+  const nodes = (node) => !node || typeof node !== "object" ? [] : [node, ...node.children.flatMap(nodes)];
+  const text = (node) => !node ? "" : typeof node !== "object" ? String(node) : node.children.map(text).join(" ");
+  let tree = Dialog();
+  assert.equal(dialogCalls[0][1], cancel);
+  assert.equal(dialogCalls[0][2], "[data-action='restore-cancel']");
+  const find = (action) => nodes(tree).find((node) => node.props["data-action"] === action);
+  assert.match(text(tree), /saved progress and checklist will be preserved/);
+  find("restore-cancel").props.onClick();
+  assert.equal(cancels, 1);
+  assert.equal(restores, 0);
+  find("restore-confirm").props.onClick();
+  await Promise.resolve();
+  assert.equal(restores, 1);
+  snapshot.restoreProposal.date = "2026-11-12";
+  snapshot.restoreProposal.timeSlot = "afternoon";
+  tree = Dialog();
+  assert.match(text(tree), /Restore at existing location/);
+  assert.match(text(tree), /2026-11-12\s*,\s*afternoon/);
+  assert.match(text(tree), /will not move the occurrence or change the repeatable schedule/);
+  snapshot.restoreBusy = true;
+  tree = Dialog();
+  assert.equal(find("restore-confirm").props.disabled, true);
+  assert.equal(find("restore-cancel").props.disabled, true);
+  assert(nodes(tree).some((node) => node.props.role === "status"));
+  snapshot.restoreBusy = false;
+  snapshot.restoreError = "Reload Planner before making further changes.";
+  tree = Dialog();
+  assert.equal(find("restore-confirm").props.disabled, true);
+  assert.equal(find("restore-cancel").props.disabled, false);
+  assert(nodes(tree).some((node) => node.props.role === "alert"));
+  assert.equal(nodes(tree).find((node) => node.props.role === "dialog").props["aria-modal"], "true");
+});
+
 test("weekly drop targets detect before/after/end and isolate checklist drags", async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
   const file = path.join(root, "src", "pages", "Planner", "components", "WeeklyGrid.jsx");

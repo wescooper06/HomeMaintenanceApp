@@ -9,6 +9,7 @@ import PlannerMoveTaskModal from "./PlannerMoveTaskModal.jsx";
 import ReminderModal from "./ReminderModal.jsx";
 import RepeatableSeriesEditor from "./RepeatableSeriesEditor.jsx";
 import ResourceLinks from "./ResourceLinks.jsx";
+import RestoreOccurrenceDialog from "./RestoreOccurrenceDialog.jsx";
 import { usePlanner } from "./usePlanner.js";
 import WeatherModal from "./WeatherModal.jsx";
 
@@ -46,6 +47,7 @@ export default function PlannerFooter() {
       </div>
       {move && createPortal(<PlannerMoveTaskModal key={move.id} task={move} />, document.body)}
       {snapshot.linkProject && createPortal(<MasterProjectTitleEditor />, document.body)}
+      {snapshot.restoreProposal && createPortal(<RestoreOccurrenceDialog />, document.body)}
     </>
   );
 }

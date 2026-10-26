@@ -151,6 +151,24 @@ export function createPlannerSupabaseStorage(getData) {
     });
   }
 
+  function restoreRepeatableOccurrence(request) {
+    const intent = copy(request);
+    return enqueue(async () => {
+      const old = weekly.find((row) => row.id === intent.taskId);
+      const current = (await getData().loadPlannerState()).weeklyTasks.find((row) => row.id === intent.taskId);
+      if (!old || !current || !weeklyEqual(old, current)
+        || (old.updatedAt ?? null) !== intent.expectedUpdatedAt
+        || (current.updatedAt ?? null) !== intent.expectedUpdatedAt) {
+        throw new Error("This occurrence changed since the restoration prompt opened. Nothing was restored by this request. Reload Planner and review it again.");
+      }
+      const saved = await getData().restoreRepeatableOccurrence(intent);
+      weekly = weekly.map((row) => row.id === saved.id ? copy(saved) : row);
+      submittedWeekly.delete(saved.id);
+      emit({ type: "weekly-snapshot-saved" });
+      return saved;
+    });
+  }
+
   async function getTaskManager() {
     return (await getData().loadPlannerState()).tasks;
   }
@@ -386,7 +404,7 @@ export function createPlannerSupabaseStorage(getData) {
   }
 
   return {
-    loadPlannerState, savePlannerState, restorePlannerState, getProjects, updateProject,
+    loadPlannerState, savePlannerState, restorePlannerState, restoreRepeatableOccurrence, getProjects, updateProject,
     createProject, deleteProject,
     getWeeklyPlanner, saveWeeklyPlannerState, upsertWeeklyTask, deleteWeeklyTask, saveProjectChecklistTemplate,
     getParkingLot: async () => (await getData().loadPlannerState()).parkingItems,

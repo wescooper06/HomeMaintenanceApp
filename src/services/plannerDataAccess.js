@@ -278,6 +278,76 @@ export function createPlannerDataAccess(supabase) {
     return saved;
   }
 
+  async function restoreRepeatableOccurrence(request) {
+    const stale = "This occurrence changed since the restoration prompt opened. Nothing was restored by this request. Reload Planner and review it again.";
+    const conflict = "Another occurrence conflicts with this series and date. Restoration was blocked. Reload Planner and review the occurrences.";
+    const uncertain = "Restoration could not be confirmed. The occurrence may have been restored. Reload Planner before making further changes.";
+    const { taskId, projectId, occurrenceDate, expectedUpdatedAt, date, timeSlot } = request;
+    const validDate = /^\d{4}-\d{2}-\d{2}$/.test(date)
+      && Number.isFinite(Date.parse(`${date}T00:00:00Z`))
+      && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
+    if (!projectId || !occurrenceDate || taskId !== `repeatable-${projectId}-${occurrenceDate}`
+      || !Object.hasOwn(request, "expectedUpdatedAt") || !validDate
+      || !["morning", "afternoon", "evening"].includes(timeSlot)) throw new Error(conflict);
+    const masters = (await rows("planner_tasks")).filter((row) => row.project_id === projectId);
+    const master = masters[0];
+    const series = master && json(master.metadata_json, {}, "task metadata").series;
+    if (masters.length !== 1 || master.deleted === true || master.source !== "repeating"
+      || !series || typeof series !== "object" || Array.isArray(series)
+      || series.active === false || series.removedFromPlanner === true) throw new Error(conflict);
+    const weekly = await rows("planner_weekly_tasks");
+    const matches = weekly.filter((row) => row.id === taskId
+      || ((row.parent_rep === projectId || row.project_id === projectId)
+        && dateKey(row.occurrence_date || row.date) === occurrenceDate));
+    const old = matches[0];
+    if (!old) throw new Error(stale);
+    if (matches.length !== 1 || old.id !== taskId || old.project_id !== projectId
+      || old.parent_rep !== projectId || dateKey(old.occurrence_date) !== occurrenceDate
+      || old.task_type !== "repeatable" || old.source !== "repeating") throw new Error(conflict);
+    const mapped = weeklyFromRow(old);
+    if ((old.updated_at ?? null) !== expectedUpdatedAt
+      || !(old.deleted === true || old.deleted_instance === true)
+      || mapped.date !== date || mapped.timeSlot !== timeSlot) throw new Error(stale);
+    const oldTime = old.updated_at ? Date.parse(
+      /Z$|[+-]\d\d:\d\d$/.test(old.updated_at) ? old.updated_at : `${old.updated_at}Z`) : NaN;
+    const now = new Date().toISOString();
+    const updatedAt = Number.isFinite(oldTime) && oldTime >= Date.parse(now)
+      ? new Date(oldTime + 1).toISOString() : now;
+    const preserved = (row) => {
+      const value = { ...row };
+      for (const key of ["deleted", "deleted_instance", "updated_at"]) delete value[key];
+      return JSON.stringify(sortedJson(value));
+    };
+    const verify = (row) => {
+      if (!row || row.id !== taskId || row.deleted !== false || row.deleted_instance !== false
+        || Date.parse(/Z$|[+-]\d\d:\d\d$/.test(row.updated_at) ? row.updated_at : `${row.updated_at}Z`) !== Date.parse(updatedAt)
+        || preserved(row) !== preserved(old)) throw new Error(uncertain);
+    };
+    let query = supabase.from("planner_weekly_tasks")
+      .update({ deleted: false, deleted_instance: false, updated_at: updatedAt })
+      .eq("id", taskId).eq("project_id", projectId).eq("parent_rep", projectId)
+      .eq("occurrence_date", old.occurrence_date).eq("task_type", "repeatable").eq("source", "repeating");
+    for (const key of ["updated_at", "deleted", "deleted_instance"]) {
+      query = old[key] == null ? query.is(key, null) : query.eq(key, old[key]);
+    }
+    try {
+      const { data, error } = await query.select("*").single();
+      if (error?.code === "PGRST116") throw new Error(stale);
+      check(error, "Restoring Repeatable occurrence");
+      verify(data);
+      const after = await rows("planner_weekly_tasks");
+      const confirmed = after.find((row) => row.id === taskId);
+      verify(confirmed);
+      if (confirmed.updated_at !== data.updated_at || after.some((row) => row.id !== taskId
+        && (row.parent_rep === projectId || row.project_id === projectId)
+        && dateKey(row.occurrence_date || row.date) === occurrenceDate)) throw new Error(uncertain);
+      return weeklyFromRow(confirmed);
+    } catch (error) {
+      if (error.message === stale) throw error;
+      throw new Error(uncertain, { cause: error });
+    }
+  }
+
   function projectFromRows(view, raw) {
     const metadata = { ...json(raw.metadata, {}, "project metadata"),
       ...json(view.metadata, {}, "project metadata") };
@@ -433,7 +503,7 @@ export function createPlannerDataAccess(supabase) {
     return data;
   }
 
-  return { loadPlannerState, savePlannerState,
+  return { loadPlannerState, savePlannerState, restoreRepeatableOccurrence,
     restorePlannerState: (changes) => savePlannerState(changes, { insertOnly: true }),
     loadProjects, saveProject, createProject, deleteProject };
 }

@@ -140,7 +140,7 @@ function fixture(extra = {}, cap = 2) {
               tables[table].push(row);
               result = [row];
             }
-            if (single && result.length !== 1) return { data: null, error: { message: "Expected one row" } };
+            if (single && result.length !== 1) return { data: null, error: { code: "PGRST116", message: "Expected one row" } };
             const data = clone(single ? result[0] : result);
             if (op !== "read" && client.afterWrite) {
               const hook = client.afterWrite;
@@ -893,13 +893,13 @@ test("unchanged stale submitted rows cannot overwrite concurrent changes during 
   assert.deepEqual(drone, before);
 });
 
-function incidentController(storage) {
+function incidentController(storage, reminderService) {
   const { createPlannerController } = exportsFrom("src/services/plannerService.js", ["createPlannerController"], {
     plannerStorage: storage, window: { location: { hash: "#planner" } },
     fetch: async () => { throw new Error("External network is forbidden"); },
     setTimeout, clearTimeout, URL, Date,
   });
-  return createPlannerController();
+  return createPlannerController({ reminderService });
 }
 
 function repeatablePlacementFixture({ projectId = p1, masterId = t1, occurrence } = {}) {
@@ -934,6 +934,229 @@ function repeatablePlacementFixture({ projectId = p1, masterId = t1, occurrence 
     projectId, masterId, date, id,
   };
 }
+
+const restorationRequest = (f) => ({
+  taskId: f.id, projectId: f.projectId, occurrenceDate: f.date,
+  expectedUpdatedAt: f.tables.planner_weekly_tasks.find((row) => row.id === f.id)?.updated_at ?? null,
+  date: f.date, timeSlot: "morning",
+});
+
+const survivingRow = (row) => {
+  const value = clone(row);
+  for (const key of ["deleted", "deleted_instance", "updated_at"]) delete value[key];
+  return value;
+};
+
+test("Repeatable restoration Cancel performs zero writes and keeps the master and tombstone", async () => {
+  const f = repeatablePlacementFixture({ occurrence: { deleted: true, deleted_instance: true } });
+  const reminderCalls = [];
+  const controller = incidentController(f.storage, new Proxy({}, {
+    get: (_, name) => () => { reminderCalls.push(name); throw new Error("Restoration must not call reminder APIs"); },
+  }));
+  try {
+    await controller.actions.initialize();
+    await controller.flush();
+    const before = clone(f.tables);
+    f.calls.length = 0;
+    const outcome = await controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+    assert.equal(outcome.status, "previously-deleted");
+    assert.equal(controller.getSnapshot().restoreProposal.expectedUpdatedAt, restorationRequest(f).expectedUpdatedAt);
+    controller.actions.cancelRestore();
+    assert.equal(controller.getSnapshot().restoreProposal, null);
+    assert.deepEqual(f.tables, before);
+    assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+    assert.deepEqual(reminderCalls, []);
+  } finally { controller.destroy(); }
+});
+
+for (const flags of [{ deleted: true }, { deleted_instance: true }, { deleted: true, deleted_instance: true }]) {
+  test(`explicit Repeatable restoration preserves raw state with flags ${JSON.stringify(flags)}`, async () => {
+    const f = repeatablePlacementFixture({ occurrence: {
+      ...flags, completed: true, checklist_open: true, overridden: true,
+      date: "2026-11-12", time_slot: "afternoon", bucket: "Afternoon",
+      checklist_json: [{ id: "b", text: "Second", completed: true }, { id: "a", text: "First", completed: false }],
+      reminder_json: { active: false, note: "Historical reminder", notificationId: "retain" },
+      metadata_json: { override: { date: "2026-11-13", completed: true, keep: "exact" },
+        weeklyPosition: 7, generated: true, notes: "Keep notes", unrelated: { array: [3, 1] } },
+    } });
+    const reminderCalls = [];
+    const controller = incidentController(f.storage, new Proxy({}, {
+      get: (_, name) => () => { reminderCalls.push(name); throw new Error("Restoration must not call reminder APIs"); },
+    }));
+    try {
+      await controller.actions.initialize();
+      await controller.flush();
+      const before = clone(f.tables.planner_weekly_tasks.find((row) => row.id === f.id));
+      const master = clone(f.tables.planner_tasks);
+      await controller.actions.dropOnSlot(
+        { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+      assert.equal(controller.getSnapshot().restoreProposal.date, "2026-11-13");
+      assert.equal(controller.getSnapshot().restoreProposal.timeSlot, "afternoon");
+      f.calls.length = 0;
+      const result = await controller.actions.restoreRepeatableOccurrence();
+      await controller.flush();
+      assert.deepEqual(plain(result), { status: "restored", taskId: f.id, projectId: f.projectId,
+        occurrenceDate: f.date, date: "2026-11-13", timeSlot: "afternoon" });
+      const saved = f.tables.planner_weekly_tasks.find((row) => row.id === f.id);
+      assert.equal(saved.deleted, false);
+      assert.equal(saved.deleted_instance, false);
+      assert.notEqual(saved.updated_at, before.updated_at);
+      assert.deepEqual(survivingRow(saved), survivingRow(before));
+      assert.deepEqual(f.tables.planner_tasks, master);
+      assert.deepEqual(reminderCalls, []);
+      const writes = f.calls.filter((call) => call.op !== "read");
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].op, "update");
+      assert.equal(writes[0].table, "planner_weekly_tasks");
+      assert.deepEqual(Object.keys(writes[0].payload).sort(), ["deleted", "deleted_instance", "updated_at"]);
+      assert.equal(f.tables.planner_weekly_tasks.filter((row) => row.id === f.id).length, 1);
+      assert.match(controller.getSnapshot().status, /^Restored .*2026-11-13, afternoon/);
+      assert.equal(controller.getSnapshot().restoreProposal, null);
+      controller.actions.moveTask(f.id, "2026-11-14", "evening");
+      await controller.flush();
+      assert.equal(f.tables.planner_weekly_tasks.find((row) => row.id === f.id).date, "2026-11-14",
+        "ordinary edits use authoritative restored revision");
+    } finally { controller.destroy(); }
+  });
+}
+
+test("Repeatable restoration same location delays success and rejects repeated clicks and incompatible actions", async () => {
+  const f = repeatablePlacementFixture({ occurrence: { deleted: true, deleted_instance: true } });
+  const controller = incidentController(f.storage);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  try {
+    await controller.actions.initialize();
+    await controller.flush();
+    await controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+    const before = clone(f.tables.planner_tasks);
+    const original = f.storage.restoreRepeatableOccurrence;
+    let calls = 0;
+    f.storage.restoreRepeatableOccurrence = async (...args) => { calls += 1; await gate; return original(...args); };
+    const restoring = controller.actions.restoreRepeatableOccurrence();
+    await Promise.resolve();
+    assert.equal(controller.getSnapshot().restoreBusy, true);
+    assert.doesNotMatch(controller.getSnapshot().status, /^Restored /);
+    controller.actions.cancelRestore();
+    assert(controller.getSnapshot().restoreProposal);
+    assert.throws(() => controller.actions.restoreRepeatableOccurrence(), /restoration to finish/);
+    assert.throws(() => controller.actions.jumpPlannerToDate(f.date), /restoration decision/);
+    release();
+    const result = await restoring;
+    assert.equal(result.status, "restored");
+    assert.equal(calls, 1);
+    assert.deepEqual(f.tables.planner_tasks, before);
+    assert.equal(controller.getSnapshot().restoreBusy, false);
+  } finally { release(); controller.destroy(); }
+});
+
+for (const condition of ["stale", "missing", "duplicate", "wrong-owner", "master-missing",
+  "master-deleted", "master-inactive", "other-bucket", "moved", "cas", "rejected", "post-write"]) {
+  test(`Repeatable restoration fails closed for ${condition} without insertion or master writes`, async () => {
+    const f = repeatablePlacementFixture({ occurrence: { deleted: true, deleted_instance: true } });
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      await controller.flush();
+      await controller.actions.dropOnSlot(
+        { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+      const row = f.tables.planner_weekly_tasks.find((item) => item.id === f.id);
+      if (condition === "stale") { row.updated_at = "2026-11-01T10:00:00"; row.title = "Newer"; }
+      if (condition === "missing") f.tables.planner_weekly_tasks.splice(f.tables.planner_weekly_tasks.indexOf(row), 1);
+      if (condition === "duplicate") f.tables.planner_weekly_tasks.push({ ...clone(row), id: "conflict", deleted: false, deleted_instance: false });
+      if (condition === "wrong-owner") row.project_id = "other-project";
+      if (condition === "master-missing") f.tables.planner_tasks.length = 0;
+      if (condition === "master-deleted") f.tables.planner_tasks[0].deleted = true;
+      if (condition === "master-inactive") f.tables.planner_tasks[0].metadata_json.series.active = false;
+      if (condition === "other-bucket") row.time_slot = "evening";
+      if (condition === "moved") row.metadata_json.override = { date: "2026-11-14" };
+      if (condition === "cas") f.client.beforeUpdate = () => { row.updated_at = "2026-11-01T10:00:00"; row.title = "Newer"; };
+      if (condition === "rejected") f.client.failNext("planner_weekly_tasks");
+      if (condition === "post-write") f.client.afterWrite = () => { row.updated_at = "2026-11-01T10:00:00"; };
+      const before = clone(f.tables);
+      f.calls.length = 0;
+      await assert.rejects(controller.actions.restoreRepeatableOccurrence(), /Reload Planner/);
+      const snapshot = controller.getSnapshot();
+      assert.match(snapshot.restoreError, /Reload Planner/);
+      assert.doesNotMatch(snapshot.status, /^Restored /);
+      assert.equal(snapshot.restoreBusy, false);
+      assert.equal(f.calls.filter((call) => call.op === "insert").length, 0);
+      assert.equal(f.calls.filter((call) => call.op !== "read" && call.table !== "planner_weekly_tasks").length, 0);
+      if (!["cas", "post-write"].includes(condition)) assert.deepEqual(f.tables, before);
+      if (condition === "cas") {
+        assert.equal(row.title, "Newer");
+        assert.equal(row.deleted, true);
+        assert.match(snapshot.restoreError, /Nothing was restored by this request/);
+      }
+      if (["rejected", "post-write"].includes(condition)) assert.match(snapshot.restoreError, /may have been restored/);
+      controller.actions.cancelRestore();
+      assert.equal(controller.getSnapshot().restoreProposal, null, "errors do not prevent dismissal");
+    } finally { controller.destroy(); }
+  });
+}
+
+test("Repeatable restoration uses monotonic revisions and accepts null revision with exact CAS", async () => {
+  for (const revision of [null, "2099-01-01T00:00:00"]) {
+    const f = repeatablePlacementFixture({ occurrence: { deleted: true, updated_at: revision } });
+    const request = restorationRequest(f);
+    await f.storage.loadPlannerState();
+    const saved = await f.storage.restoreRepeatableOccurrence(request);
+    assert.equal(saved.id, f.id);
+    assert(saved.updatedAt);
+    if (revision) assert(Date.parse(saved.updatedAt) > Date.parse(`${revision}Z`));
+  }
+});
+
+test("Repeatable restoration update-only boundary rejects invalid intent and ambiguous masters", async () => {
+  for (const condition of ["wrong-id", "no-revision", "invalid-date", "invalid-bucket", "duplicate-master", "removed-master"]) {
+    const f = repeatablePlacementFixture({ occurrence: { deleted: true } });
+    const request = restorationRequest(f);
+    if (condition === "wrong-id") request.taskId = "replacement-id";
+    if (condition === "no-revision") delete request.expectedUpdatedAt;
+    if (condition === "invalid-date") request.date = "2026-02-31";
+    if (condition === "invalid-bucket") request.timeSlot = "all-day";
+    if (condition === "duplicate-master") f.tables.planner_tasks.push({ ...clone(f.tables.planner_tasks[0]), id: "another-master" });
+    if (condition === "removed-master") f.tables.planner_tasks[0].metadata_json.series.removedFromPlanner = true;
+    const before = clone(f.tables);
+    await assert.rejects(f.data.restoreRepeatableOccurrence(request), /conflicts with this series and date/);
+    assert.deepEqual(f.tables, before);
+    assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+  }
+});
+
+test("Repeatable restoration cannot claim success if verification detects changed surviving data", async () => {
+  const f = repeatablePlacementFixture({ occurrence: { deleted: true } });
+  const request = restorationRequest(f);
+  const row = f.tables.planner_weekly_tasks[1];
+  f.client.afterWrite = () => { row.metadata_json = { concurrent: true }; };
+  await assert.rejects(f.data.restoreRepeatableOccurrence(request), /may have been restored/);
+  assert.equal(row.deleted, false);
+  assert.deepEqual(row.metadata_json, { concurrent: true });
+  assert.equal(f.calls.filter((call) => call.op === "insert").length, 0);
+});
+
+test("Repeatable restoration is not offered for invalid saved date or non-Repeatable ownership", async () => {
+  for (const occurrence of [
+    { deleted: true, metadata_json: { override: { date: "2026-02-31" } } },
+    { deleted: true, task_type: "curated" },
+    { deleted: true, source: "home" },
+  ]) {
+    const f = repeatablePlacementFixture({ occurrence });
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      await controller.flush();
+      const before = clone(f.tables);
+      const outcome = await controller.actions.dropOnSlot(
+        { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+      assert.equal(outcome.status, "previously-deleted");
+      assert.equal(controller.getSnapshot().restoreProposal, null);
+      assert.deepEqual(f.tables, before);
+    } finally { controller.destroy(); }
+  }
+});
 
 test("Repeatable placement reports existing occurrences without changing masters, rows or deletion history", async () => {
   const cases = [

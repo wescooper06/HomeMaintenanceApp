@@ -956,6 +956,9 @@ export function createPlannerController({ reminderService = calendarReminders } 
     gridRevision: 0,
     backupBusy: false,
     reminderBusy: false,
+    restoreProposal: null,
+    restoreBusy: false,
+    restoreError: "",
     backupReloadRequired: false,
   };
   const listeners = new Set();
@@ -1547,6 +1550,18 @@ export function createPlannerController({ reminderService = calendarReminders } 
     });
     if (existing) {
       if (existing.deleted || existing.deletedInstance) {
+        const validDate = parseDateKey(existing.date);
+        if (existing.id === taskId && validDate && toDateKey(validDate) === existing.date
+          && SLOT_ORDER.includes(existing.timeSlot)
+          && existing.occurrenceDate === date && existing.taskType === "repeatable" && existing.source === "repeating"
+          && masterTask.active !== false) {
+          state.restoreProposal = {
+            taskId, projectId, occurrenceDate: date, expectedUpdatedAt: existing.updatedAt ?? null,
+            date: existing.date, timeSlot: existing.timeSlot, title: masterTask.title,
+            requestedDate: date, requestedTimeSlot: slot,
+          };
+          state.restoreError = "";
+        }
         setStatus(`A previously deleted occurrence of "${masterTask.title}" exists for ${date}. It was not restored or added.`);
         return outcome("previously-deleted", existing);
       }
@@ -1593,6 +1608,35 @@ export function createPlannerController({ reminderService = calendarReminders } 
       throw new Error(`Repeatable placement was not confirmed. Series settings or an occurrence may have been saved. Reload before editing. ${error.message}`, { cause: error });
     } finally {
       pendingRepeatablePlacements.delete(projectId);
+    }
+  }
+
+  async function restoreRepeatableOccurrence() {
+    const proposal = state.restoreProposal;
+    if (!proposal || state.restoreBusy) throw new Error("No restoration is available.");
+    state.restoreBusy = true;
+    state.restoreError = "";
+    setStatus("Restoring occurrence\u2026");
+    try {
+      const masters = state.repeatableTasks.filter((task) => task.projectId === proposal.projectId);
+      if (masters.length !== 1 || masters[0].active === false) {
+        throw new Error("Another occurrence conflicts with this series and date. Restoration was blocked. Reload Planner and review the occurrences.");
+      }
+      await persistence;
+      if (persistenceError) throw persistenceError;
+      const saved = await trackWrite(plannerStorage.restoreRepeatableOccurrence(proposal));
+      state.planner.tasks = state.planner.tasks.map((task) => task.id === saved.id ? saved : task);
+      state.gridRevision += 1;
+      state.restoreProposal = null;
+      setStatus(`Restored "${proposal.title}" at ${saved.date}, ${saved.timeSlot}.`);
+      return { status: "restored", taskId: saved.id, projectId: saved.projectId,
+        occurrenceDate: saved.occurrenceDate, date: saved.date, timeSlot: saved.timeSlot };
+    } catch (error) {
+      state.restoreError = error.message;
+      throw error;
+    } finally {
+      state.restoreBusy = false;
+      notify();
     }
   }
 
@@ -2552,6 +2596,10 @@ export function createPlannerController({ reminderService = calendarReminders } 
       entries: entries.map((entry, index) => ({ ...entry, title: cleanText(titles[index], entry.url) })) };
   }
   function closeDialogs() {
+    if (!state.restoreBusy) {
+      state.restoreProposal = null;
+      state.restoreError = "";
+    }
     linksRequest += 1;
     state.modal = null;
     state.reminderTaskId = "";
@@ -2562,6 +2610,12 @@ export function createPlannerController({ reminderService = calendarReminders } 
     state.linkProject = null;
   }
   const operations = {
+    restoreRepeatableOccurrence,
+    cancelRestore() {
+      if (state.restoreBusy) return;
+      state.restoreProposal = null;
+      state.restoreError = "";
+    },
     async backupOperation(operation) {
       if (state.loading) throw new Error("Wait for Planner to finish loading before using backups.");
       if (state.reminderBusy) throw new Error("Wait for the Calendar notification operation before using backups.");
@@ -2645,6 +2699,13 @@ export function createPlannerController({ reminderService = calendarReminders } 
     if (destroyed && name !== "initialize") return undefined;
     try {
       if (name === "getTaskProject" || name === "getSeries") return operation(...args);
+      if (name === "cancelRestore") { const result = operation(...args); notify(); return result; }
+      if (state.restoreProposal && !["restoreRepeatableOccurrence", "setDrag", "setDropTarget", "closeDialogs"].includes(name)) {
+        throw new Error("Finish or cancel the restoration decision before editing.");
+      }
+      if (state.restoreBusy && !["setDrag", "setDropTarget", "closeDialogs"].includes(name)) {
+        throw new Error("Wait for occurrence restoration to finish before editing.");
+      }
       if (state.backupReloadRequired && name !== "backupOperation" && name !== "initialize") {
         throw new Error("Planner must reload after a backup operation before editing. Retry a backup operation or reload Planner.");
       }
