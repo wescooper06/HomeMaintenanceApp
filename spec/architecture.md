@@ -85,6 +85,17 @@ matching the existing delete-series/restart policy; loading does not reactivate
 them or generate their occurrences. Missing series metadata does not qualify a
 master-only fallback. Explicit restoration semantics and revisions are unchanged.
 
+Fallback ownership indexing and override loading apply series eligibility before
+UUID and duplicate validation. Missing or JSON-null series metadata is ineligible:
+an unrelated legacy reference on such a row cannot block container initialization.
+The row is neither repaired nor persisted. Non-object series values still report
+an explicit error. Removed series do not compete with included series during
+loading; inactive included series retain strict ownership checks. Project-derived
+records can map to a unique exact UUID-backed master without a series for
+first-series creation, without enrolling unrelated no-series rows as fallback
+owners. Persistence validates the exact target, including removed series when
+explicitly updating them; eligible ownership conflicts remain errors.
+
 Explicit Repeatable restoration extends `previously-deleted` with a transient
 controller-owned confirmation proposal. Cancel performs no write. Restore
 reactivates the exact deterministic occurrence at its saved effective location;

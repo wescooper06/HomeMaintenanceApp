@@ -6,6 +6,16 @@ const copy = (value) => structuredClone(value);
 const clean = (value, fallback = "") => String(value ?? "").trim() || fallback;
 const metadata = (task) => JSON.parse(task.metadataJson || "{}");
 const fullDays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const repeatableUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function repeatableSeries(task) {
+  const series = metadata(task).series;
+  if (series == null) return null;
+  if (typeof series !== "object" || Array.isArray(series)) {
+    throw new Error("Invalid Repeatable series metadata. Reload before assigning.");
+  }
+  return series;
+}
 
 export function createPlannerSupabaseStorage(getData) {
   const listeners = new Set();
@@ -280,11 +290,18 @@ export function createPlannerSupabaseStorage(getData) {
     });
   }
 
-  function findRepeatableMaster(tasks, projectId, taskId) {
-    const matches = tasks.filter((task) => task.projectId === projectId
-      && (metadata(task).series || clean(task.source).toLowerCase() === "repeating"));
-    if (matches.length > 1 || (taskId && matches[0]?.id !== taskId)
-      || (matches[0] && clean(matches[0].source).toLowerCase() !== "repeating")) {
+  function findRepeatableMaster(tasks, projectId, taskId, { saving = false } = {}) {
+    const related = tasks.filter((task) => !task.deleted && task.projectId === projectId
+      && clean(task.source).toLowerCase() === "repeating");
+    let matches = related.filter((task) => {
+      const series = repeatableSeries(task);
+      return series && (saving || series.removedFromPlanner !== true);
+    });
+    // A project-derived task can acquire its first series only through an exact master mapping.
+    if (saving && !matches.length) matches = related.filter((task) => !repeatableSeries(task));
+    if (!repeatableUuid.test(projectId) || (taskId && !repeatableUuid.test(taskId))
+      || matches.some((task) => !repeatableUuid.test(task.id))
+      || matches.length > 1 || (taskId && matches[0]?.id !== taskId)) {
       throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
     }
     return matches[0];
@@ -292,13 +309,14 @@ export function createPlannerSupabaseStorage(getData) {
 
   async function getRepeatableOverrides() {
     const state = await getData().loadPlannerState();
-    return state.tasks.filter((task) => clean(task.source).toLowerCase() === "repeating"
-      && metadata(task).series != null).map((task) => {
-      findRepeatableMaster(state.tasks, task.projectId, task.id);
-      const series = metadata(task).series;
-      if (typeof series !== "object" || Array.isArray(series)) {
-        throw new Error("Invalid Repeatable series metadata. Reload before assigning.");
-      }
+    const candidates = state.tasks.filter((task) => !task.deleted
+      && clean(task.source).toLowerCase() === "repeating" && repeatableSeries(task));
+    const included = new Set(candidates.filter((task) => repeatableSeries(task).removedFromPlanner !== true)
+      .map((task) => task.projectId));
+    return candidates.filter((task) => repeatableSeries(task).removedFromPlanner !== true
+      || !included.has(task.projectId)).map((task) => {
+      const series = repeatableSeries(task);
+      if (series.removedFromPlanner !== true) findRepeatableMaster(state.tasks, task.projectId, task.id);
       const first = state.weeklyTasks.filter((row) => row.parentRepeatableId === task.projectId)
         .sort((a, b) => a.occurrenceDate.localeCompare(b.occurrenceDate))[0];
       const startDate = task.startDate || series.startDate || first?.occurrenceDate || "";
@@ -318,7 +336,7 @@ export function createPlannerSupabaseStorage(getData) {
     return enqueue(async () => {
       const state = await getData().loadPlannerState();
       const updates = snapshot.map((override) => {
-        const task = findRepeatableMaster(state.tasks, override.projectId, override.taskId);
+        const task = findRepeatableMaster(state.tasks, override.projectId, override.taskId, { saving: true });
         const oldSeries = task ? metadata(task).series || {} : {};
         const series = { ...oldSeries, ...override };
         const oldDay = oldSeries.baseDay || fullDays.find((day) =>

@@ -1799,6 +1799,14 @@ export function createPlannerController({ reminderService = calendarReminders } 
 
       const masters = new Map();
       for (const task of taskManagerTasks.filter((item) => normalizeSource(item.source) === "repeating" && !item.deleted)) {
+        let series;
+        try { series = JSON.parse(cleanText(task.metadataJson, "{}")).series; }
+        catch (error) { throw new Error(`Invalid Planner task metadata: ${error.message}`, { cause: error }); }
+        if (series == null) continue;
+        if (typeof series !== "object" || Array.isArray(series)) {
+          throw new Error("Invalid Repeatable series metadata. Reload before assigning.");
+        }
+        if (series.removedFromPlanner === true) continue;
         const projectId = cleanText(task.projectId, "");
         if (!REPEATABLE_PROJECT_ID.test(projectId) || !REPEATABLE_PROJECT_ID.test(task.id) || masters.has(projectId)) {
           throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
@@ -1809,12 +1817,12 @@ export function createPlannerController({ reminderService = calendarReminders } 
       const repeatableTasks = [];
       const addRepeatable = (project, master, index) => {
         const override = overrideMap.get(project.projectId) || {};
+        if (override.removedFromPlanner === true) return;
         if (!REPEATABLE_PROJECT_ID.test(project.projectId) || seen.has(project.projectId)
           || (override.taskId && override.taskId !== master?.id)) {
           throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
         }
         seen.add(project.projectId);
-        if (override.removedFromPlanner === true) return;
 
         repeatableTasks.push({
           id: project.projectId,
@@ -1840,7 +1848,20 @@ export function createPlannerController({ reminderService = calendarReminders } 
         });
       };
       state.allProjects.filter((project) => normalizeSource(project.source) === "repeating")
-        .forEach((project, index) => addRepeatable(project, masters.get(project.projectId), index));
+        .forEach((project, index) => {
+          if (overrideMap.get(project.projectId)?.removedFromPlanner === true) return;
+          let master = masters.get(project.projectId);
+          if (!master) {
+            const unconfigured = taskManagerTasks.filter((task) => !task.deleted
+              && normalizeSource(task.source) === "repeating" && task.projectId === project.projectId
+              && JSON.parse(cleanText(task.metadataJson, "{}")).series == null);
+            if (unconfigured.length > 1 || (unconfigured[0] && !REPEATABLE_PROJECT_ID.test(unconfigured[0].id))) {
+              throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
+            }
+            master = unconfigured[0];
+          }
+          addRepeatable(project, master, index);
+        });
       for (const [projectId, master] of masters) {
         if (seen.has(projectId)) continue;
         let metadata;

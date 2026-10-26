@@ -1078,6 +1078,108 @@ for (const absent of ["deleted", "missing-series"]) {
   });
 }
 
+for (const legacySeries of [undefined, null]) {
+  test(`ineligible legacy masters do not block mixed Repeatable initialization (series=${legacySeries})`, async () => {
+    const f = repeatablePlacementFixture();
+    const fallbackProject = "33333333-3333-4333-8333-333333333333";
+    const fallbackMaster = "44444444-4444-4444-8444-444444444444";
+    f.tables.planner_tasks.push({
+      ...clone(f.tables.planner_tasks[0]), id: fallbackMaster, project_id: fallbackProject,
+    });
+    const legacy = {
+      id: "55555555-5555-4555-8555-555555555555", project_id: "107", source: "repeating",
+      deleted: null, metadata_json: legacySeries === undefined ? {} : { series: legacySeries },
+    };
+    f.tables.planner_tasks.push(legacy, {
+      ...clone(legacy), id: "66666666-6666-4666-8666-666666666666",
+    }, {
+      ...clone(legacy), id: "77777777-7777-4777-8777-777777777777", project_id: fallbackProject,
+    });
+    const before = clone(f.tables);
+    let stageReads = 0;
+    const readStaged = f.storage.getStagedTasks;
+    f.storage.getStagedTasks = async () => { stageReads += 1; return readStaged(); };
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      await controller.flush();
+      const snapshot = controller.getSnapshot();
+      assert.equal(snapshot.loading, false);
+      assert.equal(snapshot.error, "");
+      assert.deepEqual(snapshot.repeatableTasks.map((task) => [task.id, task.projectId, task.taskId])
+        .sort((left, right) => left[0].localeCompare(right[0])),
+        [[f.projectId, f.projectId, f.masterId], [fallbackProject, fallbackProject, fallbackMaster]]);
+      assert.equal(stageReads, 1);
+      assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+      assert.deepEqual(f.tables, before);
+      const placed = await controller.actions.dropOnSlot(
+        { kind: "repeatable-copy", projectId: fallbackProject }, "wed", f.date, "morning");
+      assert.equal(placed.status, "created");
+      await controller.flush();
+      assert.equal(f.tables.planner_tasks.find((row) => row.id === fallbackMaster).project_id, fallbackProject);
+      assert.deepEqual(f.tables.planner_tasks.filter((row) => ["107", fallbackProject].includes(row.project_id)
+        && row.id !== fallbackMaster), before.planner_tasks.filter((row) => ["107", fallbackProject].includes(row.project_id)
+        && row.id !== fallbackMaster));
+    } finally { controller.destroy(); }
+  });
+}
+
+test("removed fallback candidates do not compete with included ownership or reappear", async () => {
+  const f = repeatablePlacementFixture({ fallback: true });
+  const removed = { ...clone(f.tables.planner_tasks[0]),
+    id: "44444444-4444-4444-8444-444444444444" };
+  removed.metadata_json.series.removedFromPlanner = true;
+  f.tables.planner_tasks.push(removed, {
+    ...clone(removed), id: "55555555-5555-4555-8555-555555555555", project_id: "107",
+  });
+  const before = clone(f.tables);
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    assert.deepEqual(controller.getSnapshot().repeatableTasks.map((task) => [task.projectId, task.taskId]),
+      [[f.projectId, f.masterId]]);
+    assert.deepEqual(f.tables, before);
+    assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+    await assert.rejects(f.storage.saveRepeatableOverrides([{
+      projectId: f.projectId, taskId: f.masterId, baseBucket: "Evening",
+    }]), /ownership is ambiguous/);
+    assert.deepEqual(f.tables, before);
+  } finally { controller.destroy(); }
+});
+
+test("eligible invalid ownership aborts before staged processing even with ineligible legacy rows", async () => {
+  const f = repeatablePlacementFixture({ fallback: true });
+  f.tables.planner_tasks[0].project_id = "invalid-series-owner";
+  f.tables.planner_tasks.push({
+    id: "55555555-5555-4555-8555-555555555555", project_id: "107",
+    source: "repeating", deleted: null, metadata_json: {},
+  });
+  let stages = 0;
+  f.storage.getStagedTasks = async () => { stages += 1; throw new Error("Staging must not be reached"); };
+  const before = clone(f.tables);
+  const controller = incidentController(f.storage);
+  try {
+    await assert.rejects(controller.actions.initialize(), /ownership is ambiguous/);
+    assert.equal(stages, 0);
+    assert.deepEqual(f.tables, before);
+    assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+  } finally { controller.destroy(); }
+});
+
+for (const series of [false, 7, "invalid", []]) {
+  test(`non-object present series remains an explicit initialization error: ${JSON.stringify(series)}`, async () => {
+    const f = repeatablePlacementFixture({ fallback: true });
+    f.tables.planner_tasks[0].metadata_json.series = series;
+    const controller = incidentController(f.storage);
+    const before = clone(f.tables);
+    try {
+      await assert.rejects(controller.actions.initialize(), /Invalid Repeatable series metadata/);
+      assert.deepEqual(f.tables, before);
+      assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+    } finally { controller.destroy(); }
+  });
+}
+
 test("series persistence rejects duplicate or mismatched master ownership before any write", async () => {
   for (const conflict of ["duplicate", "mismatched-id"]) {
     const f = repeatablePlacementFixture({ fallback: true });
