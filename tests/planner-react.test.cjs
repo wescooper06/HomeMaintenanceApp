@@ -138,6 +138,8 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
     .replace("export default function", "function").replace(/^export /gm, "");
   const { code } = await transformWithOxc(gridSource, file, { jsx: { runtime: "classic", pragma: "element" } });
   const calls = [], targets = [];
+  const warnings = [];
+  let dropOnSlot = (...args) => calls.push(clone(args));
   let ended = 0;
   const drag = {
     drag: { kind: "weekly-move", taskId: "C" }, dropTarget: "",
@@ -146,8 +148,9 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
   };
   const DaySlot = vm.runInNewContext(`(() => { ${code}; return DaySlot; })()`, {
     element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
-    usePlanner: () => ({ actions: { dropOnSlot: (...args) => calls.push(clone(args)) } }),
+    usePlanner: () => ({ actions: { dropOnSlot: (...args) => dropOnSlot(...args) } }),
     usePlannerDrag: () => drag, WeeklyTaskCard: () => {}, styles: new Proxy({}, { get: (_, key) => key }),
+    console: { warn: (...args) => warnings.push(args) },
   });
   const props = { day: "mon", date: "2026-10-19", slot: "morning", label: "Morning", tasks: [{ id: "A" }] };
   const event = (clientY) => ({
@@ -181,6 +184,23 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
   assert.equal(calls.length, before);
   assert.equal(targets.length, beforeTargets);
   assert.equal(ended, 3);
+  drag.drag = { kind: "repeatable-copy", projectId: "repeatable-project" };
+  for (const status of ["created", "already-scheduled", "existing-bucket", "moved", "previously-deleted"]) {
+    dropOnSlot = (...args) => {
+      calls.push(clone(args));
+      return Promise.resolve({ status });
+    };
+    DaySlot(props).props.onDrop(event(250));
+    assert.deepEqual(calls.at(-1), [drag.drag, "mon", "2026-10-19", "morning"]);
+  }
+  const failure = new Error("Placement persistence failed; controller displays the error");
+  dropOnSlot = () => Promise.reject(failure);
+  DaySlot(props).props.onDrop(event(250));
+  await Promise.resolve();
+  assert.equal(ended, 9, "Drag state clears for all async outcomes, including failure");
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0][0], "Planner drop failed");
+  assert.equal(warnings[0][1], failure);
 });
 
 test("existing Move Task dialog retains date-only behavior and offers the same slot destination as drag", async () => {

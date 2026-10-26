@@ -53,6 +53,20 @@ tombstoned with their history retained; newly scheduled dates have new
 deterministic date identities and start as normal new generated occurrences.
 Historical checklists are not transferred between different date identities.
 
+Repeatable-container placement resolves the exact series/occurrence date before
+changing the master. Either deletion flag blocks placement with a
+`previously-deleted` outcome; it never restores a tombstone. An active match
+returns `already-scheduled`, `existing-bucket`, or `moved`, reporting its effective
+location without changing the occurrence or master. Duplicate or conflicting
+ownership fails closed. Only an unoccupied occurrence identity may be created.
+Placement returns `{status, taskId, projectId, occurrenceDate, date, timeSlot}`;
+`created` is reported only after the master and weekly saves complete and the
+exact occurrence is active at the requested date/bucket. Persistence errors
+reject through controller error reporting. These separate saves are not atomic:
+partial persistence is reported explicitly, without automatic rollback or retry.
+Concurrent placement of the same series in one controller is blocked while saving.
+This corrective policy does not introduce a deleted-occurrence restoration action.
+
 Weekly edits compare the loaded/submitted baseline with a fresh read, skip
 unchanged rows, and condition existing-row updates on their exact `updated_at`
 revision (including null). Conflicts surface an error and block further

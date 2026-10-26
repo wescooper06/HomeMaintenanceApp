@@ -902,6 +902,230 @@ function incidentController(storage) {
   return createPlannerController();
 }
 
+function repeatablePlacementFixture({ projectId = p1, masterId = t1, occurrence } = {}) {
+  const date = "2026-11-11";
+  const id = `repeatable-${projectId}-${date}`;
+  return {
+    ...fixture({
+      projects_all: [{ id: projectId, external_id: "PC0001", project_type: "repeating",
+        title: "Placement fixture", recurrence: "weekly", state: "In Progress" }],
+      projects_repeating: [{ id: projectId, external_id: "PC0001",
+        title: "Placement fixture", recurrence: "weekly", state: "In Progress" }],
+      planner_tasks: [{ id: masterId, project_id: projectId, source: "repeating",
+        title: "Placement fixture", recurrence: "weekly", start_date: "2026-10-26",
+        updated_at: "2026-10-20T10:00:00", metadata_json: { keep: true, series: {
+          active: true, recurrence: "weekly", baseDay: "Monday", baseBucket: "Morning",
+          weekdays: ["Mon"], interval: 1, startDate: "2026-10-26",
+          originalStartDate: "2026-10-26",
+        } } }],
+      planner_weekly_tasks: [
+        { id: "week-settings", metadata_json: { weekStartDate: "2026-10-19" } },
+        ...(occurrence ? [{
+          id, project_id: projectId, parent_rep: projectId, occurrence_date: date,
+          date, time_slot: "morning", bucket: "morning", task_type: "repeatable",
+          source: "repeating", title: "Placement fixture", deleted: false,
+          deleted_instance: false, overridden: false, metadata_json: {},
+          updated_at: "2026-10-20T10:00:00",
+          checklist_json: [{ id: "keep", text: "Keep history", completed: true }],
+          ...occurrence,
+        }] : []),
+      ],
+    }),
+    projectId, masterId, date, id,
+  };
+}
+
+test("Repeatable placement reports existing occurrences without changing masters, rows or deletion history", async () => {
+  const cases = [
+    { row: { deleted: true }, status: "previously-deleted", message: /previously deleted/ },
+    { row: { deleted_instance: true }, status: "previously-deleted", message: /previously deleted/ },
+    { row: { deleted: true, deleted_instance: true }, status: "previously-deleted", message: /previously deleted/ },
+    { row: {}, status: "already-scheduled", message: /already scheduled/ },
+    { row: { time_slot: "evening", bucket: "evening" }, status: "existing-bucket", message: /evening/ },
+    { row: { date: "2026-11-12", overridden: true }, status: "moved", message: /2026-11-12/ },
+    { row: { overridden: true, metadata_json: { override: { date: "2026-11-13" } } },
+      status: "moved", message: /2026-11-13/ },
+  ];
+  for (const projectId of [p1, "33333333-3333-4333-8333-333333333333"]) {
+    for (const entry of cases) {
+      const f = repeatablePlacementFixture({ projectId, occurrence: entry.row });
+      const controller = incidentController(f.storage);
+      try {
+        await controller.actions.initialize();
+        await controller.flush();
+        const before = clone(f.tables);
+        const masterBefore = plain(controller.getSnapshot().repeatableTasks);
+        f.calls.length = 0;
+        const result = await controller.actions.dropOnSlot(
+          { kind: "repeatable-copy", projectId }, "wed", f.date, "morning");
+        await controller.flush();
+        assert.equal(result.status, entry.status);
+        assert.equal(result.taskId, f.id);
+        assert.equal(result.projectId, projectId);
+        assert.equal(result.occurrenceDate, f.date);
+        assert.equal(result.date, entry.row.metadata_json?.override?.date || entry.row.date || f.date);
+        assert.equal(result.timeSlot, entry.row.time_slot || "morning");
+        assert.match(controller.getSnapshot().status, entry.message);
+        assert.doesNotMatch(controller.getSnapshot().status, /^Added repeatable task/);
+        assert.deepEqual(f.tables, before);
+        assert.deepEqual(plain(controller.getSnapshot().repeatableTasks), masterBefore);
+        assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+      } finally { controller.destroy(); }
+    }
+  }
+});
+
+test("Repeatable placement awaits master and weekly persistence before confirming an exact visible occurrence", async () => {
+  const f = repeatablePlacementFixture();
+  const controller = incidentController(f.storage);
+  let releaseMaster, releaseWeekly, masterStarted, weeklyStarted;
+  const masterEntered = new Promise((resolve) => { masterStarted = resolve; });
+  const weeklyEntered = new Promise((resolve) => { weeklyStarted = resolve; });
+  const masterGate = new Promise((resolve) => { releaseMaster = resolve; });
+  const weeklyGate = new Promise((resolve) => { releaseWeekly = resolve; });
+  const saveMaster = f.storage.saveRepeatableOverrides;
+  const saveWeekly = f.storage.saveWeeklyPlannerState;
+  try {
+    await controller.actions.initialize();
+    await controller.flush();
+    f.storage.saveRepeatableOverrides = async (...args) => {
+      masterStarted();
+      await masterGate;
+      return saveMaster(...args);
+    };
+    f.storage.saveWeeklyPlannerState = async (...args) => {
+      weeklyStarted();
+      await weeklyGate;
+      return saveWeekly(...args);
+    };
+    let finished = false;
+    const placement = controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning")
+      .then((result) => { finished = true; return result; });
+    await masterEntered;
+    assert.equal(finished, false);
+    assert.doesNotMatch(controller.getSnapshot().status, /^Added/);
+    assert.equal(f.tables.planner_weekly_tasks.some((row) => row.id === f.id), false);
+    await assert.rejects(controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning"), /still saving/);
+    releaseMaster();
+    await weeklyEntered;
+    assert.equal(finished, false);
+    assert.doesNotMatch(controller.getSnapshot().status, /^Added/);
+    releaseWeekly();
+    assert.deepEqual(plain(await placement), {
+      status: "created", taskId: f.id, projectId: f.projectId,
+      occurrenceDate: f.date, date: f.date, timeSlot: "morning",
+    });
+    await controller.flush();
+    const row = f.tables.planner_weekly_tasks.find((item) => item.id === f.id);
+    assert.equal(row.parent_rep, f.projectId);
+    assert.equal(row.project_id, f.projectId);
+    assert.equal(row.occurrence_date, f.date);
+    assert.equal(row.date, f.date);
+    assert.equal(row.time_slot, "morning");
+    assert.equal(row.bucket, "morning");
+    assert.equal(row.deleted, false);
+    assert.equal(row.deleted_instance, false);
+    const master = f.tables.planner_tasks[0];
+    assert.equal(master.id, f.masterId);
+    assert.notEqual(master.id, master.project_id);
+    assert.equal(master.start_date, f.date);
+    assert.equal(master.metadata_json.series.baseDay, "Wednesday");
+    assert.equal(master.metadata_json.series.baseBucket, "Morning");
+    assert.deepEqual(master.metadata_json.series.weekdays, ["Wed"]);
+    assert.equal(master.metadata_json.keep, true);
+    assert.match(controller.getSnapshot().status, /^Added repeatable task/);
+    const { selectWeeklyView } = exportsFrom("src/services/plannerService.js",
+      ["selectWeeklyView"], { plannerStorage: f.storage });
+    const snapshot = controller.getSnapshot();
+    snapshot.planner.weekStartDate = "2026-11-09";
+    assert.equal(selectWeeklyView(snapshot).days[2].slots[0].tasks[0].id, f.id);
+  } finally {
+    releaseMaster();
+    releaseWeekly();
+    controller.destroy();
+  }
+});
+
+for (const failure of ["master", "weekly", "stale-master", "concurrent-weekly", "changed-after-weekly"]) {
+  test(`Repeatable placement surfaces ${failure} failure without a success-shaped result`, async () => {
+    const f = repeatablePlacementFixture();
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      await controller.flush();
+      const beforeMaster = clone(f.tables.planner_tasks[0]);
+      if (failure === "master") f.client.failNext("planner_tasks");
+      if (failure === "weekly") f.client.failNext("planner_weekly_tasks");
+      if (failure === "stale-master") {
+        f.client.beforeUpdate = (table) => {
+          assert.equal(table, "planner_tasks");
+          f.tables.planner_tasks[0].updated_at = "2026-10-26T23:00:00";
+        };
+      }
+      if (failure === "concurrent-weekly") {
+        f.client.afterWrite = (table) => {
+          assert.equal(table, "planner_tasks");
+          f.tables.planner_weekly_tasks.push({
+            id: f.id, project_id: f.projectId, parent_rep: f.projectId,
+            occurrence_date: f.date, date: f.date, time_slot: "evening",
+            task_type: "repeatable", metadata_json: {}, updated_at: "2026-10-26T23:00:00",
+          });
+        };
+      }
+      if (failure === "changed-after-weekly") {
+        f.client.beforeInsert = (table) => {
+          assert.equal(table, "planner_weekly_tasks");
+          f.client.afterWrite = () => {
+            f.tables.planner_weekly_tasks.find((row) => row.id === f.id).updated_at = "2026-10-26T23:00:00";
+          };
+        };
+      }
+      await assert.rejects(controller.actions.dropOnSlot(
+        { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning"),
+      /placement was not confirmed.*may have been saved.*Reload before editing/);
+      assert.match(controller.getSnapshot().error, /placement was not confirmed/);
+      assert.doesNotMatch(controller.getSnapshot().status, /^Added repeatable task/);
+      await assert.rejects(controller.flush());
+      assert.throws(() => controller.actions.jumpPlannerToDate(f.date), /unsaved change/);
+      const rows = f.tables.planner_weekly_tasks.filter((row) => row.id === f.id);
+      if (failure === "master") {
+        assert.deepEqual(f.tables.planner_tasks[0], beforeMaster);
+        assert.equal(rows.length, 0);
+      } else if (failure === "stale-master") {
+        assert.equal(f.tables.planner_tasks[0].start_date, beforeMaster.start_date);
+        assert.equal(rows.length, 0);
+      } else {
+        assert.equal(f.tables.planner_tasks[0].start_date, f.date,
+          "master save may persist before a later weekly failure");
+        assert.equal(rows.length, failure === "weekly" ? 0 : 1);
+        if (rows.length) assert.equal(rows[0].time_slot, failure === "concurrent-weekly" ? "evening" : "morning");
+      }
+    } finally { controller.destroy(); }
+  });
+}
+
+test("Repeatable placement fails closed on duplicate or conflicting occurrence ownership", async () => {
+  for (const conflict of ["duplicate", "owner"]) {
+    const f = repeatablePlacementFixture({ occurrence: {} });
+    if (conflict === "duplicate") {
+      f.tables.planner_weekly_tasks.push({
+        ...clone(f.tables.planner_weekly_tasks[1]), id: "another-occurrence",
+      });
+    } else f.tables.planner_weekly_tasks[1].project_id = "another-project";
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      await controller.flush();
+      const before = clone(f.tables);
+      await assert.rejects(controller.actions.dropOnSlot(
+        { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning"), /ownership is ambiguous/);
+      assert.deepEqual(f.tables, before);
+    } finally { controller.destroy(); }
+  }
+});
+
 test("Project restaging is same-ID continuation across weeks with checklist progress and metadata intact", async () => {
   const { storage, tables } = fixture({ planner_weekly_tasks: incidentFixtureRows() });
   const controller = incidentController(storage);

@@ -73,7 +73,10 @@ export function DaySlot({ day, date, slot, label, tasks }) {
         if (!drag.drag || drag.drag.kind === "checklist-reorder") return;
         event.preventDefault();
         event.stopPropagation();
-        try { actions.dropOnSlot(drag.drag, day, date, slot); }
+        try {
+          const result = actions.dropOnSlot(drag.drag, day, date, slot);
+          if (result?.catch) void result.catch((error) => console.warn("Planner drop failed", error));
+        }
         finally { drag.end(); }
       }}>
       <h4 className={styles["day-slot-label"]}>{label}</h4>

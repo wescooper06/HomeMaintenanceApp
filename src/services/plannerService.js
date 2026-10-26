@@ -1154,7 +1154,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
   }
 
   function saveRepeatableOverrides(items) {
-    trackWrite(plannerStorage.saveRepeatableOverrides(items));
+    return trackWrite(plannerStorage.saveRepeatableOverrides(items));
   }
 
   function persistRepeatableMaster(master) {
@@ -1181,7 +1181,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       removedFromPlanner: master.active === false,
     };
     state.repeatableOverrideMap.set(projectId, record);
-    saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+    return saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
   }
 
   function makeRecurringInstance(master, occurrenceDate) {
@@ -1517,28 +1517,83 @@ export function createPlannerController({ reminderService = calendarReminders } 
     setStatus("Repeatable task removed from the task container. Weekly planner entries remain scheduled.");
   }
 
-  function createWeeklyRepeatableCopy(masterTask, date, slot) {
+  const pendingRepeatablePlacements = new Set();
+  async function createWeeklyRepeatableCopy(masterTask, date, slot) {
     if (!date || !SLOT_ORDER.includes(slot)) {
-      return false;
+      throw new Error("Please select a valid task date and time slot.");
     }
 
-    masterTask.id = cleanText(masterTask.id || masterTask.projectId, "");
-    masterTask.recurrence = normalizeRecurrence(masterTask.recurrence);
-    masterTask.baseDay = getDayName(date);
-    masterTask.monthWeek = getMonthWeekValue(date);
-    masterTask.baseBucket = slot.charAt(0).toUpperCase() + slot.slice(1);
-    masterTask.startDate = date;
-    masterTask.originalStartDate = cleanText(masterTask.originalStartDate, date);
-    masterTask.active = true;
-    persistRepeatableMaster(masterTask);
-
-    const existing = state.planner.tasks.find((item) => cleanText(item.parentRepeatableId, "") === masterTask.id && cleanText(item.occurrenceDate, item.date) === date);
-    if (!existing) {
-      state.planner.tasks.push(makeRecurringInstance(masterTask, date));
+    const projectId = cleanText(masterTask.projectId, "");
+    const parentId = cleanText(masterTask.id, projectId);
+    const taskId = `repeatable-${parentId}-${date}`;
+    if (!projectId || parentId !== projectId) {
+      throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
     }
-    savePlanner();
-    setStatus(`Added repeatable task "${masterTask.title}" to ${date}.`);
-    return true;
+    if (pendingRepeatablePlacements.has(projectId)) {
+      throw new Error("A placement for this repeatable task is still saving. Wait before assigning.");
+    }
+    const matches = state.planner.tasks.filter((item) => item.id === taskId
+      || (cleanText(item.parentRepeatableId, "") === parentId
+        && cleanText(item.occurrenceDate, item.date) === date));
+    const existing = matches[0];
+    if (matches.length > 1 || (existing
+      && (existing.parentRepeatableId !== parentId || existing.projectId !== projectId
+        || cleanText(existing.occurrenceDate, existing.date) !== date))) {
+      throw new Error("Repeatable occurrence ownership is ambiguous. Reload before assigning.");
+    }
+    const outcome = (status, task) => ({
+      status, taskId: task.id, projectId, occurrenceDate: date,
+      date: task.date, timeSlot: task.timeSlot,
+    });
+    if (existing) {
+      if (existing.deleted || existing.deletedInstance) {
+        setStatus(`A previously deleted occurrence of "${masterTask.title}" exists for ${date}. It was not restored or added.`);
+        return outcome("previously-deleted", existing);
+      }
+      if (existing.date !== date) {
+        setStatus(`"${masterTask.title}" is already scheduled on ${existing.date} in ${existing.timeSlot}. It was not moved or added.`);
+        return outcome("moved", existing);
+      }
+      if (existing.timeSlot !== slot) {
+        setStatus(`"${masterTask.title}" is already scheduled on ${existing.date} in ${existing.timeSlot}. It was not moved or added.`);
+        return outcome("existing-bucket", existing);
+      }
+      setStatus(`"${masterTask.title}" is already scheduled on ${date} in ${slot}.`);
+      return outcome("already-scheduled", existing);
+    }
+
+    const nextMaster = {
+      ...masterTask, id: parentId, recurrence: normalizeRecurrence(masterTask.recurrence),
+      baseDay: getDayName(date), monthWeek: getMonthWeekValue(date),
+      baseBucket: slot.charAt(0).toUpperCase() + slot.slice(1),
+      startDate: date, originalStartDate: cleanText(masterTask.originalStartDate, date),
+      active: true,
+    };
+    pendingRepeatablePlacements.add(projectId);
+    setStatus(`Saving repeatable task "${masterTask.title}" to ${date}...`);
+    try {
+      await persistRepeatableMaster(nextMaster);
+      Object.assign(masterTask, nextMaster);
+      if (state.planner.tasks.some((item) => item.id === taskId
+        || (item.parentRepeatableId === parentId && cleanText(item.occurrenceDate, item.date) === date))) {
+        throw new Error("The occurrence changed while saving. Reload before assigning.");
+      }
+      state.planner.tasks.push(makeRecurringInstance(nextMaster, date));
+      await savePlanner();
+      const saved = state.planner.tasks.filter((item) => item.id === taskId);
+      const task = saved[0];
+      if (saved.length !== 1 || task.parentRepeatableId !== parentId || task.projectId !== projectId
+        || task.occurrenceDate !== date || task.date !== date || task.timeSlot !== slot
+        || task.deleted || task.deletedInstance) {
+        throw new Error("The saved occurrence is not active at the requested destination.");
+      }
+      setStatus(`Added repeatable task "${masterTask.title}" to ${date} in ${slot}.`);
+      return outcome("created", task);
+    } catch (error) {
+      throw new Error(`Repeatable placement was not confirmed. Series settings or an occurrence may have been saved. Reload before editing. ${error.message}`, { cause: error });
+    } finally {
+      pendingRepeatablePlacements.delete(projectId);
+    }
   }
 
   function findWeeklyTaskById(taskId) {
