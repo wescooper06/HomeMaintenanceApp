@@ -15,6 +15,7 @@ export const DAY_ORDER = [
 
 export const SLOT_ORDER = ["morning", "afternoon", "evening"];
 const FULL_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const REPEATABLE_PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function cleanText(value, fallback) {
   const text = value == null ? "" : String(value).trim();
@@ -1162,8 +1163,8 @@ export function createPlannerController({ reminderService = calendarReminders } 
 
   function persistRepeatableMaster(master) {
     const projectId = cleanText(master && (master.id || master.projectId), "");
-    if (!projectId) {
-      return;
+    if (!REPEATABLE_PROJECT_ID.test(projectId) || master.projectId !== projectId) {
+      throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
     }
 
     const existing = state.repeatableOverrideMap.get(projectId) || {};
@@ -1171,6 +1172,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       ...existing,
       projectId,
       id: projectId,
+      taskId: REPEATABLE_PROJECT_ID.test(master.taskId) ? master.taskId : existing.taskId,
       title: cleanText(master.title, existing.title || "Untitled Task"),
       recurrence: normalizeRecurrence(master.recurrence),
       baseDay: cleanText(master.baseDay, existing.baseDay || "Monday"),
@@ -1184,7 +1186,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       removedFromPlanner: master.active === false,
     };
     state.repeatableOverrideMap.set(projectId, record);
-    return saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+    return saveRepeatableOverrides([record]);
   }
 
   function makeRecurringInstance(master, occurrenceDate) {
@@ -1515,7 +1517,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
 
     state.repeatableTasks = state.repeatableTasks.filter((task) => task.projectId !== projectId);
 
-    saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+    saveRepeatableOverrides([state.repeatableOverrideMap.get(projectId)]);
     savePlanner();
     setStatus("Repeatable task removed from the task container. Weekly planner entries remain scheduled.");
   }
@@ -1529,7 +1531,9 @@ export function createPlannerController({ reminderService = calendarReminders } 
     const projectId = cleanText(masterTask.projectId, "");
     const parentId = cleanText(masterTask.id, projectId);
     const taskId = `repeatable-${parentId}-${date}`;
-    if (!projectId || parentId !== projectId) {
+    if (!REPEATABLE_PROJECT_ID.test(projectId) || parentId !== projectId
+      || masterTask.source !== "repeating"
+      || state.repeatableTasks.filter((task) => task.projectId === projectId).length !== 1) {
       throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
     }
     if (pendingRepeatablePlacements.has(projectId)) {
@@ -1793,72 +1797,63 @@ export function createPlannerController({ reminderService = calendarReminders } 
       const overrideMap = new Map(overrides.map((item) => [item.projectId, item]));
       state.repeatableOverrideMap = overrideMap;
 
-      state.repeatableTasks = [...state.allProjects]
-        .filter((project) => normalizeSource(project.source) === "repeating")
-        .map((project, index) => {
-          const override = overrideMap.get(project.projectId) || {};
-          if (override.removedFromPlanner === true) {
-            return null;
-          }
+      const masters = new Map();
+      for (const task of taskManagerTasks.filter((item) => normalizeSource(item.source) === "repeating" && !item.deleted)) {
+        const projectId = cleanText(task.projectId, "");
+        if (!REPEATABLE_PROJECT_ID.test(projectId) || !REPEATABLE_PROJECT_ID.test(task.id) || masters.has(projectId)) {
+          throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
+        }
+        masters.set(projectId, task);
+      }
+      const seen = new Set();
+      const repeatableTasks = [];
+      const addRepeatable = (project, master, index) => {
+        const override = overrideMap.get(project.projectId) || {};
+        if (!REPEATABLE_PROJECT_ID.test(project.projectId) || seen.has(project.projectId)
+          || (override.taskId && override.taskId !== master?.id)) {
+          throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
+        }
+        seen.add(project.projectId);
+        if (override.removedFromPlanner === true) return;
 
-          return {
-            id: project.projectId,
-            taskId: `repeatable-${project.projectId}`,
-            projectId: project.projectId,
-            title: project.title,
-            source: "repeating",
-            state: cleanText(project.state, "unknown"),
-            recurrence: normalizeRecurrence(override.recurrence || project.recurrence),
-            baseDay: cleanText(override.baseDay, ""),
-            monthWeek: normalizeMonthWeek(override.monthWeek, override.startDate || override.originalStartDate || ""),
-            baseBucket: cleanText(override.baseBucket, ""),
-            startDate: cleanText(override.startDate, ""),
-            originalStartDate: cleanText(override.originalStartDate, override.startDate || ""),
-            interval: override.interval ?? 1,
-            weekdays: override.weekdays || [],
-            active: override.active !== false && override.removedFromPlanner !== true,
-            priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
-            order: parseNumber(override.order, parseNumber(project.order, index + 1)),
-            category: project.category,
-            asset: cleanText(project.asset, ""),
-            mileage: cleanText(project.mileage, ""),
-          };
-        })
-        .filter(Boolean);
-
-      const repeatableProjectIds = new Set(state.repeatableTasks.map((task) => cleanText(task.projectId, "")));
-      taskManagerTasks
-        .filter((task) => normalizeSource(task.source) === "repeating")
-        .filter((task) => {
-          try {
-            const metadata = JSON.parse(cleanText(task.metadataJson, "{}"));
-            return Boolean(metadata?.series);
-          } catch (error) { throw new Error(`Invalid Planner task metadata: ${error.message}`, { cause: error }); }
-        })
-        .filter((task) => !repeatableProjectIds.has(cleanText(task.projectId, "")))
-        .forEach((task, index) => {
-          state.repeatableTasks.push({
-            id: cleanText(task.id, cleanText(task.projectId, `repeatable-task-${index + 1}`)),
-            taskId: `repeatable-${cleanText(task.projectId, task.id)}`,
-            projectId: cleanText(task.projectId, ""),
-            title: cleanText(task.title, "Untitled Task"),
-            source: "repeating",
-            state: cleanText(task.state, "unknown"),
-            recurrence: normalizeRecurrence(task.recurrence),
-            baseDay: "",
-            monthWeek: "",
-            baseBucket: "",
-            startDate: cleanText(task.startDate, ""),
-            originalStartDate: cleanText(task.startDate, ""),
-            active: true,
-            priority: parseNumber(task.priority, 3),
-            order: parseNumber(task.order, state.repeatableTasks.length + 1),
-            category: cleanText(task.category, "uncategorized"),
-            asset: "",
-            mileage: "",
-          });
+        repeatableTasks.push({
+          id: project.projectId,
+          taskId: master?.id || `repeatable-${project.projectId}`,
+          projectId: project.projectId,
+          title: cleanText(project.title, "Untitled Task"),
+          source: "repeating",
+          state: cleanText(project.state, "unknown"),
+          recurrence: normalizeRecurrence(override.recurrence || project.recurrence),
+          baseDay: cleanText(override.baseDay, ""),
+          monthWeek: normalizeMonthWeek(override.monthWeek, override.startDate || override.originalStartDate || ""),
+          baseBucket: cleanText(override.baseBucket, ""),
+          startDate: cleanText(override.startDate, ""),
+          originalStartDate: cleanText(override.originalStartDate, override.startDate || ""),
+          interval: override.interval ?? 1,
+          weekdays: override.weekdays || [],
+          active: override.active !== false && override.removedFromPlanner !== true,
+          priority: parseNumber(override.priority, parseNumber(project.priority, 3)),
+          order: parseNumber(override.order, parseNumber(project.order, index + 1)),
+          category: cleanText(project.category, "uncategorized"),
+          asset: cleanText(project.asset, ""),
+          mileage: cleanText(project.mileage, ""),
         });
+      };
+      state.allProjects.filter((project) => normalizeSource(project.source) === "repeating")
+        .forEach((project, index) => addRepeatable(project, masters.get(project.projectId), index));
+      for (const [projectId, master] of masters) {
+        if (seen.has(projectId)) continue;
+        let metadata;
+        try { metadata = JSON.parse(cleanText(master.metadataJson, "{}")); }
+        catch (error) { throw new Error(`Invalid Planner task metadata: ${error.message}`, { cause: error }); }
+        if (metadata.series == null) continue;
+        if (typeof metadata.series !== "object" || Array.isArray(metadata.series)) {
+          throw new Error("Invalid Repeatable series metadata. Reload before assigning.");
+        }
+        addRepeatable({ ...master, projectId }, master, repeatableTasks.length);
+      }
 
+      state.repeatableTasks = repeatableTasks;
       state.repeatableTasks.sort((left, right) => {
         const orderDifference = parseNumber(left.order, Number.MAX_SAFE_INTEGER) - parseNumber(right.order, Number.MAX_SAFE_INTEGER);
         return orderDifference || cleanText(left.title, "").localeCompare(cleanText(right.title, ""));
@@ -2184,7 +2179,9 @@ export function createPlannerController({ reminderService = calendarReminders } 
 
   function findRepeatableMaster(parentRepeatableId) {
     const parentId = cleanText(parentRepeatableId, "");
-    return state.repeatableTasks.find((master) => cleanText(master.id || master.projectId, "") === parentId) || null;
+    const matches = state.repeatableTasks.filter((master) => master.projectId === parentId);
+    if (matches.length > 1) throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
+    return matches[0] || null;
   }
 
   function updateGeneratedSeriesInstances(master, fromDate) {
@@ -2276,7 +2273,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       };
     }
     removeWeeklyRows((item) => cleanText(item.parentRepeatableId, "") === parentId);
-    saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+    saveRepeatableOverrides([state.repeatableOverrideMap.get(parentId)]);
     savePlanner();
     setStatus(`Deleted recurrence series "${master.title}" and kept it in Repeatable Tasks.`);
   }
@@ -2331,10 +2328,17 @@ export function createPlannerController({ reminderService = calendarReminders } 
       const normalizedProjectId = cleanText(entry.projectId, normalizedTaskId);
 
       if (normalizedSource === "repeating") {
-        const repeatableIndex = state.repeatableTasks.findIndex((item) => cleanText(item.projectId, "") === normalizedProjectId || cleanText(item.id, "") === normalizedProjectId || cleanText(item.taskId, "") === normalizedTaskId);
+        if (!REPEATABLE_PROJECT_ID.test(normalizedProjectId)) {
+          throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
+        }
+        const repeatableIndex = state.repeatableTasks.findIndex((item) => item.projectId === normalizedProjectId);
+        const existingTaskId = state.repeatableTasks[repeatableIndex]?.taskId;
         const repeatableRecord = {
           id: normalizedProjectId,
-          taskId: normalizedTaskId.startsWith("repeatable-") ? normalizedTaskId : `repeatable-${normalizedProjectId}`,
+          taskId: state.repeatableOverrideMap.get(normalizedProjectId)?.taskId
+            || (REPEATABLE_PROJECT_ID.test(existingTaskId) ? existingTaskId
+              : REPEATABLE_PROJECT_ID.test(normalizedTaskId) && normalizedTaskId !== normalizedProjectId
+                ? normalizedTaskId : `repeatable-${normalizedProjectId}`),
           projectId: normalizedProjectId,
           title: cleanText(entry.title, "Untitled Repeatable Task"),
           source: "repeating",
@@ -2366,6 +2370,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
           ...override,
           projectId: normalizedProjectId,
           id: normalizedProjectId,
+          taskId: REPEATABLE_PROJECT_ID.test(repeatableRecord.taskId) ? repeatableRecord.taskId : override.taskId,
           title: repeatableRecord.title,
           state: repeatableRecord.state,
           category: repeatableRecord.category,
@@ -2385,7 +2390,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
           mileage: repeatableRecord.mileage,
         });
 
-        saveRepeatableOverrides(Array.from(state.repeatableOverrideMap.values()));
+        saveRepeatableOverrides([state.repeatableOverrideMap.get(normalizedProjectId)]);
 
         if (state.planner && Array.isArray(state.planner.tasks)) {
           const weekStart = cleanText(state.planner.weekStartDate, getWeekStartISO(new Date()));

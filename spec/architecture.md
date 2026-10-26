@@ -67,6 +67,24 @@ partial persistence is reported explicitly, without automatic rollback or retry.
 Concurrent placement of the same series in one controller is blocked while saving.
 Ordinary placement never implicitly restores a deleted occurrence.
 
+Repeatable container records use the project UUID for both `id` and `projectId`,
+including Planner-master fallback records. `taskId` retains the separate
+persisted Planner master UUID when one exists; a project without a master has
+only a synthetic container task ID until a subsequent load resolves its master.
+Drag payloads, rendering keys, recurrence parents and deterministic weekly IDs
+remain project-based. Master saves require a unique exact project-to-master
+mapping and validate a supplied master UUID; they never choose by title or
+arbitrary first match. Multiple masters for one project fail closed.
+Series actions submit only the targeted project's override, not unchanged
+overrides for other loaded masters, preserving unrelated masters and revisions.
+Container loading rejects malformed project identities and series metadata,
+excludes deleted masters and removed-from-Planner entries, and tracks project
+identities as entries are considered. Distinct same-title projects remain
+distinct. Inactive series retain `active=false` and remain in the container,
+matching the existing delete-series/restart policy; loading does not reactivate
+them or generate their occurrences. Missing series metadata does not qualify a
+master-only fallback. Explicit restoration semantics and revisions are unchanged.
+
 Explicit Repeatable restoration extends `previously-deleted` with a transient
 controller-owned confirmation proposal. Cancel performs no write. Restore
 reactivates the exact deterministic occurrence at its saved effective location;

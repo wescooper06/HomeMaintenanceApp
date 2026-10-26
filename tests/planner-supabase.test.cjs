@@ -902,14 +902,14 @@ function incidentController(storage, reminderService) {
   return createPlannerController({ reminderService });
 }
 
-function repeatablePlacementFixture({ projectId = p1, masterId = t1, occurrence } = {}) {
+function repeatablePlacementFixture({ projectId = p1, masterId = t1, occurrence, fallback = false } = {}) {
   const date = "2026-11-11";
   const id = `repeatable-${projectId}-${date}`;
   return {
     ...fixture({
-      projects_all: [{ id: projectId, external_id: "PC0001", project_type: "repeating",
+      projects_all: fallback ? [] : [{ id: projectId, external_id: "PC0001", project_type: "repeating",
         title: "Placement fixture", recurrence: "weekly", state: "In Progress" }],
-      projects_repeating: [{ id: projectId, external_id: "PC0001",
+      projects_repeating: fallback ? [] : [{ id: projectId, external_id: "PC0001",
         title: "Placement fixture", recurrence: "weekly", state: "In Progress" }],
       planner_tasks: [{ id: masterId, project_id: projectId, source: "repeating",
         title: "Placement fixture", recurrence: "weekly", start_date: "2026-10-26",
@@ -946,6 +946,191 @@ const survivingRow = (row) => {
   for (const key of ["deleted", "deleted_instance", "updated_at"]) delete value[key];
   return value;
 };
+
+for (const fallback of [false, true]) {
+  test(`Repeatable identity separates project and master UUIDs (fallback=${fallback})`, async () => {
+    const f = repeatablePlacementFixture({ fallback });
+    const before = clone(f.tables.planner_tasks);
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      await controller.flush();
+      const [task] = controller.getSnapshot().repeatableTasks;
+      assert.equal(controller.getSnapshot().repeatableTasks.length, 1);
+      assert.equal(task.id, f.projectId);
+      assert.equal(task.projectId, f.projectId);
+      assert.equal(task.taskId, f.masterId);
+      assert.deepEqual(f.tables.planner_tasks, before);
+    } finally { controller.destroy(); }
+  });
+
+  for (const series of [{ active: false }, { removedFromPlanner: true }]) {
+    test(`Repeatable container policy ${JSON.stringify(series)} (fallback=${fallback})`, async () => {
+      const f = repeatablePlacementFixture({ fallback });
+      Object.assign(f.tables.planner_tasks[0].metadata_json.series, series);
+      const before = clone(f.tables);
+      const controller = incidentController(f.storage);
+      try {
+        await controller.actions.initialize();
+        await controller.flush();
+        const tasks = controller.getSnapshot().repeatableTasks;
+        assert.equal(tasks.length, series.removedFromPlanner ? 0 : 1);
+        if (tasks.length) assert.equal(tasks[0].active, false);
+        controller.actions.generateVisibleRecurringInstances();
+        await controller.flush();
+        assert.deepEqual(f.tables, before);
+      } finally { controller.destroy(); }
+    });
+  }
+}
+
+test("fallback masters with the same title keep independent identities, series updates and removal", async () => {
+  const f = repeatablePlacementFixture({ fallback: true });
+  const projectB = "33333333-3333-4333-8333-333333333333";
+  const masterB = "44444444-4444-4444-8444-444444444444";
+  f.tables.planner_tasks[0].title = "Same title";
+  f.tables.planner_tasks.push({ ...clone(f.tables.planner_tasks[0]), id: masterB, project_id: projectB });
+  const otherBefore = clone(f.tables.planner_tasks[1]);
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    const tasks = controller.getSnapshot().repeatableTasks;
+    assert.equal(tasks.length, 2);
+    assert.deepEqual(tasks.map((task) => [task.id, task.taskId]),
+      [[f.projectId, f.masterId], [projectB, masterB]]);
+    await controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+    controller.actions.saveSeries(f.id, {
+      recurrence: "weekly", baseDay: "Wednesday", baseBucket: "Evening", applyScope: "this-future",
+    });
+    await controller.flush();
+    assert.equal(f.tables.planner_tasks[0].id, f.masterId);
+    assert.equal(f.tables.planner_tasks[0].metadata_json.series.baseBucket, "Evening");
+    assert.deepEqual(f.tables.planner_tasks[1], otherBefore);
+    assert(f.tables.planner_weekly_tasks.filter((row) => row.id !== "week-settings")
+      .every((row) => row.project_id === f.projectId && row.parent_rep === f.projectId));
+    controller.actions.removeRepeatableMaster(f.projectId);
+    await controller.flush();
+    assert.deepEqual(controller.getSnapshot().repeatableTasks.map((task) => task.projectId), [projectB]);
+    assert.equal(f.tables.planner_tasks[0].metadata_json.series.removedFromPlanner, true);
+    assert.deepEqual(f.tables.planner_tasks[1], otherBefore);
+  } finally { controller.destroy(); }
+});
+
+test("fallback tombstone proposal and explicit restoration preserve the master and exact saved state", async () => {
+  const f = repeatablePlacementFixture({ fallback: true, occurrence: { deleted: true, deleted_instance: true } });
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    await controller.flush();
+    const before = clone(f.tables);
+    const outcome = await controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+    assert.equal(outcome.status, "previously-deleted");
+    assert.equal(controller.getSnapshot().restoreProposal.taskId, f.id);
+    controller.actions.cancelRestore();
+    assert.deepEqual(f.tables, before);
+    await controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning");
+    await controller.actions.restoreRepeatableOccurrence();
+    await controller.flush();
+    assert.deepEqual(f.tables.planner_tasks, before.planner_tasks);
+    assert.deepEqual(survivingRow(f.tables.planner_weekly_tasks[1]), survivingRow(before.planner_weekly_tasks[1]));
+    assert.equal(f.tables.planner_weekly_tasks[1].deleted, false);
+    assert.equal(f.tables.planner_weekly_tasks[1].deleted_instance, false);
+  } finally { controller.destroy(); }
+});
+
+for (const invalid of ["missing-project", "malformed-project", "malformed-series", "array-series", "duplicate-master"]) {
+  test(`Repeatable loading fails closed without writes for ${invalid}`, async () => {
+    const f = repeatablePlacementFixture({ fallback: true });
+    const master = f.tables.planner_tasks[0];
+    if (invalid === "missing-project") master.project_id = "";
+    if (invalid === "malformed-project") master.project_id = "not-a-project-uuid";
+    if (invalid === "malformed-series") master.metadata_json.series = true;
+    if (invalid === "array-series") master.metadata_json.series = [];
+    if (invalid === "duplicate-master") f.tables.planner_tasks.push({
+      ...clone(master), id: "44444444-4444-4444-8444-444444444444",
+    });
+    const before = clone(f.tables);
+    const controller = incidentController(f.storage);
+    try {
+      await assert.rejects(controller.actions.initialize(), /ownership is ambiguous|Invalid Repeatable series/);
+      assert.deepEqual(controller.getSnapshot().repeatableTasks, []);
+      assert.deepEqual(f.tables, before);
+      assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+    } finally { controller.destroy(); }
+  });
+}
+
+for (const absent of ["deleted", "missing-series"]) {
+  test(`fallback excludes ${absent} masters without modifying data`, async () => {
+    const f = repeatablePlacementFixture({ fallback: true });
+    if (absent === "deleted") f.tables.planner_tasks[0].deleted = true;
+    else delete f.tables.planner_tasks[0].metadata_json.series;
+    const before = clone(f.tables);
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      assert.equal(controller.getSnapshot().repeatableTasks.length, 0);
+      assert.deepEqual(f.tables, before);
+    } finally { controller.destroy(); }
+  });
+}
+
+test("series persistence rejects duplicate or mismatched master ownership before any write", async () => {
+  for (const conflict of ["duplicate", "mismatched-id"]) {
+    const f = repeatablePlacementFixture({ fallback: true });
+    const [override] = await f.storage.getRepeatableOverrides();
+    if (conflict === "duplicate") f.tables.planner_tasks.push({
+      ...clone(f.tables.planner_tasks[0]), id: "44444444-4444-4444-8444-444444444444",
+    });
+    else override.taskId = "44444444-4444-4444-8444-444444444444";
+    const before = clone(f.tables);
+    f.calls.length = 0;
+    await assert.rejects(f.storage.saveRepeatableOverrides([{ ...override, baseBucket: "Evening" }]),
+      /ownership is ambiguous/);
+    assert.deepEqual(f.tables, before);
+    assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+  }
+});
+
+test("placement still rejects a mismatched controller identity before master or weekly mutation", async () => {
+  const f = repeatablePlacementFixture({ fallback: true, occurrence: {} });
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    await controller.flush();
+    controller.actions.getSeries(f.id).master.id = f.masterId;
+    const before = clone(f.tables);
+    f.calls.length = 0;
+    await assert.rejects(controller.actions.dropOnSlot(
+      { kind: "repeatable-copy", projectId: f.projectId }, "wed", f.date, "morning"), /ownership is ambiguous/);
+    assert.deepEqual(f.tables, before);
+    assert.equal(f.calls.filter((call) => call.op !== "read").length, 0);
+  } finally { controller.destroy(); }
+});
+
+test("first-series staging preserves the existing project-derived Planner master UUID", async () => {
+  const f = repeatablePlacementFixture();
+  delete f.tables.planner_tasks[0].metadata_json.series;
+  f.tables.planner_tasks[0].metadata_json.queue = "staged";
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    await controller.flush();
+    const [task] = controller.getSnapshot().repeatableTasks;
+    assert.equal(task.id, f.projectId);
+    assert.equal(task.projectId, f.projectId);
+    assert.equal(task.taskId, f.masterId);
+    assert.equal(f.tables.planner_tasks.length, 1);
+    assert.equal(f.tables.planner_tasks[0].id, f.masterId);
+    assert.equal(f.tables.planner_tasks[0].project_id, f.projectId);
+    assert.equal(f.tables.planner_tasks[0].metadata_json.queue, null);
+    assert.equal(f.tables.planner_tasks[0].metadata_json.series.active, true);
+    assert.equal(Object.hasOwn(f.tables.planner_tasks[0].metadata_json.series, "taskId"), false);
+  } finally { controller.destroy(); }
+});
 
 test("Repeatable restoration Cancel performs zero writes and keeps the master and tombstone", async () => {
   const f = repeatablePlacementFixture({ occurrence: { deleted: true, deleted_instance: true } });
@@ -1198,8 +1383,9 @@ test("Repeatable placement reports existing occurrences without changing masters
   }
 });
 
-test("Repeatable placement awaits master and weekly persistence before confirming an exact visible occurrence", async () => {
-  const f = repeatablePlacementFixture();
+for (const fallback of [false, true]) {
+test(`Repeatable placement awaits master and weekly persistence (fallback=${fallback})`, async () => {
+  const f = repeatablePlacementFixture({ fallback });
   const controller = incidentController(f.storage);
   let releaseMaster, releaseWeekly, masterStarted, weeklyStarted;
   const masterEntered = new Promise((resolve) => { masterStarted = resolve; });
@@ -1270,6 +1456,7 @@ test("Repeatable placement awaits master and weekly persistence before confirmin
     controller.destroy();
   }
 });
+}
 
 for (const failure of ["master", "weekly", "stale-master", "concurrent-weekly", "changed-after-weekly"]) {
   test(`Repeatable placement surfaces ${failure} failure without a success-shaped result`, async () => {

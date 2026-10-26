@@ -18,7 +18,10 @@ const persistenceAdapter = new Proxy({}, {
       ({ weekStartDate: planner.weekStartDate, weeklyTasks: planner.tasks }));
     if (key === "getRepeatableOverrides") return Promise.resolve(JSON.parse(localStorage.getItem("hm_repeatable_tasks") || "[]"));
     if (key === "saveRepeatableOverrides") {
-      localStorage.setItem("hm_repeatable_tasks", JSON.stringify(args[0]));
+      const previous = JSON.parse(localStorage.getItem("hm_repeatable_tasks") || "[]");
+      const byProject = new Map(previous.map((item) => [item.projectId, item]));
+      args[0].forEach((item) => byProject.set(item.projectId, item));
+      localStorage.setItem("hm_repeatable_tasks", JSON.stringify([...byProject.values()]));
       return Promise.resolve();
     }
     if (key === "updateProject") return window.SheetsService.updateProjectInSheet(...args);
@@ -44,6 +47,7 @@ const servicePromise = Promise.resolve(vm.runInThisContext(`((plannerStorage, ap
   new Proxy({}, { get: (_, key) => window.APP_CONFIG[key] }),
   new Proxy({}, { get: (_, key) => (...args) => window.modernReminders[key](...args) })));
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const repeatableId = "11111111-1111-4111-8111-111111111111";
 
 function adapters(initial, projects = []) {
   let stored = clone(initial);
@@ -98,6 +102,33 @@ test("weekly sort uses valid positions then deterministic IDs without mutating o
   const before = tasks.map((task) => task.id);
   assert.deepEqual(sortWeeklyTasks(tasks).map((task) => task.id), ["p0", "p1", "p2", "a", "f", "i", "n", "z"]);
   assert.deepEqual(tasks.map((task) => task.id), before);
+});
+
+test("same-title Repeatable cards render and drag by distinct project identities", async () => {
+  const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const file = path.join(root, "src", "pages", "Planner", "components", "ProjectCard.jsx");
+  const componentSource = fs.readFileSync(file, "utf8").replace(/^import .*;\r?$/gm, "")
+    .replace("export default function", "function").replace(/^export /gm, "");
+  const { code } = await transformWithOxc(componentSource, file, { jsx: { runtime: "classic", pragma: "element" } });
+  const drags = [], removals = [];
+  const RepeatableCard = vm.runInNewContext(`(() => { ${code}; return RepeatableCard; })()`, {
+    element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
+    usePlanner: () => ({ actions: { removeRepeatableMaster: (id) => removals.push(id) } }),
+    usePlannerDrag: () => ({ start: (_, payload) => drags.push(clone(payload)), end() {} }),
+    styles: new Proxy({}, { get: (_, key) => key }),
+  });
+  const ids = [repeatableId, "33333333-3333-4333-8333-333333333333"];
+  const trees = ids.map((projectId) => RepeatableCard({ task: {
+    id: projectId, projectId, taskId: `master-${projectId}`, title: "Same title",
+  } }));
+  trees.forEach((tree, index) => {
+    assert.equal(tree.props["data-repeatable-project-id"], ids[index]);
+    assert.equal(tree.children[1].children[0], "Same title");
+    tree.children[0].props.onDragStart({});
+  });
+  assert.deepEqual(drags, ids.map((projectId) => ({ kind: "repeatable-copy", projectId })));
+  trees[0].children[2].props.onClick();
+  assert.deepEqual(removals, [ids[0]]);
 });
 
 test("Project cards distinguish ordinary continuation from explicitly starting fresh", async () => {
@@ -344,18 +375,18 @@ test("weekly moves preserve completion, edited checklists and titles", async () 
 test("all recurrence series scopes preserve moved exceptions and deletion tombstones exactly", async () => {
   for (const scope of ["future", "this-future", "entire"]) {
     const initial = { weekStartDate: "2026-10-19", tasks: [
-      { id: "repeatable-r1-2026-10-19", parentRepeatableId: "r1", occurrenceDate: "2026-10-19", date: "2026-10-19", timeSlot: "morning", title: "Series", type: "repeatable", source: "repeating", recurrence: "weekly" },
-      { id: "exception", parentRepeatableId: "r1", occurrenceDate: "2026-10-12", date: "2026-10-20", timeSlot: "evening", title: "Moved", type: "repeatable", overridden: true, source: "repeating" },
-      { id: "deleted", parentRepeatableId: "r1", occurrenceDate: "2026-10-26", date: "2026-10-26", timeSlot: "morning", title: "Deleted", type: "repeatable", deletedInstance: true, source: "repeating" },
+      { id: `repeatable-${repeatableId}-2026-10-19`, parentRepeatableId: repeatableId, occurrenceDate: "2026-10-19", date: "2026-10-19", timeSlot: "morning", title: "Series", type: "repeatable", source: "repeating", recurrence: "weekly" },
+      { id: "exception", parentRepeatableId: repeatableId, occurrenceDate: "2026-10-12", date: "2026-10-20", timeSlot: "evening", title: "Moved", type: "repeatable", overridden: true, source: "repeating" },
+      { id: "deleted", parentRepeatableId: repeatableId, occurrenceDate: "2026-10-26", date: "2026-10-26", timeSlot: "morning", title: "Deleted", type: "repeatable", deletedInstance: true, source: "repeating" },
     ] };
-    const { controller } = await setup(initial, [{ id: "r1", title: "Series", source: "repeating", metadata: { recurrence: "weekly" } }]);
+    const { controller } = await setup(initial, [{ id: repeatableId, title: "Series", source: "repeating", metadata: { recurrence: "weekly" } }]);
     try {
       const values = { recurrence: "monthly", baseDay: "Tuesday", monthWeek: "last", baseBucket: "Evening", applyScope: scope };
       controller.actions.saveSeries(initial.tasks[0].id, values);
       assert.equal(controller.getSnapshot().repeatableTasks[0].recurrence, "monthly");
       assert(controller.getSnapshot().planner.tasks.some((item) => item.id === "exception" && item.overridden));
-      controller.actions.deleteSeries(controller.getSnapshot().planner.tasks.find((item) => item.parentRepeatableId === "r1").id);
-      assert(controller.getSnapshot().planner.tasks.filter((item) => item.parentRepeatableId === "r1")
+      controller.actions.deleteSeries(controller.getSnapshot().planner.tasks.find((item) => item.parentRepeatableId === repeatableId).id);
+      assert(controller.getSnapshot().planner.tasks.filter((item) => item.parentRepeatableId === repeatableId)
         .every((item) => item.deletedInstance || item.overridden), scope);
       await controller.flush();
     } finally { controller.destroy(); }
@@ -364,9 +395,9 @@ test("all recurrence series scopes preserve moved exceptions and deletion tombst
 
 test("moving/deleting an instance retains identity and suppresses regeneration", async () => {
   const initial = { weekStartDate: "2026-10-19", tasks: [
-    { id: "repeatable-r1-2026-10-19", parentRepeatableId: "r1", occurrenceDate: "2026-10-19", date: "2026-10-19", timeSlot: "morning", title: "Series", type: "repeatable", source: "repeating" },
+    { id: `repeatable-${repeatableId}-2026-10-19`, parentRepeatableId: repeatableId, occurrenceDate: "2026-10-19", date: "2026-10-19", timeSlot: "morning", title: "Series", type: "repeatable", source: "repeating" },
   ] };
-  const { controller } = await setup(initial, [{ id: "r1", title: "Series", source: "repeating", metadata: {} }]);
+  const { controller } = await setup(initial, [{ id: repeatableId, title: "Series", source: "repeating", metadata: {} }]);
   try {
     for (const [name, args] of [["moveTask", [initial.tasks[0].id, "2026-10-22", "evening"]], ["removeTask", [initial.tasks[0].id]], ["generateVisibleRecurringInstances", []]]) {
       controller.actions[name](...args);
@@ -417,7 +448,7 @@ test("Supabase staging deduplicates, respects curated limit and schedules repeat
     { taskId: "p0", projectId: "p0", title: "Updated staged project", source: "home" },
     { taskId: "p7", projectId: "p7", title: "Eighth project", source: "home" },
     { taskId: "p8", projectId: "p8", title: "Over limit", source: "home" },
-    { taskId: "r1", projectId: "r1", title: "Staged repeatable", source: "repeating", recurrence: "biweekly" },
+    { taskId: repeatableId, projectId: repeatableId, title: "Staged repeatable", source: "repeating", recurrence: "biweekly" },
   ];
   const { controller, environment } = await setup({ weekStartDate: "2026-10-19", tasks: [] }, [], { hm_planner_curated_tasks: curated });
   try {
@@ -472,11 +503,11 @@ test("late initialization cannot overwrite the current mount or leak subscriptio
     const second = controller.actions.initialize();
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(responses.length, 2);
-    responses[1]([{ id: "new", title: "Current mount", source: "repeating", metadata: {} }]);
+    responses[1]([{ id: repeatableId, title: "Current mount", source: "repeating", metadata: {} }]);
     await second;
     responses[0]([{ id: "old", title: "Stale mount", source: "repeating", metadata: {} }]);
     await first;
-    assert.equal(controller.getSnapshot().repeatableTasks[0].projectId, "new");
+    assert.equal(controller.getSnapshot().repeatableTasks[0].projectId, repeatableId);
     assert.equal(environment.changes.size, 1);
   } finally { controller.destroy(); }
   assert.equal(environment.changes.size, 0);

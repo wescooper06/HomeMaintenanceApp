@@ -280,16 +280,31 @@ export function createPlannerSupabaseStorage(getData) {
     });
   }
 
+  function findRepeatableMaster(tasks, projectId, taskId) {
+    const matches = tasks.filter((task) => task.projectId === projectId
+      && (metadata(task).series || clean(task.source).toLowerCase() === "repeating"));
+    if (matches.length > 1 || (taskId && matches[0]?.id !== taskId)
+      || (matches[0] && clean(matches[0].source).toLowerCase() !== "repeating")) {
+      throw new Error("Repeatable task ownership is ambiguous. Reload before assigning.");
+    }
+    return matches[0];
+  }
+
   async function getRepeatableOverrides() {
     const state = await getData().loadPlannerState();
-    return state.tasks.filter((task) => metadata(task).series).map((task) => {
+    return state.tasks.filter((task) => clean(task.source).toLowerCase() === "repeating"
+      && metadata(task).series != null).map((task) => {
+      findRepeatableMaster(state.tasks, task.projectId, task.id);
       const series = metadata(task).series;
+      if (typeof series !== "object" || Array.isArray(series)) {
+        throw new Error("Invalid Repeatable series metadata. Reload before assigning.");
+      }
       const first = state.weeklyTasks.filter((row) => row.parentRepeatableId === task.projectId)
         .sort((a, b) => a.occurrenceDate.localeCompare(b.occurrenceDate))[0];
       const startDate = task.startDate || series.startDate || first?.occurrenceDate || "";
       const weekday = series.weekdays?.[0];
       const baseDay = fullDays.find((day) => day.slice(0, 3).toLowerCase() === clean(weekday).toLowerCase());
-      return { ...series, id: task.projectId, projectId: task.projectId,
+      return { ...series, id: task.projectId, projectId: task.projectId, taskId: task.id,
         title: task.title, recurrence: series.recurrence || task.recurrence,
         interval: series.interval ?? 1, weekdays: series.weekdays || [],
         baseDay: series.baseDay || baseDay || (startDate ? fullDays[new Date(`${startDate}T12:00:00`).getDay()] : "Monday"),
@@ -303,8 +318,7 @@ export function createPlannerSupabaseStorage(getData) {
     return enqueue(async () => {
       const state = await getData().loadPlannerState();
       const updates = snapshot.map((override) => {
-        const task = state.tasks.find((item) => item.projectId === override.projectId
-          && (metadata(item).series || clean(item.source).toLowerCase() === "repeating"));
+        const task = findRepeatableMaster(state.tasks, override.projectId, override.taskId);
         const oldSeries = task ? metadata(task).series || {} : {};
         const series = { ...oldSeries, ...override };
         const oldDay = oldSeries.baseDay || fullDays.find((day) =>
@@ -314,6 +328,7 @@ export function createPlannerSupabaseStorage(getData) {
         if (override.recurrence && override.recurrence !== oldSeries.recurrence) series.interval = 1;
         delete series.id;
         delete series.projectId;
+        delete series.taskId;
         return {
           ...task, projectId: override.projectId, source: "repeating",
           title: override.title || task?.title, recurrence: override.recurrence || task?.recurrence,
