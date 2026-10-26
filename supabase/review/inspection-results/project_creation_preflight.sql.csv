@@ -1,5 +1,0 @@
-rolname,public_schema_usage,uuid_execute
-anon,true,true
-authenticated,true,true
-postgres,true,true
-service_role,true,true

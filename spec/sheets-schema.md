@@ -59,3 +59,7 @@
 | month | number | Month |
 | constraintType | enum | Ideal / Caution / Conflict |
 | notes | string | Reason |
+# Historical archive notice
+
+The Sheets schema below is retired documentation, not runtime persistence.
+Supabase is authoritative; see [current architecture](architecture.md).

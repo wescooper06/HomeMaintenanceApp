@@ -1,5 +1,10 @@
 # Phase 5 Safe Mode: parity evidence and cutover preparation
 
+Historical non-runtime record. Safe mode and legacy import were subsequently
+retired. The temporary project export mentioned below has been removed; retained
+summary/crosswalk evidence is documentation, never a runtime restore input.
+See [current architecture](architecture.md).
+
 ## Current directive: live Supabase only; historical backup excluded
 
 The owner withdrew legacy backup content from cutover entirely. Production
@@ -116,7 +121,7 @@ retired. All 29 isolated implementations remain legacy-active.
 
 This report supersedes any interpretation of passing Phase 4 tests as approval
 to remove protected consumers. See the
-[current dependency map](../www/legacy/README.md) and
+then-current legacy dependency map (subsequently retired) and
 [Phase 4 implementation report](phase4-migration.md).
 
 ## External gates recorded from the user
@@ -167,7 +172,8 @@ old mobile/static client has migrated.
 ## Repository backup inventory (read-only)
 
 One backup-named JSON file was found in this workspace:
-[`www/localStorage_backup_2026-08-13.json`](../www/localStorage_backup_2026-08-13.json).
+the backup originally stored under `www`, now retained only as
+[historical evidence](historical/localStorage_backup_2026-08-13.json).
 Only aggregate structure/counts were inspected; the file was not changed or
 imported. Files elsewhere, browser storage and installed devices were not read.
 

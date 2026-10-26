@@ -1,3 +1,5 @@
+export const TRIPS_HOME_ROUTE = "/#trips";
+
 const aliases = {
   planner: "planner",
   parking: "planner",
@@ -19,5 +21,6 @@ export function resolveLifeManagerRoute({ pathname, hash }) {
   if (pathRoute === "projects/new") return "project-create";
   if (Object.hasOwn(aliases, hashRoute)) return aliases[hashRoute];
   if (Object.hasOwn(aliases, pathRoute)) return aliases[pathRoute];
+  if (!hashRoute && (pathRoute === "" || pathRoute === "index.html")) return "planner";
   return "trips";
 }

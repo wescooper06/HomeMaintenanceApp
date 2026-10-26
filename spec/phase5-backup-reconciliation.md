@@ -1,12 +1,18 @@
-# Phase 5 backup reconciliation: offline evidence
+# Phase 5 backup reconciliation: offline historical evidence
+
+Archived, non-runtime investigation. The generated row-level reconciliation JSON
+and temporary project export were retired in final housekeeping; this summary,
+input hashes, owner crosswalk and original historical backup remain provenance
+only. The retired reconciliation command below is not runnable or authorized.
 
 **Backup gate: BLOCKED. No cutover or retirement performed.**
 SMS retirement, old-build retirement and deployed Workbench policy are approved
 by the user. This report does not execute remote trigger cancellation.
 
-The supplied projects__all_exports.csv is tab-delimited. Both local inputs are
-read-only. Hashes and all 73 classified weekly records are retained in the
-companion JSON. No title-based, numeric-prefix or row-order guess is an approved
+The supplied project export was tab-delimited. Both local inputs were
+read-only. Hashes and the summary below document the former 73-row investigation;
+the generated companion JSON was temporary output, not a restore source.
+No title-based, numeric-prefix or row-order guess is an approved
 mapping. Advisory title candidates in JSON are NOT verified identities.
 
 Inputs:

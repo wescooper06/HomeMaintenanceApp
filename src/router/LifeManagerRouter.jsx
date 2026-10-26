@@ -3,6 +3,7 @@ import { BrowserRouter, useLocation } from "react-router-dom";
 
 import MainApplication from "../components/layout/MainApplication.jsx";
 import MainNavigation from "../components/layout/MainNavigation.jsx";
+import navigationStyles from "../components/layout/MainNavigation.module.css";
 import TripsApplication from "../pages/Trips/TripsApplication.jsx";
 
 import { lifeManagerBasename, resolveLifeManagerRoute } from "./lifeManagerRoutes.js";
@@ -28,7 +29,9 @@ export function LifeManagerRoutes() {
   if (route !== "trips") return <MainApplication route={route} />;
   return (
     <>
-      <MainNavigation active="trips" />
+      <div className={navigationStyles.frame}>
+        <MainNavigation active="trips" />
+      </div>
       <TripsApplication home={location.hash.replace(/^#\/?/, "") === "trips" || location.pathname === "/trips"} />
     </>
   );

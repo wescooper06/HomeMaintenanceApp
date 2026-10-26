@@ -181,3 +181,7 @@ individually without writes before selecting a new merge policy.
 The owner selected the non-conflicting-only option. Its subsequent attempt and
 actual database rejection are recorded at the top of this report. No further
 retry is scheduled; dependent screen/build cutover remains stopped.
+# Historical archive notice
+
+This is a non-runtime Phase 6 execution record, not an instruction to retry
+imports or restore historical backups. See [current architecture](architecture.md).

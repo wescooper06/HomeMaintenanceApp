@@ -196,8 +196,12 @@ test("the actual checkbox create flow inserts only into projects_repeating and i
       assert.equal((await db.query(`select * from public.projects_${kind}`)).rows.length, 0);
     }
     assert.equal((await db.query("select id from public.projects_repeating")).rows[0].id, rows[0].id);
-    const validation = fs.readFileSync(path.join(root, "supabase", "review", "repeating_project_smoke_validation.sql"), "utf8");
-    const verified = (await db.exec(validation))[1].rows;
+    const verified = (await db.query(`select r.id,
+      a.external_id = r.external_id as external_identity_matches,
+      a.recurrence = r.recurrence as recurrence_matches
+      from public.projects_repeating r join public.projects_all a
+        on a.id = r.id and a.project_type = 'repeating'
+      where r.id = $1`, [rows[0].id])).rows;
     assert.equal(verified.length, 1);
     assert.equal(verified[0].id, rows[0].id);
     assert.equal(verified[0].external_identity_matches, true);

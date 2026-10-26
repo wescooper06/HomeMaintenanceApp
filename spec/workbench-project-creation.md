@@ -5,7 +5,7 @@ executed SQL against Supabase. The reviewed SQL remains outside the migration
 runner's directory. The checkbox change requires only application deployment;
 do not rerun the migration for this UI change. The original deployment record
 below is retained for context.
-The [live-schema review](../supabase/review/PROJECT-CREATION-REVIEW.md) supersedes
+The [canonical SQL index](../supabase/review/README.md) supersedes
 the original deployment checklist below. Schema compatibility and the
 originally missing data/privilege preflight have now passed. The canonical
 proposal also passed disposable real PostgreSQL concurrency/rollback validation
@@ -36,8 +36,9 @@ noncycling, and allocation eventually fails explicitly at bigint exhaustion.
 
 ## Reviewable implementation plan
 
-1. Obtain owner-reviewed results from the
-   [read-only inspection SQL](../supabase/inspect_project_schema.sql).
+1. Historical preparation collected owner-reviewed read-only schema results.
+   Those one-time exports/inspection scripts were retired after deployment;
+   regression schema shapes are preserved in a permanent test fixture.
 2. Compare the actual schema with the previously supplied raw-table definitions.
    Resolve unexpected columns, constraints, indexes, defaults, triggers,
    permissions, and RLS before approving deployment.
@@ -187,12 +188,10 @@ After deploying this UI and explicitly authorizing exactly one live test:
    the `create_workbench_project` request contains `p_type: "repeating"` and
    the selected `p_project.recurrence`. Note the returned UUID and PC-prefixed
    external ID; no particular counter value should be assumed.
-4. In Supabase SQL Editor run only
-   [the read-only smoke validation](../supabase/review/repeating_project_smoke_validation.sql).
-   Find that exact returned UUID. Expect `project_type = repeating`,
-   `external_identity_matches = true`, `recurrence_matches = true`, and the
-   chosen recurrence. The inner join proves visibility in both the raw table
-   and unified view; the existing Home row is excluded.
+4. Verify the exact returned UUID read-only in `projects_repeating` and
+   `projects_all`, including canonical type, returned external ID and selected
+   recurrence. Do not select ownership by title. The old title-filtered
+   investigation query was retired; local tests verify the UUID join.
 5. Confirm the repeating entry in Workbench. Stop after this one creation.
    On error, timeout or an uncertain result, do not retry: inspect the request
    and returned UUID read-only first. Do not alter either Recycle row as part

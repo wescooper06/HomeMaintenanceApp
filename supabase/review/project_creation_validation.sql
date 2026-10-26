@@ -46,12 +46,4 @@ order by r.rolname, c.relname;
 -- This UNION ALL view is not automatically updatable despite its broad ACL.
 select pg_get_viewdef('public.projects_all'::regclass, true) as view_definition;
 
--- Run after the separately authorized manual UI smoke test.
-select r.id, r.external_id, r.title, r.recurrence, r.created_at,
-       (a.id is not null) as visible_in_projects_all
-from public.projects_repeating r left join public.projects_all a
-  on a.id = r.id and a.project_type = 'repeating'
-where r.title = 'Recycle'
-order by r.created_at desc, r.id;
-
 COMMIT;

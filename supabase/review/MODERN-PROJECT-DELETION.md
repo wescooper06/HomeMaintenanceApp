@@ -1,4 +1,9 @@
-# Modern-only project deletion: prepared, NOT DEPLOYED
+# Modern-only project deletion: deployed policy and operational runbook
+
+The owner reports the canonical migration applied successfully and the workflow
+live-validated. This audit did not connect to Supabase or repeat that validation.
+Canonical SQL remains unchanged, including preparation-time comments.
+See the [SQL index](README.md) for deployed-history provenance and retained tools.
 
 This owner-approved narrowed policy supersedes the broader historical ownership
 review. The fourteen historical ownership queries are not prerequisites.
@@ -45,7 +50,7 @@ do not block under the owner's initial policy. No API, outbox or cancellation.
 
 ## Transaction, security and concurrency
 
-[Migration](202610250002_project_deletion.sql), **NOT EXECUTED**:
+[Canonical migration](202610250002_project_deletion.sql), owner-reported deployed:
 SECURITY INVOKER, empty search_path, fixed table routing, schema-qualified SQL.
 EXECUTE is granted to anon/authenticated, not PUBLIC. Existing table grants are
 unchanged. The saved live catalogs verify no RLS/custom triggers/FKs on these
@@ -85,7 +90,7 @@ After acknowledged deletion, invalidate caches, close editor and force refresh
 Workbench. If refresh fails after commit, explicitly report committed deletion
 and request reload rather than retrying deletion.
 
-## Owner deployment order (separate approval required)
+## Historical deployment order / future separately approved redeployment
 
 Canonical migration SHA-256:
 `FE7129F45EE99D9EE649C8E0D0D5332FB789E88FF703A9E455B227CBEA35745F`
@@ -143,7 +148,11 @@ entire contents into one SQL Editor query; do not execute fragments or older fil
 Catalog validation does not prove a byte-for-byte function body match, so retain
 the exact deployed SQL and its hash as the deployment record.
 
-## One owner-authorized disposable-project test
+## Historical one-project smoke-test procedure
+
+This procedure documents the completed rollout, not permission to repeat a live
+test. The old disposable identity may no longer exist. Any future destructive
+test needs fresh explicit authorization and a freshly verified disposable target.
 
 Use ONLY the already-designated Home disposable UUID
 `3ad885b1-d2dc-43e2-931c-2d802ced63f8`, external ID PA0211, after verifying its

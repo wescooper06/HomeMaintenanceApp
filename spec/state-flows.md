@@ -1,5 +1,8 @@
 # State & Flows
 
+Historical design notes. The Sheets/mobile migration flow below is retired,
+not current architecture or an execution plan. See [current architecture](architecture.md).
+
 ## Trip Status State Machine
 | Current | Allowed Next States |
 |---------|---------------------|

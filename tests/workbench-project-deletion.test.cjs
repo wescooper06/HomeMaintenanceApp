@@ -6,42 +6,19 @@ const vm = require("node:vm");
 
 const { PGlite } = require("@electric-sql/pglite");
 
-const { schema } = require("./fixtures/workbench-live-schema.cjs");
+const { schema, plannerSchema } = require("./fixtures/workbench-live-schema.cjs");
 
 const root = path.resolve(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(root, name), "utf8");
 const migration = read("supabase\\review\\202610250002_project_deletion.sql");
 const creation = read("supabase\\review\\202610250001_project_creation.sql");
 const plannerTables = ["planner_tasks", "planner_weekly_tasks", "planner_parking_lot"];
-const columnLines = read("supabase\\review\\project-deletion-inspection\\results\\02_columns.sql").trim().split(/\r?\n/);
-const header = columnLines.shift().split(",");
-const columns = columnLines.map((line) => {
-  const fields = [];
-  let value = "", quoted = false;
-  for (let i = 0; i < line.length; i += 1) {
-    if (line[i] === '"' && quoted && line[i + 1] === '"') { value += '"'; i += 1; }
-    else if (line[i] === '"') quoted = !quoted;
-    else if (line[i] === "," && !quoted) { fields.push(value); value = ""; }
-    else value += line[i];
-  }
-  fields.push(value);
-  assert.equal(fields.length, header.length, "Saved columns require a CSV parser if export changes");
-  return Object.fromEntries(header.map((key, i) => [key, fields[i]]));
-});
 
 async function fixture() {
   const db = new PGlite();
   await db.exec("create role anon; create role authenticated; create role service_role;");
   await db.exec(schema);
-  for (const table of plannerTables) {
-    const definitions = columns.filter((row) => row.schema_name === "public" && row.relation_name === table)
-      .map((row) => `"${row.column_name}" ${row.data_type}`
-        + (row.not_null === "true" ? " not null" : "")
-        + (row.column_default !== "null" ? ` default ${row.column_default}` : "")
-        + (row.column_name === "id" ? " primary key" : ""));
-    await db.exec(`create table public.${table} (${definitions.join(",")});
-      grant select, insert, update, delete on public.${table} to anon, authenticated;`);
-  }
+  await db.exec(plannerSchema);
   await db.exec(creation);
   await db.exec(migration);
   return db;

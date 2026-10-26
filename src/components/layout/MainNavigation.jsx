@@ -6,7 +6,6 @@ import { navigationLinks } from "./navigationRoutes.js";
 export default function MainNavigation({ active }) {
   return (
     <nav className={styles["hm-nav"]} aria-label="Life Manager navigation">
-      <Link to={{ pathname: "/", hash: "#planner" }}>Life Manager</Link>
       {navigationLinks.map(([route, label]) => (
         <Link key={route} id={`nav-${route}`}
           to={{ pathname: "/", hash: `#${route}` }}
