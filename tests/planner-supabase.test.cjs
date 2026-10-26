@@ -1025,7 +1025,7 @@ test("newly concurrent Project occurrences and reloaded stale client revisions f
     tasks: [{ ...state.weeklyTasks[0], date: "2026-10-27" }] }), /older revision/);
 });
 
-test("all recurrence edit scopes persist explicit removals while preserving exceptions and other projects", async () => {
+test("all recurrence edit scopes preserve same-date rows, exceptions and other projects", async () => {
   for (const scope of ["future", "this-future", "entire"]) {
     const row = { id: `repeatable-${p1}-2026-10-26`, project_id: p1, parent_rep: p1,
       title: "Series", source: "repeating", task_type: "repeatable", occurrence_date: "2026-10-26",
@@ -1057,6 +1057,122 @@ test("all recurrence edit scopes persist explicit removals while preserving exce
       assert.equal(tables.planner_weekly_tasks.find((item) => item.id === row.id).time_slot, scope === "future" ? "morning" : "evening");
     } finally { controller.destroy(); }
   }
+});
+
+function recurrenceContinuationFixture() {
+  const dates = ["2026-10-26", "2026-11-02", "2026-11-09", "2026-11-16", "2026-11-30"];
+  const rows = dates.map((date, index) => ({
+    id: `repeatable-${p1}-${date}`, project_id: p1, parent_rep: p1,
+    title: "Disposable series", source: "repeating", task_type: "repeatable",
+    occurrence_date: date, date, time_slot: "morning", bucket: "morning",
+    completed: index === 1, deleted: index === 3, deleted_instance: index === 3,
+    metadata_json: { marker: `preserve-${index}`, weeklyPosition: index },
+    checklist_json: [{ id: "first", text: "First", completed: true },
+      { id: "second", text: "Second", completed: false }],
+    reminder_json: { active: false, note: "Preserve reminder" },
+    updated_at: "2026-10-26T10:00:00",
+  }));
+  return fixture({
+    projects_all: [{ id: p1, external_id: "PC0001", project_type: "repeating",
+      title: "Disposable series", recurrence: "weekly", state: "In Progress" }],
+    projects_repeating: [{ id: p1, external_id: "PC0001", title: "Disposable series",
+      recurrence: "weekly", state: "In Progress" }],
+    planner_tasks: [{ id: t1, project_id: p1, source: "repeating", title: "Disposable series",
+      recurrence: "weekly", metadata_json: { series: { active: true, recurrence: "weekly",
+        baseDay: "Monday", startDate: dates[0], originalStartDate: dates[0], baseBucket: "Morning" } } }],
+    planner_weekly_tasks: [
+      { id: "week-settings", metadata_json: { weekStartDate: dates[0] } }, ...rows,
+      { ...clone(rows[0]), id: "overridden", occurrence_date: "2026-10-19",
+        date: "2026-11-03", overridden: true },
+      { ...clone(rows[1]), id: "unrelated-series", project_id: "other", parent_rep: "other" },
+      { ...clone(rows[1]), id: "unrelated-adhoc", project_id: null, parent_rep: null,
+        source: "adhoc", task_type: "adhoc" },
+    ],
+  });
+}
+
+test("recurrence scope edit flush navigation flush reload preserves authoritative identities and occurrence state", async () => {
+  for (const scope of ["future", "this-future", "entire"]) {
+    const { storage, tables } = recurrenceContinuationFixture();
+    const controller = incidentController(storage);
+    let reload;
+    try {
+      await controller.actions.initialize();
+      const before = clone(tables.planner_weekly_tasks);
+      controller.actions.saveSeries(`repeatable-${p1}-2026-10-26`, {
+        recurrence: "weekly", baseDay: "Monday", baseBucket: "Evening", applyScope: scope,
+      });
+      await controller.flush();
+      for (const days of [7, 7, 7]) {
+        controller.actions.shiftPlannerWeek(days);
+        await controller.flush();
+      }
+      reload = incidentController(storage);
+      await reload.actions.initialize();
+      await reload.flush();
+      const loaded = reload.getSnapshot().planner.tasks;
+      for (const row of before.filter((item) => item.id !== "week-settings")) {
+        const actual = tables.planner_weekly_tasks.find((item) => item.id === row.id);
+        const changes = row.parent_rep === p1 && !row.overridden && !row.deleted
+          && (scope !== "future" || row.date > "2026-10-26");
+        if (!changes) assert.deepEqual(actual, row);
+        else {
+          assert.equal(actual.time_slot, "evening");
+          assert.equal(actual.bucket, "evening");
+          const unchanged = (item) => {
+            const result = clone(item);
+            for (const key of ["time_slot", "bucket", "recurrence", "updated_at"]) delete result[key];
+            return result;
+          };
+          assert.deepEqual(unchanged(actual), unchanged(row));
+        }
+        assert.equal(loaded.find((item) => item.id === row.id).updatedAt, actual.updated_at);
+        assert.equal(tables.planner_weekly_tasks.filter((item) => item.id === row.id).length, 1);
+      }
+      const future = `repeatable-${p1}-2026-11-02`;
+      assert.equal(loaded.filter((item) => item.id === future && !item.deleted && !item.deletedInstance).length, 1);
+      reload.actions.shiftPlannerWeek(-14);
+      await reload.flush();
+      reload.actions.setTaskCompleted(future, "mon", "evening", false);
+      await reload.flush();
+      const winning = tables.planner_weekly_tasks.find((item) => item.id === future);
+      winning.title = "Concurrent newer state";
+      winning.updated_at = "2099-01-01T00:00:00";
+      const concurrent = clone(winning);
+      reload.actions.setTaskCompleted(future, "mon", "evening", true);
+      await assert.rejects(reload.flush(), /changed in another session/);
+      assert.deepEqual(winning, concurrent);
+    } finally { controller.destroy(); reload?.destroy(); }
+  }
+});
+
+test("recurrence pattern changes retire only obsolete generated dates without moving history or reviving deletions", async () => {
+  const { storage, tables } = recurrenceContinuationFixture();
+  const controller = incidentController(storage);
+  try {
+    await controller.actions.initialize();
+    const before = clone(tables.planner_weekly_tasks);
+    controller.actions.saveSeries(`repeatable-${p1}-2026-10-26`, {
+      recurrence: "biweekly", baseDay: "Monday", baseBucket: "Evening", applyScope: "future",
+    });
+    await controller.flush();
+    controller.actions.shiftPlannerWeek(7);
+    await controller.flush();
+    controller.actions.shiftPlannerWeek(7);
+    await controller.flush();
+    for (const row of before.filter((item) => item.id !== "week-settings")) {
+      const actual = tables.planner_weekly_tasks.find((item) => item.id === row.id);
+      assert.deepEqual(actual.checklist_json, row.checklist_json);
+      assert.equal(actual.completed, row.completed);
+      if (row.date === "2026-11-09" && row.parent_rep === p1) {
+        assert.equal(actual.time_slot, "evening");
+        assert.equal(actual.deleted, false);
+      } else if (row.id === `repeatable-${p1}-2026-11-30`) {
+        assert.equal(actual.deleted, true);
+        assert.equal(actual.deleted_instance, true);
+      } else if (row.id !== `repeatable-${p1}-2026-10-26`) assert.deepEqual(actual, row);
+    }
+  } finally { controller.destroy(); }
 });
 
 test("approved templates hydrate on reload and explicit fresh creation cannot overwrite a same-day occurrence", async () => {

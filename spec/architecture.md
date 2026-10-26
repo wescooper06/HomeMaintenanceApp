@@ -43,6 +43,16 @@ weekly IDs in `deletedTaskIds`; the data-access boundary requires
 flag. Recurrence exceptions retain their occurrence identity and suppression
 tombstones. Project deletion remains the separate UUID/type-scoped cascade RPC.
 
+Recurrence edits reconcile all loaded generated occurrences in the selected
+scope, including future weeks not currently visible. A date still present in
+the edited pattern continues the same row: only its bucket and recurrence
+change, retaining its revision, checklist IDs/order/completion, task completion,
+reminder data and unrelated state. Overridden or deleted occurrences are not
+rewritten or revived. Generated dates no longer in the pattern are explicitly
+tombstoned with their history retained; newly scheduled dates have new
+deterministic date identities and start as normal new generated occurrences.
+Historical checklists are not transferred between different date identities.
+
 Weekly edits compare the loaded/submitted baseline with a fresh read, skip
 unchanged rows, and condition existing-row updates on their exact `updated_at`
 revision (including null). Conflicts surface an error and block further

@@ -2088,14 +2088,23 @@ export function createPlannerController({ reminderService = calendarReminders } 
     return state.repeatableTasks.find((master) => cleanText(master.id || master.projectId, "") === parentId) || null;
   }
 
-  function removeGeneratedSeriesInstances(parentRepeatableId, fromDate) {
-    const parentId = cleanText(parentRepeatableId, "");
+  function updateGeneratedSeriesInstances(master, fromDate) {
+    const parentId = cleanText(master.id || master.projectId, "");
     const threshold = cleanText(fromDate, "");
-    requireCancelledReminders(state.planner.tasks.filter((item) =>
-      cleanText(item.parentRepeatableId, "") === parentId && !item.overridden
-      && (!threshold || cleanText(item.occurrenceDate, item.date) >= threshold)));
-    removeWeeklyRows((item) => cleanText(item.parentRepeatableId, "") === parentId && !item.overridden
-      && (!threshold || cleanText(item.occurrenceDate, item.date) >= threshold));
+    const removedIds = new Set();
+    for (const item of state.planner.tasks) {
+      const occurrenceDate = cleanText(item.occurrenceDate, item.date);
+      if (cleanText(item.parentRepeatableId, "") !== parentId || item.overridden
+        || item.deleted || item.deletedInstance || (threshold && occurrenceDate < threshold)) continue;
+      if (!getOccurrenceDatesInRange(master, occurrenceDate, occurrenceDate).includes(occurrenceDate)) {
+        removedIds.add(item.id);
+        continue;
+      }
+      item.timeSlot = cleanText(master.baseBucket, "Morning").toLowerCase();
+      item.bucket = item.timeSlot;
+      item.recurrence = master.recurrence;
+    }
+    removeWeeklyRows((item) => removedIds.has(item.id));
   }
 
   function saveSeriesChanges(master, currentInstance, values) {
@@ -2118,18 +2127,6 @@ export function createPlannerController({ reminderService = calendarReminders } 
     if (values.applyScope === "this-future") {
       master.startDate = alignDateToSeriesPattern(currentDate, master.recurrence, master.baseDay, master.monthWeek);
       threshold = master.startDate;
-      removeGeneratedSeriesInstances(parentId, threshold);
-      currentInstance.occurrenceDate = master.startDate;
-      currentInstance.date = master.startDate;
-      currentInstance.timeSlot = master.baseBucket.toLowerCase();
-      currentInstance.bucket = currentInstance.timeSlot;
-      currentInstance.recurrence = master.recurrence;
-      currentInstance.overridden = false;
-      currentInstance.deletedInstance = false;
-      currentInstance.deleted = false;
-      if (!state.planner.tasks.includes(currentInstance)) {
-        state.planner.tasks.push(currentInstance);
-      }
     } else if (values.applyScope === "entire") {
       threshold = "";
       const originalStart = cleanText(master.originalStartDate, master.startDate || currentDate);
@@ -2141,9 +2138,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       threshold = master.startDate;
     }
 
-    if (values.applyScope !== "this-future") {
-      removeGeneratedSeriesInstances(parentId, threshold);
-    }
+    updateGeneratedSeriesInstances(master, threshold);
     persistRepeatableMaster(master);
     generateVisibleRecurringInstances();
     savePlanner();
