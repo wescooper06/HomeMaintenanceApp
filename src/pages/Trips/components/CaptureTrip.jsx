@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+
 import { createTrip, updateTrip } from "../../../services/tripsService.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -76,9 +77,9 @@ export default function CaptureTrip({ onClose, trip, onSave, expanded = false })
     setError("");
     try {
       tripId.current ??= crypto.randomUUID();
-      const savedTrip = { ...fields, destination, tripId: tripId.current };
-      if (trip?.tripId) await updateTrip(trip.tripId, savedTrip);
-      else await createTrip(savedTrip);
+      const values = { ...fields, destination, tripId: tripId.current };
+      const savedTrip = trip?.tripId
+        ? await updateTrip(trip.tripId, values) : await createTrip(values);
       onSave?.(savedTrip);
       onClose(savedTrip);
     } catch (saveError) {

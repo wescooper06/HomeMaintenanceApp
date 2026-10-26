@@ -1,0 +1,29 @@
+{
+  "context": "Owner-supplied authoritative legacy-to-modern crosswalk for the 2026-08-13 backup. All numeric identities have owner decisions. Null entries are explicitly retired and must not be imported, merged or inferred. Mappings 101, 102, 106 and 107 may remain uncorroborated for safe-mode planning. UUID syntax remains mandatory for executable mappings. No title-based fallback, imports, destructive operations or protected cutover are authorized by this file.",
+  "reconciliationPolicy": {
+    "mode": "safe",
+    "allowUncorroboratedLegacyIds": ["101", "102", "106", "107"],
+    "titleFallback": false
+  },
+  "legacyProjectIdMap": {
+    "100": { "external_id": "PC0001", "uuid": "d3d55965-4ccd-49a4-893b-1ae544021c77" },
+    "101": { "external_id": "101", "uuid": "1f872b31-1067-4219-b7c3-1cf706b733da" },
+    "102": { "external_id": "102", "uuid": "8219283b-a796-4ffb-98a9-441df6fced1b" },
+    "103": { "external_id": "PC0004", "uuid": "7ed9d827-89c5-4741-8e2d-a1f2ca0cfced" },
+    "104": null,
+    "105": null,
+    "106": { "external_id": "106", "uuid": "3329de1a-c792-4f53-837e-cc5dae0eb88" },
+    "107": { "external_id": "107", "uuid": "00d6e300-3bb7-4d6a-9d7e-cfddde60a377" },
+    "108": null,
+    "137": { "external_id": "PA0187", "uuid": "c2639d89-8c04-4d01-9ff1-6b2ae060d0db" },
+    "139": { "external_id": "PA0189", "uuid": "4f491f7a-233f-45d0-b1a9-813e8cf36ad8" },
+    "159": { "external_id": "PA0031", "uuid": "0521cdec-8f70-4ae1-846c-b11f5538aee7" },
+    "189": { "external_id": "PA0057", "uuid": "5a903589-95fd-440f-92de-25056129c6b8" },
+    "233": { "external_id": "PA0096", "uuid": "fb1a78bd-a0f1-42a1-b329-c5db71574880" },
+    "294": { "external_id": "PA0199", "uuid": "1300b289-19ae-48fa-8f46-28a92ffe6a8d" },
+    "302": { "external_id": "PA0202", "uuid": "630a12e3-b9f2-4e27-8311-dccf37065622" },
+    "303": { "external_id": "PA0159", "uuid": "a8ef4ebf-50fe-4157-89f5-817595f26873" },
+    "304": { "external_id": "PA0160", "uuid": "43a28669-1a01-44eb-b98c-3081e1e10efb" },
+    "309": null
+  }
+}

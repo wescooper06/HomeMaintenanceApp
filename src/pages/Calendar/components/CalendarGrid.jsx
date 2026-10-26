@@ -1,7 +1,8 @@
-import styles from "../CalendarPage.module.css";
-import useCalendarState from "./useCalendarState.js";
-import CalendarEventList from "./CalendarEventList.jsx";
 import { getCalendarLabels } from "../../../services/calendarService.js";
+import styles from "../CalendarPage.module.css";
+
+import CalendarEventList from "./CalendarEventList.jsx";
+import useCalendarState from "./useCalendarState.js";
 
 export function CalendarDay({ day }) {
   const { snapshot, actions } = useCalendarState();

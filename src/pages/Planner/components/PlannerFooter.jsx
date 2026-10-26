@@ -1,14 +1,17 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
-import { usePlanner } from "./usePlanner.js";
-import PlannerMoveTaskModal from "./PlannerMoveTaskModal.jsx";
+
+import styles from "../PlannerPage.module.css";
+
+import { AdhocChecklistModal } from "./Checklist.jsx";
 import MasterProjectTitleEditor from "./MasterProjectTitleEditor.jsx";
+import PlannerMoveTaskModal from "./PlannerMoveTaskModal.jsx";
+import ReminderModal from "./ReminderModal.jsx";
 import RepeatableSeriesEditor from "./RepeatableSeriesEditor.jsx";
 import ResourceLinks from "./ResourceLinks.jsx";
+import { usePlanner } from "./usePlanner.js";
 import WeatherModal from "./WeatherModal.jsx";
-import ReminderModal from "./ReminderModal.jsx";
-import { AdhocChecklistModal } from "./Checklist.jsx";
-import styles from "../PlannerPage.module.css";
+
 
 export default function PlannerFooter() {
   const { snapshot, actions } = usePlanner();

@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowLeft, CalendarDays, GripVertical } from "lucide-react";
-import TripEditorPanel from "./components/TripEditorPanel.jsx";
-import PriorityTimelinePreview from "./components/PriorityTimelinePreview.jsx";
-import { ensureTripPriorityColumn, getTrips, updateTrip } from "../../services/tripsService.js";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+
+import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
+import { getTrips, updateTrip } from "../../services/tripsService.js";
 import { prioritizedTrips, tripPriority } from "../../utils/priorityUtils.js";
+
+import PriorityTimelinePreview from "./components/PriorityTimelinePreview.jsx";
+import TripEditorPanel from "./components/TripEditorPanel.jsx";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -86,8 +89,6 @@ export default function PrioritizeTrips() {
     let active = true;
     async function load() {
       try {
-        await ensureTripPriorityColumn();
-        if (!active) return;
         let trips = await getTrips();
         if (!active) return;
         const ordered = prioritizedTrips(trips);
@@ -199,7 +200,7 @@ export default function PrioritizeTrips() {
         <div className="prioritize-header-actions">
           <span role="status">{syncStatus === "loading" ? "Loading..." : syncStatus === "pending" ? "Changes pending" : syncStatus === "saving" ? "Saving..." : syncStatus === "ready" ? "Synced" : "Sync failed"}</span>
           <Link to="/timeline" aria-disabled={syncStatus !== "ready"} tabIndex={syncStatus === "ready" ? 0 : -1} onClick={(event) => { if (syncStatus !== "ready") event.preventDefault(); }}><CalendarDays size={16} aria-hidden="true" />Timeline</Link>
-          <button type="button" disabled={syncStatus !== "ready"} onClick={() => navigate("/")}><ArrowLeft size={16} aria-hidden="true" />Back to Trips</button>
+          <button type="button" disabled={syncStatus !== "ready"} onClick={() => navigate(TRIPS_HOME_ROUTE)}><ArrowLeft size={16} aria-hidden="true" />Back to Trips</button>
         </div>
       </header>
       {error && <div className="priority-error" role="alert"><p>{error}</p><button type="button" onClick={retry}>Retry</button></div>}

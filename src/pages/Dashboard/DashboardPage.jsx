@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
 import { loadDashboard } from "../../services/dashboardService.js";
+
 import styles from "./DashboardPage.module.css";
 
 export default function DashboardPage() {

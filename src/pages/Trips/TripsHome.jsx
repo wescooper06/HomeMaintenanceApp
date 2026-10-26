@@ -1,15 +1,14 @@
-// Trips Home Page
-// Displays active trips from the Trips sheet.
-// Uses getTrips() from sheetsClient.js.
-// Allows opening a trip and adding a new one.
-import { useEffect, useRef, useState } from "react";
-import { deleteTrip, getTrips } from "../../services/tripsService.js";
-import { Link, useNavigate } from "react-router-dom";
 import { CalendarDays, ListOrdered } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+
+import { deleteTrip, getTrips } from "../../services/tripsService.js";
+import { tripPriority } from "../../utils/priorityUtils.js";
+
 import CaptureTrip from "./components/CaptureTrip.jsx";
 import TripEditorPanel from "./components/TripEditorPanel.jsx";
 import ViewTripModal from "./components/ViewTripModal.jsx";
-import { tripPriority } from "../../utils/priorityUtils.js";
+
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const STATUSES = ["Idea", "Shortlisted", "Active", "Paused", "Deferred"];
@@ -229,7 +228,7 @@ export default function TripsHome() {
     setActionError("");
     let deleted = false;
     try {
-      await deleteTrip(trip.id ?? trip.tripId);
+      await deleteTrip(trip.tripId);
       deleted = true;
       setTrips((current) => current.filter((item) => item.tripId !== trip.tripId));
       setTrips(await getTrips());

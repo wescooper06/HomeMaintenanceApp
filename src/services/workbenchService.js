@@ -1,15 +1,17 @@
-import { plannerStorage } from "./plannerSupabaseStorage.js";
 import { parseResourceLinkEntries } from "./plannerService.js";
+import { plannerStorage } from "./plannerSupabaseStorage.js";
 
 export const clean = (value, fallback = "") => String(value ?? "").trim() || fallback;
 export const number = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
+export function canDeleteProject(project) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(project?.id || "")
+    && project.id !== "00000000-0000-0000-0000-000000000000"
+    && ["home", "vehicle", "repeating", "misc"].includes(project.source);
+}
+
 export function sourceTag(value) {
   const source = clean(value, "unknown").toLowerCase();
-  if (source.includes("vehicle") || source.includes("list_b")) return "vehicle";
-  if (source.includes("repeating") || source.includes("list_c")) return "repeating";
-  if (source.includes("home") || source.includes("list_a")) return "home";
-  if (source.includes("misc") || source.includes("list_d")) return "misc";
   return source;
 }
 
@@ -93,6 +95,44 @@ export async function addProjectTask(project, tasks) {
   });
 }
 
+export async function createProject(values) {
+  const selectedSource = sourceTag(values.source);
+  if (!["home", "vehicle", "repeating", "misc"].includes(selectedSource)) {
+    throw new Error("Select a valid project type.");
+  }
+
+  const explicitRepeating = Object.hasOwn(values, "repeatingProject");
+  if (explicitRepeating && typeof values.repeatingProject !== "boolean") {
+    throw new Error("Repeating project must be a boolean.");
+  }
+  if (explicitRepeating && selectedSource === "repeating") {
+    throw new Error("Select a non-repeating project type and use the Repeating project checkbox.");
+  }
+  const source = values.repeatingProject === true ? "repeating" : selectedSource;
+  const recurrence = source === "repeating" ? clean(values.recurrence) : "";
+  const title = clean(values.title);
+  if (!title) throw new Error("Project title is required.");
+  if (source === "repeating" && !recurrence) {
+    throw new Error("Recurrence is required for repeating projects.");
+  }
+  const metadata = {};
+  for (const key of ["priority", "order", "property", "area", "actualCost", "dateCompleted",
+    "vehicle", "mileage", "engineHours", "mechanic", "serviceDescription", "maintenanceChecks",
+    "resourceLinks", "notes"]) {
+    if (values[key] != null && values[key] !== "") metadata[key] = values[key];
+  }
+  return plannerStorage.createProject({
+    source, title, category: clean(values.category, "uncategorized"),
+    state: clean(values.state, "Not Started"), priority: clean(values.priority),
+    order: clean(values.order), recurrence,
+    metadata,
+  });
+}
+
+export function deleteProject(project) {
+  return plannerStorage.deleteProject(project);
+}
+
 export async function moveTask(task, tasks, action) {
   const repeating = sourceTag(task.source) === "repeating";
   const ordered = tasks.filter((item) => (sourceTag(item.source) === "repeating") === repeating)
@@ -150,8 +190,7 @@ export async function sendWeekly(task, taskCount) {
   });
   const planner = await plannerStorage.getWeeklyPlanner();
   const generated = (Array.isArray(planner?.tasks) ? planner.tasks : []).filter((item) =>
-    !item.overridden && (clean(item.parentRepeatableId) === projectId
-      || clean(item.id || item.taskId).startsWith(`repeatable-${projectId}-`))
+    !item.overridden && clean(item.parentRepeatableId) === projectId
   );
   await Promise.all(generated.map((item) =>
     plannerStorage.deleteWeeklyTask(clean(item.id || item.taskId), { hardDelete: true })
@@ -159,13 +198,7 @@ export async function sendWeekly(task, taskCount) {
   return { task: saved, message: `Added "${task.title}" to Repeatable Tasks. Drag it onto a day to schedule it.` };
 }
 
-export const ADD_FIELDS = [
-  ["title", "Title"], ["source", "Source (home, vehicle, repeating, or misc)"],
-  ["category", "Category"], ["state", "State"], ["priority", "Priority"],
-  ["order", "Order"], ["area", "Area"], ["property", "Property"],
-  ["vehicle", "Vehicle / Engine"], ["cost", "Cost"], ["resourceLinks", "Resource Links"],
-  ["notes", "Notes"],
-];
+
 export const FIELD_OPTIONS = {
   source: ["home", "vehicle", "repeating", "misc"],
   category: ["Repair", "Maintenance", "Build", "Organize", "Install", "Clean", "SAR", "Travel", "Family", "Miscellaneous"],
@@ -173,7 +206,7 @@ export const FIELD_OPTIONS = {
   priority: ["Low", "Medium", "High", "1", "2", "3", "4", "5"],
   area: ["Apartment", "Garage", "Yard", "Kitchen", "Bathroom", "Exterior"],
 };
-export const RECURRENCE_OPTIONS = ["Daily", "Weekly", "Bi-Weekly", "Monthly", "Quarterly", "Semi-Annual", "Annual"];
+
 export const EDIT_OPTIONS = {
   ...FIELD_OPTIONS,
   category: FIELD_OPTIONS.category.slice(0, 6),
@@ -211,17 +244,7 @@ export function getEditFields(project) {
   return fields;
 }
 
-export async function createProject(values) {
-  const source = sourceTag(values.source);
-  if (!["home", "vehicle", "repeating", "misc"].includes(source)) throw new Error("Select a project source.");
-  if (!clean(values.title) || !clean(values.category) || !clean(values.state)) throw new Error("Title, category, and state are required.");
-  if ((source === "repeating" || values.addToRepeating) && !clean(values.recurrence)) {
-    throw new Error("Recurrance is required for repeating projects.");
-  }
-  return plannerStorage.createProject({
-    ...values, source, recurrence: clean(values.recurrence), addToRepeating: Boolean(values.addToRepeating),
-  });
-}
+
 
 export async function updateProject(project, values) {
   const updated = { ...project, metadata: { ...project.metadata } };
@@ -238,8 +261,6 @@ export async function updateProject(project, values) {
     if (core.has(key)) updated[key] = value;
     else updated.metadata[key] = value;
   });
-  updated.metadata._originalTitle = clean(updated.metadata._originalTitle, clean(project.title));
-  updated.metadata._originalId = clean(updated.metadata._originalId, clean(project.id));
   const result = await plannerStorage.updateProject(updated);
   if (result?.ok === false) throw new Error(clean(result.error, "Unable to save project."));
   return updated;
@@ -249,29 +270,4 @@ export function cacheProjects(projects) {
   plannerStorage.setCachedProjects(projects);
 }
 
-export async function deleteProject(project) {
-  const result = await plannerStorage.deleteProject(project);
-  if (result?.ok === false) throw new Error(result.error || "Unable to delete project.");
-}
 
-export const AGENT_EXAMPLE = 'Try: create a new project under the Home category called "Test Project"';
-
-export function parseCommand(command) {
-  const text = clean(command);
-  const lower = text.toLowerCase();
-  if (!text) return { intent: "unknown" };
-  if (lower === "help" || lower === "commands") return { intent: "help" };
-  if (lower.includes("clear")) return { intent: "clear" };
-  const match = text.match(/(?:create|add|new|make)\s+(?:a\s+)?(?:new\s+)?project(?:\s+under\s+the\s+(?<source>home|vehicle|repeating))?/i);
-  if (!match) return { intent: "unknown" };
-  const quoted = text.match(/["\u201c\u201d']([^"\u201c\u201d']+)["\u201c\u201d']/);
-  const title = quoted?.[1]?.trim() || text
-    .replace(/^(?:create|add|new|make)\s+(?:a\s+)?(?:new\s+)?project(?:\s+under\s+the\s+(?:home|vehicle|repeating))?(?:\s+category)?(?:\s+called\s+|\s+named\s+|\s+titled\s+|\s+as\s+)?/i, "")
-    .replace(/^[\s:,-]+/, "").replace(/^["\u201c\u201d']|["\u201c\u201d']$/g, "").trim() || "Test Project";
-  return { intent: "create-project", source: clean(match.groups?.source, "home").toLowerCase(), title, category: "Repair", state: "Not Started", order: "0" };
-}
-
-export async function createAgentProject(command) {
-  const result = await plannerStorage.createProject(command);
-  return { message: `Created project ${result.id} in ${result.tabName}.`, local: false };
-}

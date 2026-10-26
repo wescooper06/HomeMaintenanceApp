@@ -1,4 +1,5 @@
 import { createPlannerDataAccess } from "./plannerDataAccess.js";
+import { assertProjectWriteAllowed } from "./projectPolicy.js";
 import { getSupabaseClient } from "./supabaseClient.js";
 
 const copy = (value) => structuredClone(value);
@@ -49,8 +50,21 @@ export function createPlannerSupabaseStorage(getData) {
     return saved;
   }
 
-  function unsupportedProjectWrite() {
-    throw new Error("Only edits to existing projects are enabled. Creating, moving, or deleting raw project rows is not authorized.");
+  async function createProject(project) {
+    assertProjectWriteAllowed("create");
+    const saved = await getData().createProject(copy(project));
+    projects = null;
+    emit({ type: "project-created", item: saved });
+    return saved;
+  }
+
+  async function deleteProject(project) {
+    assertProjectWriteAllowed("deleteWorkbench");
+    const result = await enqueue(() => getData().deleteProject(copy(project)));
+    projects = null;
+    weekly = [];
+    emit({ type: "project-deleted", id: result.id });
+    return result;
   }
 
   async function getWeeklyPlanner() {
@@ -67,6 +81,7 @@ export function createPlannerSupabaseStorage(getData) {
       for (const task of current.weeklyTasks) {
         if (!ids.has(task.id)) next.push({ ...task, deleted: true, deletedInstance: true });
       }
+
       const baseline = new Map(weekly.map((task) => [task.id, task]));
       const changed = next.filter((task) => JSON.stringify(task) !== JSON.stringify(baseline.get(task.id)));
       await getData().savePlannerState({
@@ -79,6 +94,19 @@ export function createPlannerSupabaseStorage(getData) {
 
   async function getTaskManager() {
     return (await loadPlannerState()).tasks;
+  }
+
+  function restorePlannerState(changes) {
+    const snapshot = copy(changes);
+    return enqueue(async () => {
+      const result = await getData().restorePlannerState(snapshot);
+      try { weekly = copy((await getData().loadPlannerState()).weeklyTasks); }
+      catch (error) {
+        throw new Error(`Backup rows were saved, but reloading Planner failed. Refresh and preview again before retrying. ${error.message}`, { cause: error });
+      }
+      emit({ type: "backup-restored" });
+      return result;
+    });
   }
 
   async function upsertTaskManagerTask(task) {
@@ -199,7 +227,7 @@ export function createPlannerSupabaseStorage(getData) {
       const state = await getData().loadPlannerState();
       const updates = snapshot.map((override) => {
         const task = state.tasks.find((item) => item.projectId === override.projectId
-          && (metadata(item).series || ["repeating", "project list_c"].includes(clean(item.source).toLowerCase())));
+          && (metadata(item).series || clean(item.source).toLowerCase() === "repeating"));
         const oldSeries = task ? metadata(task).series || {} : {};
         const series = { ...oldSeries, ...override };
         const oldDay = oldSeries.baseDay || fullDays.find((day) =>
@@ -250,8 +278,8 @@ export function createPlannerSupabaseStorage(getData) {
   }
 
   return {
-    loadPlannerState, savePlannerState, getProjects, updateProject,
-    createProject: unsupportedProjectWrite, deleteProject: unsupportedProjectWrite,
+    loadPlannerState, savePlannerState, restorePlannerState, getProjects, updateProject,
+    createProject, deleteProject,
     getWeeklyPlanner, saveWeeklyPlannerState, upsertWeeklyTask, deleteWeeklyTask,
     getParkingLot: async () => (await loadPlannerState()).parkingItems,
     upsertParkingItem, deleteParkingItem,

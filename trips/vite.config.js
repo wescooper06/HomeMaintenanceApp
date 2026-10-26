@@ -1,14 +1,14 @@
-import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import { sharedNavPlugin } from './shared-nav-plugin.js'
+
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
 
 const require = createRequire(import.meta.url)
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), sharedNavPlugin()],
+  plugins: [react()],
   base: './',
   resolve: {
     alias: [

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+
+import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import {
   getTrips,
-  getWorkflowMetadata,
-  updateWorkflowMetadata,
 } from "../../services/tripsService.js";
+import { getWorkflowMetadata, updateWorkflowMetadata } from "../../services/tripsWorkflowService.js";
 
 export default function TripDetails() {
   const { tripId } = useParams();
@@ -16,6 +17,9 @@ export default function TripDetails() {
 
   const [stage, setStage] = useState("Define");
   const [stageNotes, setStageNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -45,8 +49,18 @@ export default function TripDetails() {
   }, [tripId]);
 
   async function handleSaveWorkflow() {
-    await updateWorkflowMetadata(tripId, { stage, stageNotes });
-    alert("Workflow updated.");
+    if (saving) return;
+    setSaving(true);
+    setSaveError("");
+    setNotice("");
+    try {
+      await updateWorkflowMetadata(tripId, { stage, stageNotes });
+      setNotice("Workflow updated.");
+    } catch (workflowError) {
+      setSaveError(workflowError.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) return <p className="page">Loading trip...</p>;
@@ -70,7 +84,9 @@ export default function TripDetails() {
       <div className="card">
         <label>
           Stage:
-          <select value={stage} onChange={(e) => setStage(e.target.value)}>
+          <select disabled={saving} value={stage} onChange={(e) => setStage(e.target.value)}>
+            {!["Define", "Research", "Book", "Prepare", "Itinerary", "Travel", "Review"].includes(stage) &&
+              <option value={stage}>{stage || "Not set"}</option>}
             <option value="Define">Define</option>
             <option value="Research">Research</option>
             <option value="Book">Book</option>
@@ -87,13 +103,16 @@ export default function TripDetails() {
             value={stageNotes}
             onChange={(e) => setStageNotes(e.target.value)}
             rows={4}
+            disabled={saving}
           />
         </label>
 
-        <button onClick={handleSaveWorkflow}>Save Workflow</button>
+        {saveError && <p role="alert">{saveError}</p>}
+        {notice && <p role="status">{notice}</p>}
+        <button disabled={saving} onClick={handleSaveWorkflow}>{saving ? "Saving..." : "Save Workflow"}</button>
       </div>
 
-      <button className="button-secondary" onClick={() => navigate("/")}>
+      <button className="button-secondary" onClick={() => navigate(TRIPS_HOME_ROUTE)}>
         Back to Trips
       </button>
     </div>

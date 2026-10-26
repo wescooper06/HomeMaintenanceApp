@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+
 import { getTripById, updateTrip } from "../../../services/tripsService.js";
+import { getWorkflowMetadata, updateWorkflowMetadata } from "../../../services/tripsWorkflowService.js";
 import { tripPriority } from "../../../utils/priorityUtils.js";
 import "./TripEditorPanel.css";
 
@@ -17,6 +19,7 @@ function tripFields(trip) {
 export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyChange }) {
   const [fields, setFields] = useState(() => tripFields(selectedTrip));
   const [loadedTrip, setLoadedTrip] = useState(selectedTrip);
+  const [workflow, setWorkflow] = useState({ stage: "Define", stageNotes: "" });
   const [tab, setTab] = useState("details");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -28,10 +31,11 @@ export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyC
   useEffect(() => {
     if (!tripId) return;
     let active = true;
-    getTripById(tripId).then((trip) => {
+    Promise.all([getTripById(tripId), getWorkflowMetadata(tripId)]).then(([trip, metadata]) => {
       if (!active) return;
       if (!trip) throw new Error("Trip no longer exists.");
       setLoadedTrip(trip);
+      setWorkflow({ stage: metadata.stage, stageNotes: metadata.stageNotes });
       setFields(tripFields(trip));
       setLoading(false);
       setError("");
@@ -68,6 +72,7 @@ export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyC
     setNotice("");
     try {
       await updateTrip(tripId, { ...fields, destination });
+      await updateWorkflowMetadata(tripId, workflow);
       const savedTrip = await getTripById(tripId);
       if (!savedTrip) throw new Error("Trip no longer exists.");
       setLoadedTrip(savedTrip);
@@ -75,7 +80,7 @@ export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyC
       await onSave?.(savedTrip);
       setNotice("Trip saved.");
     } catch (saveError) {
-      setError(saveError.message || "Unable to save trip.");
+      setError(`Save failed; trip details may already be saved. Retry to finish. ${saveError.message}`);
     } finally {
       setSaving(false);
       onBusyChange?.(false);
@@ -91,7 +96,7 @@ export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyC
       <div className="trip-modal-badges"><span className={`trip-status trip-status-${fields.status.toLowerCase().replace(/\s/g, "-")}`}>{fields.status}</span><output className="trip-priority-badge" aria-label="Priority">{priority === null ? "Not prioritized" : `Priority #${priority}`}</output></div>
     </header>
     <div className="trip-modal-tabs" role="tablist" aria-label="Trip fields">
-      {["details", "planning"].map((name) => <button key={name} type="button" role="tab" id={`trip-editor-tab-${name}`} aria-controls={`trip-editor-fields-${name}`} aria-selected={tab === name} disabled={loading || saving} onClick={() => setTab(name)}>{name === "details" ? "Details" : "Planning"}</button>)}
+      {["details", "planning", "workflow"].map((name) => <button key={name} type="button" role="tab" id={`trip-editor-tab-${name}`} aria-controls={`trip-editor-fields-${name}`} aria-selected={tab === name} disabled={loading || saving} onClick={() => setTab(name)}>{name === "details" ? "Details" : name === "planning" ? "Planning" : "Workflow"}</button>)}
     </div>
     <form onSubmit={saveTrip} aria-label="Edit trip" aria-busy={loading || saving}>
       <fieldset disabled={loading || saving} className="capture-fields">
@@ -114,6 +119,12 @@ export default function TripEditorPanel({ selectedTrip, onSave, onClose, onBusyC
           <div className="capture-pair">{textField("duration", "Duration")}{textField("costRange", "Estimated Cost Range")}</div>
           <div className="capture-pair">{noteField("links", "Links")}{noteField("seasonality", "Seasonality Notes")}</div>
           {noteField("considerations", "Considerations")}{textField("tags", "Tags")}
+        </div>
+        <div role="tabpanel" id="trip-editor-fields-workflow" aria-labelledby="trip-editor-tab-workflow" hidden={tab !== "workflow"}>
+          <label>Workflow stage<select value={workflow.stage} onChange={(event) => setWorkflow((current) => ({ ...current, stage: event.target.value }))}>
+            {[...new Set(["Define", "Research", "Book", "Prepare", "Itinerary", "Travel", "Review", workflow.stage])].map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+          </select></label>
+          <label>Stage notes<textarea rows={4} value={workflow.stageNotes} onChange={(event) => setWorkflow((current) => ({ ...current, stageNotes: event.target.value }))} /></label>
         </div>
       </fieldset>
       <footer className="trip-modal-footer">

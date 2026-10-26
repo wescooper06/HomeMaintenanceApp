@@ -1,12 +1,16 @@
+import { ArrowLeft, ListOrdered } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, ListOrdered } from "lucide-react";
-import TimelineGrid from "./components/TimelineGrid.jsx";
-import TripEditorPanel from "./components/TripEditorPanel.jsx";
+
+import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
+import { assignTripToMonth, getTrips } from "../../services/tripsService.js";
+import { getTimeline, propagateTimelineYear } from "../../services/tripsTimelineService.js";
+import { timelineKey } from "../../utils/timelineUtils.js";
+
 import MonthDetailsModal from "./components/MonthDetailsModal.jsx";
 import { TimelineDragDrop } from "./components/TimelineDragDrop.jsx";
-import { assignTripToMonth, getTimeline, getTrips, propagateTimelineYear } from "../../services/tripsService.js";
-import { timelineKey } from "../../utils/timelineUtils.js";
+import TimelineGrid from "./components/TimelineGrid.jsx";
+import TripEditorPanel from "./components/TripEditorPanel.jsx";
 import "./TimelineView.css";
 
 const COLLAPSED_YEARS_SESSION_KEY = "timelineCollapsedYears";
@@ -146,7 +150,7 @@ export default function TimelineView() {
         <div><p className="trip-eyebrow">Travel calendar</p><h1>Timeline</h1></div>
         <div className="timeline-header-actions">
           <Link to="/prioritize" aria-disabled={moving || propagating} tabIndex={moving || propagating ? -1 : 0} onClick={(event) => { if (moving || propagating) event.preventDefault(); }}><ListOrdered size={16} aria-hidden="true" />Prioritize Trips</Link>
-          <button type="button" disabled={moving || propagating} onClick={() => navigate("/")}><ArrowLeft size={16} aria-hidden="true" />Back to Trips</button>
+          <button type="button" disabled={moving || propagating} onClick={() => navigate(TRIPS_HOME_ROUTE)}><ArrowLeft size={16} aria-hidden="true" />Back to Trips</button>
         </div>
       </header>
       {loading && <p role="status">Loading timeline...</p>}

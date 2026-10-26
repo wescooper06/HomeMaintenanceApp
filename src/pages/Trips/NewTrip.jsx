@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createTrip, updateWorkflowMetadata } from "../../services/tripsService.js";
+
+import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
+import { createTrip } from "../../services/tripsService.js";
 
 export default function NewTrip() {
   const navigate = useNavigate();
+  const tripId = useRef(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const [form, setForm] = useState({
     destination: "",
@@ -24,17 +29,18 @@ export default function NewTrip() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-
-    const tripId = crypto.randomUUID();
-
-    await createTrip({ tripId, ...form });
-
-    await updateWorkflowMetadata(tripId, {
-      stage: "Define",
-      stageNotes: "",
-    });
-
-    navigate(`/${tripId}`);
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      tripId.current ??= crypto.randomUUID();
+      const trip = await createTrip({ tripId: tripId.current, ...form });
+      navigate(`/${trip.tripId}`);
+    } catch (createError) {
+      setError(createError.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -42,7 +48,8 @@ export default function NewTrip() {
       <h1>Create New Trip</h1>
 
       <div className="card">
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} aria-busy={saving}>
+          <fieldset disabled={saving}>
           <label>
             Destination:
             <input name="destination" value={form.destination} onChange={handleChange} />
@@ -95,11 +102,13 @@ export default function NewTrip() {
             <textarea name="notes" value={form.notes} onChange={handleChange} />
           </label>
 
-          <button type="submit">Create Trip</button>
+          {error && <p role="alert">{error}</p>}
+          <button type="submit">{saving ? "Creating..." : "Create Trip"}</button>
+          </fieldset>
         </form>
       </div>
 
-      <button className="button-secondary" onClick={() => navigate("/")}>
+      <button disabled={saving} className="button-secondary" onClick={() => navigate(TRIPS_HOME_ROUTE)}>
         Cancel
       </button>
     </div>

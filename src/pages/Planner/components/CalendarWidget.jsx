@@ -1,7 +1,9 @@
 import { useState } from "react";
+
 import { addMonthsToDateKey, formatMonthYearLabel, getCalendarMonth, getMoveCalendar, getMoveTaskInitialDate, toMonthStartDateKey } from "../../../services/plannerService.js";
-import { usePlanner } from "./usePlanner.js";
 import styles from "../PlannerPage.module.css";
+
+import { usePlanner } from "./usePlanner.js";
 
 export default function CalendarWidget({ initialDate, onSelectDate }) {
   const selected = getMoveTaskInitialDate(initialDate);

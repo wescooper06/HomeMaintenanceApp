@@ -8,6 +8,13 @@ const PROJECT_TABLES = {
 export function createPlannerDataAccess(supabase) {
   const copy = (value) => structuredClone(value);
   const text = (value) => String(value ?? "").trim();
+  function sortedJson(value) {
+    if (Array.isArray(value)) return value.map(sortedJson);
+    if (value && typeof value === "object") return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, sortedJson(value[key])])
+    );
+    return value;
+  }
 
   function json(value, fallback, field) {
     if (value == null || value === "") return copy(fallback);
@@ -52,9 +59,7 @@ export function createPlannerDataAccess(supabase) {
 
   const dateKey = (value) => text(value).slice(0, 10);
   const sourceType = (source) => {
-    const value = text(source).toLowerCase();
-    return { "project list_a": "home", "project list_b": "vehicle",
-      "project list_c": "repeating", "project list_d": "misc" }[value] || value;
+    return text(source).toLowerCase();
   };
 
   function taskFromRow(row) {
@@ -84,6 +89,7 @@ export function createPlannerDataAccess(supabase) {
       completed: override.completed ?? (row.completed === true),
       overridden: row.overridden === true || Object.keys(override).length > 0,
       deletedInstance: row.deleted_instance === true || row.deleted === true,
+      deleted: row.deleted === true,
       checklist: json(row.checklist_json, [], "weekly checklist"),
       reminder: json(row.reminder_json, {}, "weekly reminder"),
       metadata, checklistOpen: row.checklist_open === true, updatedAt: row.updated_at,
@@ -135,7 +141,7 @@ export function createPlannerDataAccess(supabase) {
 
   // This is the only write entry point for Planner rows. Missing supplied UUIDs
   // are errors, not permission to recreate an imported row under another identity.
-  async function savePlannerState(changes) {
+  async function savePlannerState(changes, { insertOnly = false } = {}) {
     const plans = [];
     const now = new Date().toISOString();
     async function plan(table, items, shape, fromRow, generateId) {
@@ -144,21 +150,27 @@ export function createPlannerDataAccess(supabase) {
       const ids = new Set();
       for (const item of items) {
         const requested = text(item.id || item.taskId);
+        if (insertOnly && !requested) throw new Error(`Backup ${table} rows require stable IDs.`);
         const old = existing.find((row) => row.id === requested);
         if (requested === "week-settings") throw new Error("Use weekStartDate to update week settings.");
-        if (requested && !old && !generateId) {
+        if (requested && !old && !generateId && !insertOnly) {
           throw new Error(`Cannot update missing ${table} row ${requested}. Refresh and retry.`);
         }
         const id = old?.id || requested || crypto.randomUUID();
         if (ids.has(id)) throw new Error(`Duplicate ${table} row ${id} in save.`);
         ids.add(id);
         const baseline = old ? shape(fromRow(old), old) : {};
-        const next = shape(old ? { ...fromRow(old), ...item } : item, old);
-        const changes = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
-          value !== undefined && (!old || JSON.stringify(value) !== JSON.stringify(baseline[key]))));
+        const next = shape(insertOnly ? item : old ? { ...fromRow(old), ...item } : item,
+          insertOnly ? undefined : old);
+        const rowChanges = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
+          value !== undefined && (!old || JSON.stringify(insertOnly ? sortedJson(value) : value)
+            !== JSON.stringify(insertOnly ? sortedJson(baseline[key]) : baseline[key]))));
+        if (insertOnly && old && Object.keys(rowChanges).length) {
+          throw new Error(`Backup conflict in ${table} row ${id}. Existing rows were not overwritten.`);
+        }
         plans.push({ table, id, old,
-          unchanged: Boolean(old) && !Object.keys(changes).length,
-          row: { ...changes, updated_at: now } });
+          unchanged: Boolean(old) && !Object.keys(rowChanges).length,
+          row: { ...rowChanges, updated_at: now } });
       }
     }
     await plan("planner_tasks", changes.tasks, (item, old) => ({
@@ -205,30 +217,43 @@ export function createPlannerDataAccess(supabase) {
         reminder_json: json(item.reminderJson, {}, "Parking Lot reminder"),
         metadata_json: metadata, converted_to_type: Boolean(conversion?.type && conversion.id),
         converted_to_id: conversion?.id || null, deleted: item.deleted === true,
+        ...(insertOnly && item.createdAt ? { created_at: item.createdAt } : {}),
       };
     }, parkingFromRow, false);
     if (Object.hasOwn(changes, "weekStartDate")) {
       const existing = await rows("planner_weekly_tasks");
       const old = existing.find((row) => row.id === "week-settings");
       if (!old) throw new Error('The existing "week-settings" row is missing. No settings row was inserted.');
-      plans.push({
-        table: "planner_weekly_tasks", id: old.id, old,
-        row: { metadata_json: { ...json(old.metadata_json, {}, "week settings"),
-          weekStartDate: changes.weekStartDate }, updated_at: now },
-      });
+      if (insertOnly) {
+        if (json(old.metadata_json, {}, "week settings").weekStartDate !== changes.weekStartDate) {
+          throw new Error("Backup week settings conflict. Merge restore cannot change the current planning week.");
+        }
+      } else {
+        plans.push({
+          table: "planner_weekly_tasks", id: old.id, old,
+          row: { metadata_json: { ...json(old.metadata_json, {}, "week settings"),
+            weekStartDate: changes.weekStartDate }, updated_at: now },
+        });
+      }
     }
     const saved = [];
     for (const { table, id, old, row, unchanged } of plans) {
       if (unchanged) {
-        saved.push({ table, row: old });
+        saved.push({ table, row: old, inserted: false });
         continue;
       }
       let query = supabase.from(table);
       query = old ? query.update(row).eq("id", id) : query.insert({ ...row, ...(id ? { id } : {}) });
-      const { data, error } = await query.select("*").single();
-      check(error, `Saving ${table} ${id}`);
-      if (!data) throw new Error(`Saving ${table} ${id} returned no row.`);
-      saved.push({ table, row: data });
+      try {
+        const { data, error } = await query.select("*").single();
+        check(error, `Saving ${table} ${id}`);
+        if (!data) throw new Error(`Saving ${table} ${id} returned no row.`);
+        saved.push({ table, row: data, ...(insertOnly ? { inserted: true } : {}) });
+      } catch (error) {
+        if (!insertOnly) throw error;
+        const inserted = saved.filter((entry) => entry.inserted).length;
+        throw new Error(`Backup restore stopped after ${inserted} inserted row(s). No existing row was overwritten. Refresh the preview before retrying. ${error.message}`, { cause: error });
+      }
     }
     return saved;
   }
@@ -272,7 +297,8 @@ export function createPlannerDataAccess(supabase) {
     const metadata = { ...json(existing.metadata, {}, "project metadata"),
       ...json(project.metadata, {}, "project metadata") };
     const changes = { title: project.title, category: project.category, state: project.state,
-      metadata, updated_at: new Date().toISOString() };
+      metadata };
+    if (Object.hasOwn(existing, "updated_at")) changes.updated_at = new Date().toISOString();
     const fields = ["priority", "order"];
     const extra = {
       home: ["property", "area", "resource_links", "cost", "date_completed"],
@@ -286,7 +312,9 @@ export function createPlannerDataAccess(supabase) {
     for (const key of [...fields, ...extra[type]]) {
       const alias = aliases[key] || key;
       let value = Object.hasOwn(metadata, alias) ? metadata[alias] : existing[key];
-      if (["order", "cost", "hours", "mileage"].includes(key)) value = number(value, key, key === "order");
+      if (key === "order") value = number(value, key, true);
+      else if (["cost", "hours", "mileage"].includes(key)) value = number(value, key);
+      else if (key === "priority") value = value == null || value === "" ? null : String(value);
       else if (key === "resource_links") {
         value = typeof value === "string"
           ? value.split(/[\n,]+/).map(text).filter(Boolean) : json(value, [], key);
@@ -312,5 +340,80 @@ export function createPlannerDataAccess(supabase) {
     }, data);
   }
 
-  return { loadPlannerState, savePlannerState, loadProjects, saveProject };
+  async function createProject(project) {
+    const type = sourceType(project.project_type || project.source);
+    const table = PROJECT_TABLES[type];
+    if (!table) throw new Error("Select a valid project type.");
+    const title = text(project.title);
+    if (!title) throw new Error("Project title is required.");
+    const metadata = json(project.metadata, {}, "project metadata");
+    const payload = {
+      title,
+      category: text(project.category) || "uncategorized",
+      state: text(project.state) || "Not Started",
+      priority: text(project.priority) || null,
+      order: number(project.order, "order", true),
+      metadata,
+    };
+    const fields = {
+      home: ["property", "area", "resource_links", "cost", "date_completed"],
+      vehicle: ["vehicle", "date_completed", "hours", "mileage", "mechanic",
+        "service_description", "resource_links", "maintenance_checks"],
+      repeating: ["property", "recurrence"],
+      misc: ["resource_links"],
+    };
+    const aliases = { resource_links: "resourceLinks", date_completed: "dateCompleted",
+      hours: "engineHours", cost: "actualCost" };
+    for (const key of fields[type]) {
+      const alias = aliases[key] || key;
+      let value = Object.hasOwn(metadata, alias) ? metadata[alias] : project[alias];
+      if (key === "resource_links") {
+        value = typeof value === "string"
+          ? value.split(/[\n,]+/).map(text).filter(Boolean) : json(value, [], key);
+      } else if (key === "maintenance_checks") value = value ?? [];
+      else if (["cost", "hours", "mileage"].includes(key)) value = number(value, key);
+      else value = text(value) || null;
+      payload[key] = value;
+    }
+    if (type === "repeating" && !payload.recurrence) {
+      throw new Error("Recurrence is required for repeating projects.");
+    }
+    const { data, error } = await supabase.rpc("create_workbench_project", {
+      p_type: type, p_project: payload,
+    });
+    check(error, `Creating ${type} project`);
+    if (!data?.id || !data.external_id) throw new Error("Project creation returned no project identity.");
+    return projectFromRows({
+      id: data.id, project_type: type, external_id: data.external_id,
+      title: data.title, category: data.category, state: data.state,
+      priority: data.priority, order: data.order, recurrence: data.recurrence || null,
+      metadata: data.metadata,
+    }, data);
+  }
+
+  async function deleteProject(project) {
+    const id = text(project.id);
+    const type = sourceType(project.project_type || project.source);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+      || !Object.hasOwn(PROJECT_TABLES, type)) {
+      throw new Error("An existing project UUID and canonical type are required.");
+    }
+    if (project.source && sourceType(project.source) !== type) {
+      throw new Error("Project UUID/type identities conflict.");
+    }
+    const { data, error } = await supabase.rpc("delete_workbench_project", { p_id: id, p_type: type });
+    check(error, `Deleting ${type} project`);
+    if (data?.deleted !== true || data.id !== id || data.project_type !== type
+      || data.table !== PROJECT_TABLES[type] || !data.external_id
+      || data.counts?.[PROJECT_TABLES[type]] !== 1
+      || !["planner_tasks", "planner_weekly_tasks", "planner_parking_lot"]
+        .every((name) => Number.isSafeInteger(data.counts[name]) && data.counts[name] >= 0)) {
+      throw new Error("Deletion response could not be verified. Refresh before retrying.");
+    }
+    return data;
+  }
+
+  return { loadPlannerState, savePlannerState,
+    restorePlannerState: (changes) => savePlannerState(changes, { insertOnly: true }),
+    loadProjects, saveProject, createProject, deleteProject };
 }
