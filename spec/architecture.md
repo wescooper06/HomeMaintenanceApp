@@ -53,6 +53,33 @@ tombstoned with their history retained; newly scheduled dates have new
 deterministic date identities and start as normal new generated occurrences.
 Historical checklists are not transferred between different date identities.
 
+Week navigation (arrows, Today, date jump) persists only the selected-week setting
+and additive materialization of missing Repeatable dates. It never saves existing
+occurrence snapshots, even if display normalization differs from stored JSON.
+The persistence boundary rejects materialization requests that update an existing
+occurrence, write a master/Parking row, or delete an occurrence. Existing dates,
+including moved exceptions and tombstones, suppress regeneration; conflicting
+master/project links or duplicate dates stop generation before writing.
+Hydration retains raw checklist arrays; display-only checklist normalization is
+not written back merely because a different field or recurrence setting changed.
+
+New Repeatable occurrences inherit the approved master
+`metadata_json.checklistTemplate` definition, retaining item IDs/order/text and
+resetting completion to false. Known master UUIDs are recorded in
+`metadata_json.sourceTaskId`; project UUID remains both `project_id` and `parent_rep`.
+Existing occurrence progress is never used as an automatic template. If related
+checklist history exists without an approved definition, generation stops with
+an explicit error rather than inserting a blank checklist. The Repeatable weekly
+card now exposes the same checklist and **Use this checklist for future tasks**
+approval action as Project cards. Only an explicitly approved live occurrence
+can supply that definition; deleted history cannot be approved implicitly.
+
+Project/curated occurrences remain on their assigned dates; navigating elsewhere
+can hide them from the displayed week but does not carry, replace, or delete them.
+Continuing Project work uses the existing same-ID move workflow. Changing a
+recurrence pattern remains an explicit series-edit operation, distinct from
+navigation, and can retire dates no longer in that pattern.
+
 Repeatable-container placement resolves the exact series/occurrence date before
 changing the master. Either deletion flag blocks placement with a
 `previously-deleted` outcome; it never restores a tombstone. An active match

@@ -1827,9 +1827,227 @@ function recurrenceContinuationFixture() {
   });
 }
 
+test("rollover materialization preserves every existing row and inherits only approved master definitions", async () => {
+  for (const checklist of [null, [], [{ id: "progress", text: "Occurrence progress", completed: true }]]) {
+    const f = recurrenceContinuationFixture();
+    const currentId = `repeatable-${p1}-2026-10-26`;
+    const newId = `repeatable-${p1}-2026-11-02`;
+    f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) => row.id !== newId);
+    f.tables.planner_weekly_tasks.find((row) => row.id === currentId).checklist_json = clone(checklist);
+    f.tables.planner_tasks[0].metadata_json.checklistTemplate = {
+      version: 1, items: [{ id: "definition", text: "Approved definition" }],
+    };
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      const before = clone(f.tables);
+      f.calls.length = 0;
+      controller.actions.shiftPlannerWeek(7);
+      await controller.flush();
+      const generated = f.tables.planner_weekly_tasks.find((row) => row.id === newId);
+      assert(generated);
+      assert.deepEqual(generated.checklist_json,
+        [{ id: "definition", text: "Approved definition", completed: false }]);
+      assert.equal(generated.metadata_json.sourceTaskId, t1);
+      assert.equal(generated.project_id, p1);
+      assert.equal(generated.parent_rep, p1);
+      assert.deepEqual(f.tables.planner_tasks, before.planner_tasks);
+      for (const row of before.planner_weekly_tasks.filter((entry) => entry.id !== "week-settings")) {
+        assert.deepEqual(f.tables.planner_weekly_tasks.find((item) => item.id === row.id), row);
+      }
+      assert(f.calls.filter((call) => call.op !== "read").every((call) =>
+        call.table === "planner_weekly_tasks"
+        && (call.op === "insert" || call.filter?.[1] === "week-settings")));
+      const once = clone(f.tables);
+      f.calls.length = 0;
+      controller.actions.generateVisibleRecurringInstances();
+      await controller.flush();
+      assert.deepEqual(f.tables, once);
+      assert(f.calls.every((call) => call.op === "read"));
+    } finally { controller.destroy(); }
+  }
+});
+
+test("week navigation never reconciles normalized checklists back over stored nonempty data", async () => {
+  for (const action of ["shiftPlannerWeek", "goToCurrentWeek", "jumpPlannerToDate"]) {
+    const f = fixture();
+    const row = f.tables.planner_weekly_tasks.find((item) => item.id === "w1");
+    row.checklist_json = [{ id: "unrenderable", text: "", completed: true }];
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      const before = clone(row);
+      if (action === "shiftPlannerWeek") controller.actions[action](7);
+      else if (action === "jumpPlannerToDate") controller.actions[action]("2026-11-02");
+      else controller.actions[action]();
+      await controller.flush();
+      assert.deepEqual(row, before);
+    } finally { controller.destroy(); }
+  }
+});
+
+test("rollover fails closed without an approved template when same-identity history has checklist data", async () => {
+  for (const tombstoned of [false, true]) {
+    const f = recurrenceContinuationFixture();
+    f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) =>
+      row.id !== `repeatable-${p1}-2026-11-02`);
+    const current = f.tables.planner_weekly_tasks.find((row) => row.id === `repeatable-${p1}-2026-10-26`);
+    current.deleted = tombstoned;
+    current.deleted_instance = tombstoned;
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      const before = clone(f.tables);
+      assert.throws(() => controller.actions.shiftPlannerWeek(7), /no approved checklist template/);
+      await controller.flush();
+      assert.deepEqual(f.tables, before);
+      assert.equal(controller.getSnapshot().planner.weekStartDate, "2026-10-26");
+    } finally { controller.destroy(); }
+  }
+});
+
+test("rollover neither revives tombstones nor borrows templates from similarly named projects", async () => {
+  const f = recurrenceContinuationFixture();
+  const blockedId = `repeatable-${p1}-2026-11-02`;
+  const tombstone = f.tables.planner_weekly_tasks.find((row) => row.id === blockedId);
+  tombstone.deleted = true;
+  tombstone.deleted_instance = true;
+  const otherProject = "44444444-4444-4444-8444-444444444444";
+  const otherMaster = "55555555-5555-4555-8555-555555555555";
+  f.tables.projects_all.push({ id: otherProject, project_type: "repeating", title: "Disposable series", recurrence: "weekly" });
+  f.tables.projects_repeating.push({ id: otherProject, title: "Disposable series", recurrence: "weekly" });
+  f.tables.planner_tasks.push({ id: otherMaster, project_id: otherProject, source: "repeating",
+    title: "Disposable series", metadata_json: { series: clone(f.tables.planner_tasks[0].metadata_json.series) } });
+  f.tables.planner_tasks[0].metadata_json.checklistTemplate = {
+    version: 1, items: [{ id: "private", text: "Only first project" }],
+  };
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    const before = clone(f.tables);
+    controller.actions.shiftPlannerWeek(7);
+    await controller.flush();
+    assert.deepEqual(f.tables.planner_weekly_tasks.find((row) => row.id === blockedId), tombstone);
+    const other = f.tables.planner_weekly_tasks.find((row) => row.id === `repeatable-${otherProject}-2026-11-02`);
+    assert(other);
+    assert.deepEqual(other.checklist_json, []);
+    assert.equal(other.metadata_json.sourceTaskId, otherMaster);
+    assert.deepEqual(f.tables.planner_tasks, before.planner_tasks);
+    for (const row of before.planner_weekly_tasks.filter((entry) => entry.id !== "week-settings")) {
+      assert.deepEqual(f.tables.planner_weekly_tasks.find((item) => item.id === row.id), row);
+    }
+  } finally { controller.destroy(); }
+});
+
+test("Repeatable template approval preserves occurrence completion and survives reload for next-week generation", async () => {
+  const f = recurrenceContinuationFixture();
+  const currentId = `repeatable-${p1}-2026-10-26`;
+  f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) =>
+    row.id !== `repeatable-${p1}-2026-11-02`);
+  const controller = incidentController(f.storage);
+  let reload;
+  try {
+    await controller.actions.initialize();
+    const before = clone(f.tables.planner_weekly_tasks);
+    await controller.actions.saveChecklistTemplate(currentId);
+    const template = f.tables.planner_tasks[0].metadata_json.checklistTemplate;
+    assert.deepEqual(template, { version: 1, items: [
+      { id: "first", text: "First" }, { id: "second", text: "Second" },
+    ] });
+    assert.deepEqual(f.tables.planner_weekly_tasks, before);
+    reload = incidentController(f.storage);
+    await reload.actions.initialize();
+    reload.actions.shiftPlannerWeek(7);
+    await reload.flush();
+    const fresh = f.tables.planner_weekly_tasks.find((row) => row.id === `repeatable-${p1}-2026-11-02`);
+    assert.deepEqual(fresh.checklist_json, template.items.map((item) => ({ ...item, completed: false })));
+    assert.deepEqual(f.tables.planner_weekly_tasks.find((row) => row.id === currentId),
+      before.find((row) => row.id === currentId));
+  } finally { controller.destroy(); reload?.destroy(); }
+});
+
+test("rollover accepts absent or explicitly empty templates without copying NULL/empty occurrence state", async () => {
+  for (const checklist of [null, []]) {
+    for (const template of [null, { version: 1, items: [] }]) {
+      const f = recurrenceContinuationFixture();
+      f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) =>
+        ["week-settings", `repeatable-${p1}-2026-10-26`].includes(row.id));
+      f.tables.planner_weekly_tasks[1].checklist_json = clone(checklist);
+      f.tables.planner_tasks[0].metadata_json.checklistTemplate = clone(template);
+      const controller = incidentController(f.storage);
+      try {
+        await controller.actions.initialize();
+        const old = clone(f.tables.planner_weekly_tasks[1]);
+        controller.actions.shiftPlannerWeek(7);
+        await controller.flush();
+        assert.deepEqual(f.tables.planner_weekly_tasks[1], old);
+        assert.deepEqual(f.tables.planner_weekly_tasks[2].checklist_json, []);
+      } finally { controller.destroy(); }
+    }
+  }
+});
+
+test("rollover rejects duplicate or conflicting occurrence identities before writing anything", async () => {
+  for (const conflict of ["duplicate", "project", "master"]) {
+    const f = recurrenceContinuationFixture();
+    const next = f.tables.planner_weekly_tasks.find((row) => row.id === `repeatable-${p1}-2026-11-02`);
+    if (conflict === "duplicate") f.tables.planner_weekly_tasks.push({ ...clone(next), id: "legacy-duplicate" });
+    if (conflict === "project") next.project_id = "another-project";
+    if (conflict === "master") next.metadata_json.sourceTaskId = "44444444-4444-4444-8444-444444444444";
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      const before = clone(f.tables);
+      assert.throws(() => controller.actions.shiftPlannerWeek(7), /ownership is ambiguous/);
+      await controller.flush();
+      assert.deepEqual(f.tables, before);
+    } finally { controller.destroy(); }
+  }
+});
+
+test("materialization boundary rejects existing row writes, tombstones and master mutation", async () => {
+  const f = fixture();
+  f.tables.planner_weekly_tasks[1].checklist_json =
+    [{ id: "keep", text: "Existing checklist", completed: true }];
+  const state = await f.data.loadPlannerState();
+  const before = clone(f.tables);
+  for (const changes of [
+    { weeklyTasks: [{ ...state.weeklyTasks[0], checklist: null }] },
+    { weeklyTasks: [{ ...state.weeklyTasks[0], checklist: [] }] },
+    { tasks: [{ ...state.tasks[0], deleted: true }] },
+    { deletedWeeklyTaskIds: ["w1"] },
+    { weeklyTasks: [{ id: "new-tombstone", deletedInstance: true }] },
+  ]) await assert.rejects(f.data.savePlannerState({ ...changes, materializeOnly: true }), /materialization/);
+  assert.deepEqual(f.tables, before);
+  assert(f.calls.every((call) => call.op === "read"));
+});
+
+test("rollover cannot overwrite a concurrent checklist or duplicate a concurrently materialized date", async () => {
+  const f = recurrenceContinuationFixture();
+  const nextId = `repeatable-${p1}-2026-11-02`;
+  f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) => row.id !== nextId);
+  f.tables.planner_tasks[0].metadata_json.checklistTemplate = { version: 1, items: [] };
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    const old = f.tables.planner_weekly_tasks[1];
+    old.checklist_json = [{ id: "concurrent", text: "Newer checklist", completed: true }];
+    old.updated_at = "2099-01-01T00:00:00";
+    const concurrent = clone(old);
+    f.tables.planner_weekly_tasks.push({ ...clone(old), id: "concurrent-date",
+      occurrence_date: "2026-11-02", date: "2026-11-02" });
+    controller.actions.shiftPlannerWeek(7);
+    await assert.rejects(controller.flush(), /changed in another session/);
+    assert.deepEqual(old, concurrent);
+    assert(!f.tables.planner_weekly_tasks.some((row) => row.id === nextId));
+  } finally { controller.destroy(); }
+});
+
 test("recurrence scope edit flush navigation flush reload preserves authoritative identities and occurrence state", async () => {
   for (const scope of ["future", "this-future", "entire"]) {
     const { storage, tables } = recurrenceContinuationFixture();
+    tables.planner_weekly_tasks.find((row) => row.id === "unrelated-adhoc").checklist_json =
+      [{ id: "preserve-raw", text: "", completed: true, extra: "Never normalize stored evidence on save" }];
     const controller = incidentController(storage);
     let reload;
     try {

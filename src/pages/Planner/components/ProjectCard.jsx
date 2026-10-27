@@ -102,8 +102,8 @@ export function WeeklyTaskCard({ task, day, slot }) {
             </div>
           </div>
           <div className={styles["slot-task-reminder-confirmation"]} data-role="reminder-confirmation" aria-live="polite" hidden={!snapshot.confirmations[task.id]}>{snapshot.confirmations[task.id]}</div>
-          {(type === "curated" || type === "project") && <Checklist task={task} day={day} slot={slot} />}
-          {(type === "curated" || type === "project") && <button type="button"
+          {(type === "curated" || type === "project" || type === "repeatable") && <Checklist task={task} day={day} slot={slot} />}
+          {(type === "curated" || type === "project" || type === "repeatable") && <button type="button"
             onClick={() => { void actions.saveChecklistTemplate(task.id).catch((error) => console.warn("Checklist template was not saved", error)); }}>
             Use this checklist for future tasks
           </button>}

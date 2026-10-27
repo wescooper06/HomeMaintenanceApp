@@ -86,15 +86,18 @@ export function createPlannerSupabaseStorage(getData) {
     return { weekStartDate: state.weekStartDate, tasks: state.weeklyTasks };
   }
 
-  function saveWeeklyPlannerState(planner, { deletedTaskIds = [] } = {}) {
+  function saveWeeklyPlannerState(planner, { deletedTaskIds = [], materializeOnly = false } = {}) {
     const snapshot = copy(planner);
     const deletions = new Set(deletedTaskIds);
+    if (materializeOnly && deletions.size) throw new Error("Week materialization cannot delete occurrences.");
     return enqueue(async () => {
       const current = await getData().loadPlannerState();
       const baseline = new Map(weekly.map((task) => [task.id, task]));
       const persisted = new Map(current.weeklyTasks.map((task) => [task.id, task]));
       const changed = [];
       for (const task of snapshot.tasks) {
+        // Display normalization is not edit intent. Rollover may only insert new rows.
+        if (materializeOnly && (baseline.has(task.id) || submittedWeekly.has(task.id))) continue;
         const previous = submittedWeekly.get(task.id) || baseline.get(task.id);
         if (previous && weeklyEqual(task, previous) && !deletions.has(task.id)) continue;
         if (["curated", "project"].includes(task.taskType || task.type)) {
@@ -110,6 +113,11 @@ export function createPlannerSupabaseStorage(getData) {
         }
         const old = baseline.get(task.id);
         const live = persisted.get(task.id);
+        if (materializeOnly && (task.taskType || task.type) === "repeatable"
+          && current.weeklyTasks.some((row) => row.parentRepeatableId === task.parentRepeatableId
+            && (row.occurrenceDate || row.date) === (task.occurrenceDate || task.date))) {
+          throw new Error("Repeatable occurrence changed in another session. Reload before generating.");
+        }
         if (old && !submittedWeekly.has(task.id) && task.updatedAt !== old.updatedAt) {
           throw new Error(`Planner task ${task.id} was loaded from an older revision. Reload before editing.`);
         }
@@ -140,6 +148,7 @@ export function createPlannerSupabaseStorage(getData) {
       }
       const result = await getData().savePlannerState({
         weeklyTasks: changed, deletedWeeklyTaskIds: [...deletions],
+        ...(materializeOnly ? { materializeOnly: true } : {}),
         ...(changingWeek ? { weekStartDate: snapshot.weekStartDate, expectedWeekStartDate: current.weekStartDate } : {}),
       });
       const saved = await getData().loadPlannerState();
@@ -155,7 +164,9 @@ export function createPlannerSupabaseStorage(getData) {
       const writtenIds = new Set(changed.map((task) => task.id));
       weekly = [...weekly.filter((task) => !writtenIds.has(task.id)),
         ...saved.weeklyTasks.filter((task) => writtenIds.has(task.id))];
-      for (const task of snapshot.tasks) submittedWeekly.set(task.id, copy(task));
+      for (const task of snapshot.tasks) {
+        if (!materializeOnly || writtenIds.has(task.id)) submittedWeekly.set(task.id, copy(task));
+      }
       weekStartDate = snapshot.weekStartDate;
       emit({ type: "weekly-snapshot-saved" });
     });
@@ -382,9 +393,12 @@ export function createPlannerSupabaseStorage(getData) {
       const linkedId = task?.metadata?.sourceTaskId;
       const matches = master && state.tasks.filter((row) =>
         row.projectId === master.projectId && row.source === master.source);
-      if (!master || !task || !["curated", "project"].includes(task.taskType)
+      const repeatable = task?.taskType === "repeatable";
+      if (!master || !task || !["curated", "project", "repeatable"].includes(task.taskType)
         || task.deleted || task.deletedInstance || matches.length !== 1
         || task.source !== master.source
+        || (repeatable && (master.source !== "repeating" || task.projectId !== master.projectId
+          || task.parentRepeatableId !== master.projectId))
         || (linkedId ? linkedId !== masterId : !master.projectId || task.projectId !== master.projectId)
         || JSON.stringify(task.checklist.map(({ id, text }) => ({ id, text }))) !== JSON.stringify(definition)) {
         throw new Error("Project checklist changed or its ownership is ambiguous. Reload and review before saving a template.");

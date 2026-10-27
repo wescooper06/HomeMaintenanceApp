@@ -142,6 +142,10 @@ export function createPlannerDataAccess(supabase) {
   // This is the only write entry point for Planner rows. Missing supplied UUIDs
   // are errors, not permission to recreate an imported row under another identity.
   async function savePlannerState(changes, { insertOnly = false } = {}) {
+    if (changes.materializeOnly && (changes.tasks?.length || changes.parkingItems?.length
+      || changes.deletedWeeklyTaskIds?.length)) {
+      throw new Error("Week materialization may only insert occurrences and update week settings.");
+    }
     const plans = [];
     const now = new Date().toISOString();
     async function plan(table, items, shape, fromRow, generateId) {
@@ -152,6 +156,10 @@ export function createPlannerDataAccess(supabase) {
         const requested = text(item.id || item.taskId);
         if (insertOnly && !requested) throw new Error(`Backup ${table} rows require stable IDs.`);
         const old = existing.find((row) => row.id === requested);
+        if (changes.materializeOnly && table === "planner_weekly_tasks"
+          && (old || item.deleted || item.deletedInstance)) {
+          throw new Error("Week materialization cannot replace or delete an occurrence. Reload Planner.");
+        }
         if (!insertOnly && table !== "planner_parking_lot" && old && Object.hasOwn(item, "updatedAt")
           && item.updatedAt !== old.updated_at) {
           throw new Error(`${table} row ${requested} changed. Reload before saving.`);

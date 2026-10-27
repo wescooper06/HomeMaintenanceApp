@@ -288,7 +288,7 @@ export function normalizeWeeklyTask(task, fallbackDate, fallbackTimeSlot) {
     taskType,
     type: taskType,
     title: cleanText(task.title, "Untitled Task"),
-    checklist: normalizeChecklist(task.checklist),
+    checklist: Array.isArray(task.checklist) ? structuredClone(task.checklist) : [],
     checklistOpen: Boolean(task.checklistOpen),
     completed: Boolean(task.completed),
     source: cleanText(task.source, "unknown"),
@@ -1020,13 +1020,13 @@ export function createPlannerController({ reminderService = calendarReminders } 
       return false;
     });
   }
-  function savePlanner() {
+  function savePlanner({ materializeOnly = false } = {}) {
     state.gridRevision += 1;
     const deletedTaskIds = [...pendingWeeklyDeletions].filter((id) =>
       !state.planner.tasks.some((task) => task.id === id && !task.deletedInstance && !task.deleted));
     pendingWeeklyDeletions.clear();
     removedWeeklyRows.clear();
-    return trackWrite(plannerStorage.saveWeeklyPlannerState(state.planner, { deletedTaskIds }));
+    return trackWrite(plannerStorage.saveWeeklyPlannerState(state.planner, { deletedTaskIds, materializeOnly }));
   }
   function hideCuratedWarning() {
     if (warningTimer) { clearTimeout(warningTimer); timers.delete(warningTimer); }
@@ -1056,7 +1056,19 @@ export function createPlannerController({ reminderService = calendarReminders } 
     if (context && !findSlotTask(context.day, context.slot, context.taskId)) state.activeAdhocChecklist = null;
   }
 
-    function shiftPlannerWeek(offsetDays) {
+  function displayPlannerWeek(weekStartDate, selectedDate) {
+    const previousWeek = state.planner.weekStartDate;
+    state.planner.weekStartDate = weekStartDate;
+    try { generateVisibleRecurringInstances(false); }
+    catch (error) { state.planner.weekStartDate = previousWeek; throw error; }
+    state.selectedCalendarDate = selectedDate;
+    state.calendarMonthDate = toMonthStartDateKey(selectedDate);
+    savePlanner({ materializeOnly: true });
+    setStatus(`Planning week of ${weekStartDate}.`);
+    return true;
+  }
+
+  function shiftPlannerWeek(offsetDays) {
     if (!state.planner) {
       return false;
     }
@@ -1066,13 +1078,8 @@ export function createPlannerController({ reminderService = calendarReminders } 
       return false;
     }
 
-    state.planner.weekStartDate = addDaysToDateKey(state.planner.weekStartDate, days);
-  state.selectedCalendarDate = state.planner.weekStartDate;
-  state.calendarMonthDate = toMonthStartDateKey(state.selectedCalendarDate);
-  generateVisibleRecurringInstances();
-    savePlanner();
-    setStatus(`Planning week of ${state.planner.weekStartDate}.`);
-    return true;
+    const weekStartDate = addDaysToDateKey(state.planner.weekStartDate, days);
+    return displayPlannerWeek(weekStartDate, weekStartDate);
   }
 
   function goToCurrentWeek() {
@@ -1086,13 +1093,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       return false;
     }
 
-    state.planner.weekStartDate = currentWeekStart;
-    state.selectedCalendarDate = todayKey;
-    state.calendarMonthDate = toMonthStartDateKey(todayKey);
-    generateVisibleRecurringInstances();
-    savePlanner();
-    setStatus(`Planning week of ${state.planner.weekStartDate}.`);
-    return true;
+    return displayPlannerWeek(currentWeekStart, todayKey);
   }
 
   function jumpPlannerToDate(dateKey, selectedDateKey) {
@@ -1102,13 +1103,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       return false;
     }
 
-    state.planner.weekStartDate = weekStartDate;
-    state.selectedCalendarDate = cleanText(selectedDateKey, clickedDate);
-    state.calendarMonthDate = toMonthStartDateKey(clickedDate);
-    generateVisibleRecurringInstances();
-    savePlanner();
-    setStatus(`Planning week of ${state.planner.weekStartDate}.`);
-    return true;
+    return displayPlannerWeek(weekStartDate, cleanText(selectedDateKey, clickedDate));
   }
 
   function getProjectById(projectId) {
@@ -1193,6 +1188,12 @@ export function createPlannerController({ reminderService = calendarReminders } 
     const parentRepeatableId = cleanText(master.id || master.projectId, "");
     const id = `repeatable-${parentRepeatableId}-${occurrenceDate}`;
     const previous = removedWeeklyRows.get(id);
+    const template = master.checklistTemplate;
+    if (!previous && template == null && state.planner.tasks.some((item) =>
+      (item.parentRepeatableId === parentRepeatableId || item.metadata?.sourceTaskId === master.taskId)
+      && item.checklist?.length)) {
+      throw new Error("This Repeatable has no approved checklist template. Review its checklist and save an authoritative template before generating new work.");
+    }
     return toPlannerSlotItem({
       ...previous,
       id,
@@ -1208,14 +1209,16 @@ export function createPlannerController({ reminderService = calendarReminders } 
       taskType: "repeatable",
       source: "repeating",
       recurrence: normalizeRecurrence(master.recurrence),
+      checklist: previous?.checklist ?? (template || []).map((item) => ({ id: item.id, text: item.text, completed: false })),
       overridden: false,
       deleted: false,
       deletedInstance: false,
-      metadata: { ...previous?.metadata, generated: true },
+      metadata: { ...previous?.metadata, generated: true,
+        ...(REPEATABLE_PROJECT_ID.test(master.taskId) ? { sourceTaskId: master.taskId } : {}) },
     });
   }
 
-  function generateVisibleRecurringInstances() {
+  function generateVisibleRecurringInstances(persist = true) {
     if (!state.planner || !Array.isArray(state.planner.tasks)) {
       return false;
     }
@@ -1227,22 +1230,30 @@ export function createPlannerController({ reminderService = calendarReminders } 
       return false;
     }
 
-    let changed = false;
+    const additions = [];
     state.repeatableTasks.filter((master) => master.active !== false && master.startDate).forEach((master) => {
       getOccurrenceDatesInRange(master, rangeStart, rangeEnd).forEach((occurrenceDate) => {
         const parentId = cleanText(master.id || master.projectId, "");
-        const existing = state.planner.tasks.find((item) => cleanText(item.parentRepeatableId, "") === parentId && cleanText(item.occurrenceDate, item.date) === occurrenceDate);
-        if (!existing) {
-          state.planner.tasks.push(makeRecurringInstance(master, occurrenceDate));
-          changed = true;
+        const matches = state.planner.tasks.filter((item) =>
+          item.id === `repeatable-${parentId}-${occurrenceDate}`
+          || ((item.parentRepeatableId === parentId || item.metadata?.sourceTaskId === master.taskId)
+            && cleanText(item.occurrenceDate, item.date) === occurrenceDate));
+        if (matches.length > 1 || matches.some((item) =>
+          item.parentRepeatableId !== parentId || item.projectId !== parentId
+          || item.source !== "repeating" || item.taskType !== "repeatable"
+          || cleanText(item.occurrenceDate, item.date) !== occurrenceDate
+          || (item.metadata?.sourceTaskId && item.metadata.sourceTaskId !== master.taskId))) {
+          throw new Error("Repeatable occurrence ownership is ambiguous. Reload before generating.");
         }
+        if (!matches.length) additions.push(makeRecurringInstance(master, occurrenceDate));
       });
     });
 
-    if (changed) {
-      savePlanner();
+    if (additions.length) {
+      state.planner.tasks.push(...additions);
+      if (persist) savePlanner({ materializeOnly: true });
     }
-    return changed;
+    return additions.length > 0;
   }
 
   function loadCuratedTasks() {
@@ -1769,10 +1780,13 @@ export function createPlannerController({ reminderService = calendarReminders } 
     await persistence;
     if (persistenceError) throw persistenceError;
     const occurrence = findWeeklyTaskById(taskId)?.item;
-    const masters = state.curatedTasks.filter((task) =>
-      projectOccurrences(task).some((item) => item.id === taskId));
+    const masters = occurrence?.taskType === "repeatable"
+      ? state.repeatableTasks.filter((task) => task.projectId === occurrence.parentRepeatableId
+        && task.projectId === occurrence.projectId
+        && (!occurrence.metadata?.sourceTaskId || occurrence.metadata.sourceTaskId === task.taskId))
+      : state.curatedTasks.filter((task) => projectOccurrences(task).some((item) => item.id === taskId));
     if (!occurrence || masters.length !== 1) {
-      throw new Error("This task has no unique Project master. Review its identity before saving a checklist template.");
+      throw new Error("This task has no unique Planner master. Review its identity before saving a checklist template.");
     }
     const items = normalizeChecklist(occurrence.checklist).map(({ id, text }) => ({ id, text }));
     await trackWrite(plannerStorage.saveProjectChecklistTemplate(masters[0].taskId, occurrence.id, items));
@@ -1845,6 +1859,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
           category: cleanText(project.category, "uncategorized"),
           asset: cleanText(project.asset, ""),
           mileage: cleanText(project.mileage, ""),
+          checklistTemplate: master ? readProjectChecklistTemplate(master) : null,
         });
       };
       state.allProjects.filter((project) => normalizeSource(project.source) === "repeating")
@@ -2375,6 +2390,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
           category: cleanText(entry.category, "uncategorized"),
           asset: cleanText(entry.asset, ""),
           mileage: cleanText(entry.mileage, ""),
+          checklistTemplate: readProjectChecklistTemplate(entry),
         };
 
         if (repeatableIndex >= 0) {
