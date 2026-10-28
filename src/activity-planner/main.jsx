@@ -8,10 +8,12 @@ import OwnerAuthBoundary from "../components/OwnerAuthBoundary.jsx";
 import App from "./App.jsx";
 import "./index.css";
 
+const basename = window.location.pathname.match(/^(.*\/activity-planner)(?:\/|$)/)?.[1] || "/";
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <OwnerAuthBoundary>
-      <BrowserRouter>
+      <BrowserRouter basename={basename}>
         <StandaloneNavigation />
         <App />
       </BrowserRouter>

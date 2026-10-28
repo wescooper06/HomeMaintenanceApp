@@ -15,6 +15,11 @@ security boundary. The separately authorized
 actual owner-only policies/grants. Its SQL is review-only and disabled by default,
 not evidence of a production security change.
 
+The standalone Activity Planner scopes its browser router to the current
+`activity-planner` directory, including a GitHub Pages repository prefix.
+Directory and `index.html` entries render in place without redirecting away
+from the static file URL, so reloading preserves both routing and the Auth gate.
+
 Supabase is authoritative for projects, Planner, Trips and Activity Planner data.
 Services translate existing PostgreSQL rows into React contracts and report
 database/RLS failures explicitly. Reads do not seed, import or reconcile data.

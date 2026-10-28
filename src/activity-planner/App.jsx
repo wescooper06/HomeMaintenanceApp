@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
 
 import DailyActivityPlanner from "../pages/ActivityPlanner/DailyActivityPlanner.jsx";
 
@@ -6,9 +6,8 @@ export default function App() {
   return (
     <DailyActivitiesApplication>
       <Routes>
-        <Route path="/activity-planner" element={<DailyActivityPlanner />} />
-        <Route path="/" element={<Navigate to="/activity-planner" replace />} />
-        <Route path="/activity-planner/index.html" element={<Navigate to="/activity-planner" replace />} />
+        <Route path="/" element={<DailyActivityPlanner />} />
+        <Route path="/index.html" element={<DailyActivityPlanner />} />
       </Routes>
     </DailyActivitiesApplication>
   );
