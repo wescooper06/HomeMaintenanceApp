@@ -38,6 +38,78 @@ test("modern projects/new route resolves to the create-mode ProjectEditor", () =
   assert.match(editor, /const EMPTY_PROJECT = \{[\s\S]*source: "home", title: ""/);
 });
 
+test("standalone links preserve repository prefixes for every main destination", () => {
+  for (const pathname of [
+    "/HomeMaintenanceApp/www/activity-planner/index.html",
+    "/HomeMaintenanceApp/www/activity-planner/",
+    "/another/deployment/activity-planner/index.html",
+  ]) {
+    const root = pathname.slice(0, pathname.indexOf("activity-planner"));
+    for (const route of ["planner", "trips", "calendar", "workbench", "dashboard"]) {
+      const href = standaloneNavigationHref(route, { pathname, port: "" });
+      assert.equal(href, `${root}index.html#${route}`);
+      const resolved = new URL(href, `https://fixture.invalid${pathname}`);
+      assert.equal(resolved.pathname, `${root}index.html`);
+      assert.notEqual(resolved.pathname, "/index.html");
+      assert.equal(resolved.hash, `#${route}`);
+    }
+    assert.equal(standaloneNavigationHref("daily", { pathname, port: "" }), "#daily");
+  }
+});
+
+test("static launchers preserve deployment base and private selection, defaulting to Planner", () => {
+  const root = path.join(__dirname, "..");
+  const launcher = fs.readFileSync(path.join(root, "www", "js", "modern-entry.js"), "utf8");
+  for (const entry of ["index.html", "www\\index.html"]) {
+    assert.match(fs.readFileSync(path.join(root, entry), "utf8"), /trips\/index\.html#planner/);
+  }
+  for (const hash of ["", "#planner", "#trips", "#calendar", "#workbench", "#dashboard"]) {
+    let destination;
+    vm.runInNewContext(launcher, {
+      URL,
+      document: { currentScript: { src: "https://fixture.invalid/HomeMaintenanceApp/www/js/modern-entry.js" } },
+      window: { location: { search: "?fixture=1", hash, replace: (value) => { destination = value; } } },
+    });
+    const url = new URL(destination);
+    assert.equal(url.pathname, "/HomeMaintenanceApp/www/trips/index.html");
+    assert.equal(url.search, "?fixture=1");
+    assert.equal(resolveLifeManagerRoute({ pathname: "/index.html", hash: url.hash }), hash.slice(1) || "planner");
+  }
+});
+
+test("rendered main navigation and Planner reload retain the production basename", async () => {
+  const { createRequire } = require("node:module");
+  const requireTrips = createRequire(path.join(__dirname, "..", "trips", "package.json"));
+  const React = requireTrips("react");
+  const { renderToStaticMarkup } = requireTrips("react-dom/server");
+  const { MemoryRouter, Link } = requireTrips("react-router-dom");
+  const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const filename = path.join(__dirname, "..", "src", "components", "layout", "MainNavigation.jsx");
+  const input = fs.readFileSync(filename, "utf8").replace(/^import .*;\r?$/gm, "")
+    .replace("export default function", "function");
+  const { code } = await transformWithOxc(input, filename, { jsx: { runtime: "classic", pragma: "React.createElement" } });
+  const Navigation = vm.runInNewContext(`(() => { ${code}; return MainNavigation; })()`, {
+    React, Link, navigationLinks, styles: {},
+  });
+  const { lifeManagerBasename } = vm.runInNewContext(
+    `(() => { ${routesSource.replace(/^export /gm, "")}; return { lifeManagerBasename }; })()`
+  );
+  const basename = lifeManagerBasename("/HomeMaintenanceApp/www/trips/index.html");
+  for (const initial of ["/HomeMaintenanceApp/www/trips/index.html", "/HomeMaintenanceApp/www/trips/#planner"]) {
+    const render = () => renderToStaticMarkup(React.createElement(MemoryRouter, {
+      basename, initialEntries: [initial],
+    }, React.createElement(Navigation, { active: "planner" })));
+    const html = render();
+    assert.equal(render(), html, "fresh reload must preserve navigation");
+    for (const route of ["planner", "trips", "calendar", "workbench", "dashboard"]) {
+      const href = html.match(new RegExp(`href="([^"]*#${route})"`))?.[1];
+      assert(href, html);
+      assert.equal(new URL(href, "https://fixture.invalid").pathname.replace(/\/$/, ""), basename);
+    }
+    assert(!html.includes('href="/index.html#'));
+  }
+});
+
 test("modern root defaults to the canonical Planner while direct module and Trips subroutes remain intact", () => {
   for (const pathname of ["/", "/index.html"]) {
     assert.equal(resolveLifeManagerRoute({ pathname, hash: "" }), "planner");

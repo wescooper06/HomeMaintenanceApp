@@ -100,6 +100,32 @@ test("normal password login and refreshed owner session are accepted without cre
   assert(!JSON.stringify(f.controller.getSnapshot()).includes("synthetic"));
   f.controller.stop();
 });
+test("owner login preserves explicit private selections and otherwise defaults to Planner", async () => {
+  const routes = fs.readFileSync(path.join(root, "src", "router", "lifeManagerRoutes.js"), "utf8");
+  const { resolveLifeManagerRoute } = vm.runInNewContext(`(() => {
+    ${routes.replace(/^export /gm, "")}
+    return { resolveLifeManagerRoute };
+  })()`);
+  for (const hash of ["", "#planner", "#trips", "#calendar", "#workbench", "#dashboard"]) {
+    const f = fixture({ saved: null });
+    const location = { pathname: "/index.html", hash };
+    const privatePage = () => f.controller.getSnapshot().status === "owner"
+      ? resolveLifeManagerRoute(location) : "owner-login";
+    await f.controller.start();
+    assert.equal(privatePage(), "owner-login");
+    await f.controller.signIn("synthetic@example.test", "synthetic");
+    assert.equal(privatePage(), hash.slice(1) || "planner");
+    f.controller.stop();
+    await f.controller.start();
+    // This fixture has no persisted session: a reload remains gated until login.
+    assert.equal(privatePage(), "owner-login");
+    await f.controller.signIn("synthetic@example.test", "synthetic");
+    assert.equal(privatePage(), hash.slice(1) || "planner");
+    await f.controller.signOut();
+    assert.equal(privatePage(), "owner-login");
+    f.controller.stop();
+  }
+});
 test("both browser entry points gate route mounting and sign-out is exposed", () => {
   for (const file of ["src\\router\\LifeManagerRouter.jsx", "src\\activity-planner\\main.jsx"]) {
     const entry = fs.readFileSync(path.join(root, file), "utf8");

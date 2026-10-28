@@ -19,6 +19,9 @@ The standalone Activity Planner scopes its browser router to the current
 `activity-planner` directory, including a GitHub Pages repository prefix.
 Directory and `index.html` entries render in place without redirecting away
 from the static file URL, so reloading preserves both routing and the Auth gate.
+Its cross-application navigation derives the full deployment prefix from that
+directory rather than assuming the GitHub account root. Main entry without an
+explicit selection opens Planner; explicit route/hash selections are preserved.
 
 Supabase is authoritative for projects, Planner, Trips and Activity Planner data.
 Services translate existing PostgreSQL rows into React contracts and report

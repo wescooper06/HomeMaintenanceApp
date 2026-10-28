@@ -12,6 +12,6 @@ export function standaloneNavigationHref(route, location) {
   if (["5173", "5174"].includes(location.port)) {
     return `${location.protocol}//${location.hostname}:5173/#${route}`;
   }
-  const root = location.pathname.startsWith("/www/") ? "/www/" : "/";
+  const root = location.pathname.match(/^(.*\/)activity-planner(?:\/|$)/)?.[1] || "/";
   return `${root}index.html#${route}`;
 }
