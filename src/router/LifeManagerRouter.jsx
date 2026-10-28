@@ -4,6 +4,7 @@ import { BrowserRouter, useLocation } from "react-router-dom";
 import MainApplication from "../components/layout/MainApplication.jsx";
 import MainNavigation from "../components/layout/MainNavigation.jsx";
 import navigationStyles from "../components/layout/MainNavigation.module.css";
+import OwnerAuthBoundary from "../components/OwnerAuthBoundary.jsx";
 import TripsApplication from "../pages/Trips/TripsApplication.jsx";
 
 import { lifeManagerBasename, resolveLifeManagerRoute } from "./lifeManagerRoutes.js";
@@ -40,8 +41,10 @@ export function LifeManagerRoutes() {
 export default function LifeManagerRouter() {
   const basename = lifeManagerBasename(window.location.pathname);
   return (
-    <BrowserRouter basename={basename}>
-      <LifeManagerRoutes />
-    </BrowserRouter>
+    <OwnerAuthBoundary>
+      <BrowserRouter basename={basename}>
+        <LifeManagerRoutes />
+      </BrowserRouter>
+    </OwnerAuthBoundary>
   );
 }

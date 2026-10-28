@@ -5,6 +5,16 @@ The [shared router](../src/router/LifeManagerRouter.jsx) renders Dashboard,
 Workbench, Planner/Parking, Calendar, Daily Activities and Trips. CSS modules
 scope screen styles; shared React navigation is the only active navigation.
 
+The main router and standalone Activity Planner now share an owner Auth boundary.
+Private route trees mount only after normal Supabase email/password session
+validation against the configured immutable `VITE_OWNER_AUTH_USER_ID`; logout
+and invalid/expired sessions unmount them. Google Calendar authorization remains
+independent. The publishable-key client is unchanged; the UI is not a database
+security boundary. The separately authorized
+[single-owner RLS cutover](../supabase/review/owner-auth-cutover.md) supplies the
+actual owner-only policies/grants. Its SQL is review-only and disabled by default,
+not evidence of a production security change.
+
 Supabase is authoritative for projects, Planner, Trips and Activity Planner data.
 Services translate existing PostgreSQL rows into React contracts and report
 database/RLS failures explicitly. Reads do not seed, import or reconcile data.
