@@ -301,6 +301,23 @@ Before saving:
 - ensure the file opens in Microsoft Excel;
 - make only task-relevant changes.
 
+### Excel row-layout preservation
+
+Capture each worksheet's original OOXML row heights before opening Excel,
+including the worksheet default for rows without `ht`. Pin those heights before
+saving, even when the COM height currently matches: wrapped formula evidence
+can auto-fit on the next open rather than during calculation. Verify the final
+read-only Excel reopen as well as the saved package.
+
+Compare effective heights: missing `ht` means the unchanged sheet default.
+An equal explicit height and `customHeight="1"` may be accepted as intentional
+fixed-height serialization, preventing future evidence-driven auto-fit. Do not
+ignore a different effective height, hidden/outline/style or other row metadata,
+or any cell formatting, formula, table, validation or mapping change. Preserve
+the exact XML height comparison separately from COM display-height rounding;
+compare reopened COM heights with the values observed immediately after pinning.
+Report fixed-height metadata separately from literal and formula-cache changes.
+
 ## 22. Required final task report
 
 At task completion report:

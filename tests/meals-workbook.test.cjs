@@ -117,3 +117,110 @@ finally {
       assert.equal(hash(workbook), originalHash, "Tests must never update the controlled workbook.");
     } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
+
+test("effective layout permits only equal-height serialization and rejects visible or structural row changes",
+  { skip: process.platform !== "win32" }, () => {
+    const helper = path.join(root, "scripts", "meals-workbook-layout.ps1").replaceAll("'", "''");
+    const result = spawnSync("powershell", ["-NoProfile", "-Command", `
+. '${helper}'
+[xml]$baseline='<row r="185" xmlns:x="urn:test" x:dyDescent="0.25"/>'
+[xml]$explicit='<row r="185" ht="15" customHeight="1" xmlns:x="urn:test" x:dyDescent="0.25"/>'
+$expected=Get-EffectiveRowLayout $baseline.DocumentElement 15
+if ($expected -ne (Get-EffectiveRowLayout $explicit.DocumentElement 15)) { throw 'Equal effective heights rejected' }
+foreach ($attributes in @('ht="409.5"','hidden="1"','outlineLevel="1"','s="4"','collapsed="1"','thickBot="1"')) {
+  [xml]$changed=('<row r="185" xmlns:x="urn:test" x:dyDescent="0.25" '+$attributes+'/>')
+  if ($expected -eq (Get-EffectiveRowLayout $changed.DocumentElement 15)) { throw "Actual layout change accepted: $attributes" }
+}
+'Effective layout regression passed'
+`], { encoding: "utf8", timeout: 30000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /Effective layout regression passed/);
+  });
+
+test("preservation assertions reject owner, formula, style, table, validation and Coverage mapping mutations",
+  { skip: process.platform !== "win32" }, () => {
+    const result = spawnSync("powershell", ["-NoProfile", "-Command", `
+$ErrorActionPreference='Stop'
+. '${path.join(root, "scripts", "meals-workbook-layout.ps1").replaceAll("'", "''")}'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$tokens=$null
+$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile('${tool.replaceAll("'", "''")}',[ref]$tokens,[ref]$errors)
+foreach ($function in $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) {
+  Invoke-Expression $function.Extent.Text
+}
+$before=Get-PackageSnapshot '${workbook.replaceAll("'", "''")}'
+$cellMutations=@(
+  @('xl/worksheets/sheet2.xml!O23',2,'Rejected'),
+  @('xl/worksheets/sheet3.xml!L2',2,'Fail'),
+  @('xl/worksheets/sheet7.xml!J185',1,'1+1'),
+  @('xl/worksheets/sheet7.xml!M185',0,'999')
+)
+foreach ($mutation in $cellMutations) {
+  $after=@{cells=$before.cells.Clone();structure=$before.structure.Clone()}
+  $cell=$after.cells[$mutation[0]] | ConvertFrom-Json
+  $cell[$mutation[1]]=$mutation[2]
+  $after.cells[$mutation[0]]=$cell | ConvertTo-Json -Compress
+  $rejected=$false
+  try { Assert-Preserved $before $after @{} } catch { $rejected=$true }
+  if (-not $rejected) { throw "Protected cell mutation accepted: $($mutation[0])" }
+}
+foreach ($key in @('definedNames','xl/styles.xml','xl/tables/table1.xml','xl/worksheets/sheet7.xml:dataValidation','xl/worksheets/sheet7.xml:rowLayout')) {
+  $after=@{cells=$before.cells.Clone();structure=$before.structure.Clone()}
+  $after.structure[$key]='changed'
+  $rejected=$false
+  try { Assert-Preserved $before $after @{} } catch { $rejected=$true }
+  if (-not $rejected) { throw "Structure mutation accepted: $key" }
+}
+$after=@{cells=$before.cells.Clone();structure=$before.structure.Clone()}
+$cell=$after.cells['xl/worksheets/sheet7.xml!I185'] | ConvertFrom-Json
+$cell[2]='NO-SUCH-CHECK'
+$after.cells['xl/worksheets/sheet7.xml!I185']=$cell | ConvertTo-Json -Compress
+$rejected=$false
+try { Assert-CoveragePointers $after } catch { $rejected=$true }
+if (-not $rejected) { throw 'Broken Coverage pointer accepted' }
+'Protected mutation regression passed'
+`], { encoding: "utf8", timeout: 60000, maxBuffer: 1024 * 1024 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /Protected mutation regression passed/);
+  });
+
+test("long database evidence preserves Coverage185 and every owner result through Excel reopen",
+  { skip: process.platform !== "win32", timeout: 180000 }, () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meals-coverage-layout-"));
+    const before = hash(workbook);
+    try {
+      const copy = path.join(directory, "ledger.xlsx");
+      fs.copyFileSync(workbook, copy);
+      const input = path.join(directory, "plan.json");
+      const prepared = spawnSync("powershell", ["-NoProfile", "-Command", `
+$excel=$null
+$book=$null
+try {
+  $excel=New-Object -ComObject Excel.Application
+  $excel.Visible=$false
+  $excel.DisplayAlerts=$false
+  $excel.AutomationSecurity=3
+  $book=$excel.Workbooks.Open('${copy.replaceAll("'", "''")}',0,$false)
+  $sheet=$book.Worksheets.Item('Database Verification')
+  if ($sheet.Range('B8').Value2 -ne 'DBV-DB-SEC-001') { throw 'Fixture ID changed' }
+  $sheet.Range('N8').Value2='Not Built'
+  foreach ($address in @('A8','O8')) { $sheet.Range($address).ClearContents() | Out-Null }
+  $book.Save()
+}
+finally {
+  if ($book) { $book.Close($false); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($book) }
+  if ($excel) { $excel.Quit(); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel) }
+}
+`], { encoding: "utf8", timeout: 60000 });
+      assert.equal(prepared.status, 0, prepared.stdout + prepared.stderr);
+      fs.writeFileSync(input, JSON.stringify(plan({ sheet: "Database Verification", id: "DBV-DB-SEC-001",
+        fields: { Status: "Pass", "Evidence / Export": "Long wrapped catalog evidence. ".repeat(80) } })));
+      const result = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tool,
+        "-WorkbookPath", copy, "-UpdatesPath", input, "-ExpectedSha256", hash(copy)],
+      { encoding: "utf8", timeout: 150000, maxBuffer: 1024 * 1024 });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.match(result.stdout, /"normalReopen":\s*true/);
+      assert.equal(hash(workbook), before);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });

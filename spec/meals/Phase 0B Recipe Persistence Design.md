@@ -1,6 +1,6 @@
 # Phase 0B Recipe persistence design and preflight
 
-Status: **EXECUTABLE CANDIDATE - READY FOR AUTHORIZATION, NOT AUTHORIZED FOR PRODUCTION EXECUTION**.
+Status: **PHASE 0B RECIPE FOUNDATION DEPLOYED AND TECHNICALLY VERIFIED; PHASE 1 UI NOT IMPLEMENTED OR ACCEPTED**.
 Design run: `P0-DESIGN-001`, 2026-10-28.
 Read-only production preflight: `P0B-PREFLIGHT-001`, 2026-10-28 local / 2026-10-29 UTC.
 Accepted baseline: `75de46464a3b4eb5c72f4fadb9ac8c0baefde9d7`.
@@ -727,3 +727,117 @@ still requires the explicit package commit, exact committed/submitted hash match
 fresh Dashboard identity and complete read-only production drift checks.
 
 Phase 0B LF Migration Candidate: READY FOR AUTHORIZATION
+
+## 28. Production verification and controlled evidence baseline
+
+Run `P0B-DB-001`, project home-maintenance-app / tawvchmjtkgykwwvnnnn.
+Package commit: `0d30359ab5cdd4aa3577c33823de1bbc80a3d4f2`.
+The 9,521-byte LF migration SHA-256 is
+`5a741e8ccd0a0a74078fb07890af47ed0d2a74f2aeaafbc608559231f3959c27`.
+Working, staged, committed and submitted bytes were verified equal. Separately
+authorized production execution occurred once at 2026-10-29T03:14:08Z; HTTP 201,
+complete response `[]`. No retry or schema reversal. Fresh complete preflight
+responses matched the previous catalog except execution time.
+
+All 20 reviewed production postflight checks passed: three postgres-owned
+RLS-enabled tables, 18 columns, seven indexes, ten constraints, twelve exact-owner
+operation policies, one internal invoker function and three attached triggers.
+Explicit table/column/function ACLs, exact predicates/roles, browser denial,
+service-role administrative privileges and no unreviewed broker-role dependency
+were verified. No Shopping, meal-plan, Import, view, sequence or CRUD RPC.
+
+Production SQL synthetic role/claim assertions passed owner CRUD, lookup
+canonicalization/uniqueness/rename/referenced-delete rejection/unused-delete,
+JSONB order and atomic invalid-save rejection, content preservation, timestamps,
+anon all-operation denial and synthetic non-owner/null-subject denial. These are
+native database role tests, **not live JWT/API authentication or owner application
+smoke/UAT evidence**. Random-ID test fixtures were explicitly deleted within a
+test transaction, then rolled back; a subsequent SELECT confirmed zero rows in
+all three tables. This test rollback was not migration reversal.
+
+Security Advisor was refreshed: complete 16-item response contained no Meals
+finding or ERROR. Security UI: zero errors, one unrelated Auth warning, ten
+informational security suggestions. Existing unrelated findings were untouched.
+
+### Captured evidence
+
+Full envelopes, exact submitted SQL, CSVs (including zero-row exports), timestamps
+and hashes reside in session `b7458d86-6190-4718-8779-7c2b79a30630/files`.
+No credentials, browser session material or request headers were inspected.
+
+| Evidence | SHA-256 |
+|---|---|
+| meals-db-final-manifest.json | `4cbbc3eac24c13860d39ee3a0d8c6ae79c638cc5967d5274d1e7ea219091f8da` |
+| meals-db-final-execution.json | `841bc13ea65f1744d83776edaf9c8a22277d0b4ccc67b135c3f72e6a91b47bd0` |
+| meals-db-final-catalog-after.json | `c90e6d40396a6e79326aa204ad1bb18d3be09e49aab51a49e21e06a0daf14c92` |
+| meals-db-final-authorization.json | `53027fc3bb3595f52180afeac5c4b2017d12f16058135a8bb363302397cdc892` |
+| meals-db-final-advisor.json | `06350649e7fbd3ca6ca4772c29b638a499d5a9a9c3db2888e33ac68df531c567` |
+
+That production manifest records the initial workbook blocker, not final workbook
+completion; it remains immutable historical evidence. The later
+`meals-repair-controlled-verification.json` and exact-cell CSV record its repair.
+
+### Coverage row 185 diagnosis and repair
+
+Original workbook SHA-256:
+`65d71db080311f41ca0d0bbb4c3370692b0364781aabefbf055e2cc8094cdc11`.
+The rejected prior workbook was not retained; its blocker record and restored
+baseline were available. Disposable reproduction showed row 185 at 15 points
+before writes, after long evidence writes, after full rebuild and after first
+save. First-save XML still lacked `ht`/`customHeight`. On reopen Excel auto-fit it
+to 409.5 points because wrapped M185 looks up the long Database Verification
+evidence. Restoring 15 points serialized `ht="15" customHeight="1"`; the old
+verifier rejected missing-versus-explicit `ht`, not a surviving visible change.
+
+Row 185 is DB-SEC-001 / DBV-DB-SEC-001. Original XML has no row style, hidden or
+outline attribute (COM visible, OutlineLevel 1); worksheet default height is 15.
+No merged-cell participation. Fonts, fills, borders, number formats, alignment,
+wrap settings, row descent, validations, conditional formatting and table
+membership were unchanged in the reproduction and controlled result.
+
+The shared workbook-layout helper now captures XML heights including defaults,
+pins them before save regardless of current equality, and checks final read-only
+COM heights against the values observed after pinning. This avoids treating
+Excel's display rounding (e.g. serialized 33.95 versus COM 34) as a layout defect.
+Saved XML effective heights remain strictly checked. Only equal effective
+implicit/explicit height and fixed-height metadata are normalized; changed
+height, hidden/outline/style and all cell/structural changes still fail.
+
+Two independent full disposable workflows produced identical cell/cache/layout
+outcomes before the controlled workbook was changed. Controlled workflow closed
+Excel fully between first write, recalculate/save reopen and final read-only
+verification. Row 185 remains 15 points and pinned. There are 473 equal-effective
+row serialization changes: 369 add customHeight, 104 add default ht/customHeight.
+All row attributes other than these equivalent height representations are intact.
+
+### Workbook technical results
+
+Final workbook SHA-256:
+`563ac8035cbe7418f9da37b0b1c67061ffcbb00094533eebc6af92edfa719e6b`.
+129 literal cells changed (112 database, 17 security), with exact stable IDs,
+headers and before/after values in `meals-repair-exact-cell-changes.csv`.
+
+Database Verification Pass rows: 2, 3, 5, 7, 8, 9, 10, 11, 13, 14, 18, 19, 20,
+21, 22. Each was resolved by Check ID and Requirement ID and annotated with its
+specific captured proof. Prior notes/evidence were appended, not discarded.
+Verification Stage stays Both; rollback prepared Yes, executed No. The original
+Deployment Blocker classification remains unchanged; notes record none observed.
+
+Security Pass rows: 4 ARCH-003-T01 (owner UUID), 10 ARCH-009-T01 (explicit object
+security), 21 SEC-TST-008-T01 (no unintended PUBLIC/anon catalog access). Tests
+requiring UI/application/API behavior, including the fresh-owner-smoke composite,
+remain unchanged despite relevant partial database evidence.
+
+43 formula caches recalculated, no formula edits. Summary Security Pass 6 -> 9,
+Database Pass 0 -> 15, Phase 0 aggregate Pass 14 -> 32. Seven sheets, five tables,
+892 formulas, validations/filters/panes/styles/conditional formatting and all
+Coverage mappings are preserved; unresolved Coverage pointers zero. Phase 0A
+Accepted, eight owner results, six prior technical results, all future functional
+tests and every owner decision are unchanged.
+
+Workbook regression tests cover protected owner values/decisions, formulas,
+styles, tables, validations, pointers, actual row changes and long-evidence
+save/reopen behavior: five tests passed, zero failed/skipped; targeted ESLint and
+Git whitespace checks passed. This repair submitted no production SQL or browser actions.
+Recipe migration was NOT rerun. Reversal was NOT executed and remains
+**NOT AUTHORIZED**. Phase 0B technical completion is not Phase 1 acceptance.

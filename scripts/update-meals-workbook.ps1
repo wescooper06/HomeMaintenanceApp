@@ -6,6 +6,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+. (Join-Path $PSScriptRoot 'meals-workbook-layout.ps1')
 
 function Read-UpdatePlan {
     $plan = Get-Content -LiteralPath $UpdatesPath -Raw | ConvertFrom-Json
@@ -70,7 +71,7 @@ function Get-PackageSnapshot([string]$Path) {
         $strings = @()
         $shared = Read-Xml 'xl/sharedStrings.xml'
         foreach ($item in $shared.DocumentElement.ChildNodes) { $strings += $item.InnerText }
-        $snapshot = @{ cells=@{}; structure=@{} }
+        $snapshot = @{ cells=@{}; structure=@{}; rowHeights=@{} }
         $workbook = Read-Xml 'xl/workbook.xml'
         $snapshot.structure['workbookSheets'] = $workbook.workbook.sheets.OuterXml
         $snapshot.structure['definedNames'] = [string]$workbook.workbook.definedNames.OuterXml
@@ -92,11 +93,18 @@ function Get-PackageSnapshot([string]$Path) {
                     $nodes = @($xml.SelectNodes("//m:$tag",$ns) | ForEach-Object { $_.OuterXml })
                     $snapshot.structure["$($entry.FullName):$tag"] = $nodes | ConvertTo-Json -Compress
                 }
+                $defaultHeight=[double]::Parse($xml.worksheet.sheetFormatPr.defaultRowHeight,[cultureinfo]::InvariantCulture)
+                $sheetIndex=[int]([regex]::Match($entry.FullName,'sheet(\d+)').Groups[1].Value)
+                $heights=@{}
                 $snapshot.structure["$($entry.FullName):rowLayout"] = @(
                     $xml.SelectNodes('//m:sheetData/m:row',$ns) | ForEach-Object {
-                        "$($_.r):$($_.ht):$($_.hidden)"
+                        $height=$defaultHeight
+                        if ($_.HasAttribute('ht')) { $height=[double]::Parse($_.GetAttribute('ht'),[cultureinfo]::InvariantCulture) }
+                        $heights[[int]$_.r]=$height
+                        "$($_.r):$(Get-EffectiveRowLayout $_ $defaultHeight)"
                     }
                 ) | ConvertTo-Json -Compress
+                $snapshot.rowHeights[$sheetIndex]=$heights
             }
             if ($entry.FullName -match '^xl/(styles\.xml|tables/.*\.xml)$') {
                 $snapshot.structure[$entry.FullName] = (Read-Xml $entry.FullName).OuterXml
@@ -170,7 +178,6 @@ $book=$null
 $saved=$false
 $verified=$false
 $allowed=@{}
-$rowHeights=@{}
 $report=@()
 try {
     $excel=New-Object -ComObject Excel.Application
@@ -200,7 +207,6 @@ try {
         }
         if ($matches.Count -ne 1) { throw "Stable ID must resolve exactly once: $($update.id)" }
         $row=$matches[0]
-        $rowHeights["$($sheet.Index):$row"]=@{sheet=$sheet.Index; row=$row; height=$sheet.Rows.Item($row).RowHeight}
         if ($sheet.Cells.Item($row,$headers.Status).Value2 -ne 'Not Built') {
             throw "Existing result is protected; requires a separately reviewed retest: $($update.id)"
         }
@@ -226,10 +232,7 @@ try {
         }
     }
     $excel.CalculateFullRebuild()
-    # Wrapped technical notes must not auto-fit and change the controlled layout.
-    foreach ($layout in $rowHeights.Values) {
-        $book.Worksheets.Item($layout.sheet).Rows.Item($layout.row).RowHeight=$layout.height
-    }
+    $reopenHeights=Restore-WorkbookRowHeights $book $before.rowHeights
     foreach ($sheet in $book.Worksheets) {
         foreach ($cell in $sheet.UsedRange.Cells) {
             if ($cell.Text -match '^#(REF!|VALUE!|DIV/0!|NAME\?|N/A$|NUM!|SPILL!|CALC!|NULL!)') {
@@ -249,6 +252,7 @@ try {
     $book=$excel.Workbooks.Open($path,0,$true)
     if (-not $book.ReadOnly -or $book.Worksheets.Count -ne 7) { throw 'Normal reopen verification failed.' }
     $excel.CalculateFullRebuild()
+    Assert-WorkbookRowHeights $book $reopenHeights
     $verified=$true
     @{beforeSha256=$ExpectedSha256; afterSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; changes=$report; normalReopen=$true} | ConvertTo-Json -Depth 8
 }
