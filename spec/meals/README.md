@@ -9,7 +9,7 @@
 
 Do not revise requirements to match an implementation. Update the existing workbook, not a regenerated copy.
 
-## Phase 0A boundaries
+## Phase 0A boundaries (historical accepted scope)
 
 The shared responsive shell provides top-level Meals navigation, Recipes/Shopping links, and explicit `/meals/*` routing beneath the existing exact-owner authentication boundary. `/meals` redirects to `/meals/recipes`. Recipe Library, Add Recipe, Recipe Detail, and Shopping display explicit non-data-backed placeholders. Unknown Meals paths stay in Meals; Import is not implemented.
 
@@ -100,6 +100,181 @@ Before any Phase 0B/1 object is implemented, prepare its justified object invent
 8. Post-deployment catalog verification, owner smoke, Security Advisor review, workbook evidence, and separate owner sign-off.
 
 No SQL template, migration, production action, or broker cleanup is authorized by this checklist.
+
+## Phase 1 Recipe Core candidate
+
+Run: **P1-TECH-001**, 2026-10-29 UTC, branch `dev`, baseline
+`86452871db7f62b5c667ef32180d27ef2fe4ab24`. This is a local application candidate,
+not a deployed release, production owner/API smoke result, or Phase 1 acceptance.
+The historical Phase 0A scope above remains accepted; its Recipe placeholders
+are replaced only in this candidate. Shopping remains an explicit placeholder.
+
+### Implementation and requirement mapping
+
+| Requirements | Implementation / focused evidence |
+|---|---|
+| NAV-005/006; NAV-001..004/009 regression | Add, detail and edit routes; Meals routing, static-host and owner-auth tests |
+| RL-UI-001..003; RL-FUNC-001..012/016..019; RL-STATE-001/002 | Compact desktop table, simplified mobile list, independent Favorite star, row navigation, selection and confirmed bulk delete; Recipe service/interaction tests and isolated browser checks |
+| RD-UI-001..005; RD-FUNC-003..005 | Single-scroll detail, ordered sections, preserved text, safe HTTP(S) Source links versus plain text, Favorite/Edit/confirmed Delete; Phase 2/3 actions explicitly unavailable |
+| RE-UI-001; RE-DATA-001..007; RE-FUNC-001..015; RE-VAL-001 | Shared Add/Edit, Title-only validation, reusable classifications, named multiline sections, save/cancel/retry and unsaved-change protection |
+| RESP-002/003; STATE-001..005/007 | Responsive controls, loading/retry, empty versus zero results, mutation locks, retained failed drafts, explicit errors and destructive confirmation |
+| ARCH-001..007/012..014; SEC-TST regression | Existing client/owner boundary, direct table access, unchanged deployed SQL, PGlite role tests and normal-build inspection; no new RPC or privileged client |
+
+`RL-FUNC-013..015`, `RD-FUNC-001/002`, Shopping and Planner workflows are not
+implemented. `RL-FUNC-020` scheduled-occurrence preservation remains a **Phase 3
+integration constraint**: this database has no meal-plan domain yet. Its workbook
+row is not promoted, and no Phase 3 objects or misleading preservation claim
+are introduced. Recipe Import remains Decision Pending.
+
+The [Recipe service](../../src/services/recipeService.js) uses the existing
+`getSupabaseClient`. Recipes, Categories and Cuisines use ascending UUID keyset
+reads of up to 500 records until an **empty** page, including when a server caps
+responses below 500. The first request obtains an exact count; duplicate/out-of-
+order IDs and count drift reject the load. Failed pages never produce a partial
+success. Local service requests are serialized across complete loads and writes.
+Cross-device reads are not a database snapshot; same-count concurrent edits may
+still need a reload. No snapshot isolation is claimed.
+
+Search runs on the complete library: literal `toLowerCase().includes()` over Title
+OR section text, AND Category UUID, Cuisine UUID and Favorite. `%`, `_` and
+backslash are not wildcard controls. Desktop Name/Category/Cuisine/Source headers
+toggle ascending/descending order, with stable UUID ties. Mobile has no separate
+A-Z control. Changing criteria clears selection to avoid deleting hidden rows.
+
+Recipe content is never trimmed, parsed or deduplicated. JSONB section order and
+blank lines are preserved; removing every section stores `[]`. No unrequested
+section-reordering interface is added. Only classification names use
+`String.trim()`, matching the deployed canonicalization. Renames retain lookup
+IDs; referenced deletion reports the FK failure, without reassigning Recipes.
+Classification changes save immediately and can leave valid unused lookup values
+if a subsequent Recipe save is canceled or fails.
+
+Each Recipe save is one complete row INSERT/UPDATE. New editors retain one UUID
+through retries and reconcile an existing identical row before another INSERT,
+preventing duplicate Recipes after an uncertain response. Conflicting content
+under that UUID fails explicitly. No upsert, client timestamp write, silent
+failure or success-shaped fallback is used. Favorite persists independently.
+One DELETE statement handles the selected IDs, verifies the exact affected count
+and returned-ID membership (including server-capped RETURNING data), and does not
+delete classifications. Failed deletion remains visible inside its
+confirmation dialog; cancel/reload permits reconciliation if another device
+already removed a selected record.
+
+The root router now uses React Router's data-router equivalent beneath the
+unchanged owner boundary so `useBlocker` can protect links and browser Back/Forward.
+Its basename, module resolution and lazy routing are unchanged. Router creation
+itself occurs only after the owner boundary mounts its children; the page-lifetime
+router is reused across StrictMode initializer replays. The editor also
+registers native `beforeunload` protection. Staying retains the draft; discard is
+explicit. Pending writes prevent duplicate submission and deliberate discard
+until the request settles. Owner logout/session revocation still takes precedence.
+
+### Phase 1 technical evidence and limitations
+
+Focused command:
+
+```powershell
+node --test tests\meals-recipe-service.test.cjs tests\meals-recipe-interaction.test.cjs tests\meals-routing.test.cjs tests\owner-auth.test.cjs tests\meals-recipe-persistence.test.cjs tests\owner-rls.test.cjs
+```
+
+Result: **45/45 passed**. The service tests use the exact deployed migration
+inside disposable PGlite and an explicit Supabase-shaped adapter; they are not
+live PostgREST/JWT tests. They exercise owner CRUD, exact text/JSONB round trips,
+lookup lifecycle, referenced-delete refusal, capped pagination, drift/failure
+propagation, non-owner denial, literal search, AND filters and sorting. Existing
+persistence tests retain all collision, RLS/ACL, canonicalization, timestamp,
+catalog and disabled/empty-reversal assertions. Reversal tests run locally only.
+
+Component-handler tests execute actual compiled Recipe components with isolated
+hook/service adapters, following the repository's existing test conventions.
+They cover validation, section editing, failed-save retention/retry, synchronous
+duplicate-submit prevention, dirty/clean navigation decisions, Favorite event
+propagation, confirmation callbacks, loading, failure/retry and zero results.
+These are not a claim of full DOM rendering or owner usability acceptance.
+
+The isolated production-build browser fixture uses synthetic Auth and session-only
+Recipe storage with `connect-src 'none'`. Desktop and 390px mobile checks exercised
+create/view/edit, preserved blank lines, Source link, classification create/rename,
+referenced-delete refusal, unused deletion, Favorite without navigation/reload
+persistence, combined literal search/filters, empty/zero results, failed-save
+retry, unsaved link/Back stay/discard, deep refresh, confirmed bulk deletion,
+and deletion-error visibility/retry. All fixture records were removed; no live
+Recipe data was created. Expected fixture CSP blocks of external fonts/Google
+scripts are not production authentication evidence. Hidden browser-tab stability
+timeouts were resolved with DOM-targeted activation for the final incremental
+checks; these do not constitute mobile touch usability sign-off.
+
+The normal main and standalone Activity Planner production builds are written
+only to session output, not published into tracked web assets. Both builds pass
+secret/broker/synthetic-fixture inspection. Existing >500kB chunk warnings remain
+informational. Full configured suite: **337 tests, 336 passed, 1 skipped, 0 failed**.
+The existing optional native PostgreSQL deployment test requires
+`WORKBENCH_TEST_PG_BIN`; its skip is unrelated to Meals. Full lint passes.
+Full-suite/lint output, artifact hashes and exact workbook changes are retained
+in the session `phase1-*` evidence.
+
+The controlled workbook update retains 7 sheets, 5 tables and 892 unchanged
+formulas. It changes 324 approved literal cells across 81 rows:
+68 functional rows, 10 security rows and E2E-01/02/10. Eighty rows are
+**Ready to Test**, not owner Pass; the sole new technical Pass is **ARCH-014-T01**
+(executed local source/invoker/no-new-callable-function evidence). Nine composite
+security/application/API rows await later verification. `RL-FUNC-020` and all
+database rows are unchanged. 165 Summary/Coverage caches recalculate without
+formula changes; effective row heights, styles and protected structure are
+preserved through normal Excel reopen. Phase 0A Accepted, every Phase 0B
+database result, all prior owner results/notes and Phase 1 Final Decision remain
+unchanged. The disposable guard initially rejected an attempt to populate the
+already-existing E2E-10 cleanup note; the revised plan leaves that note untouched,
+and both disposable and controlled preservation checks passed.
+
+Workbook before SHA-256:
+`563ac8035cbe7418f9da37b0b1c67061ffcbb00094533eebc6af92edfa719e6b`.
+Workbook after SHA-256:
+`0b31ac9abc0017ddaafa266097dfc23900e64350da3a940ef90d9475dcf9a247`.
+Post-update workbook tooling regressions: **5/5 passed**.
+
+Live **existing Phase 0A release** read-only checks covered `/meals`, the library,
+new Recipe, a synthetic detail URL and Shopping, including refresh. All recovered
+their exact deep links and showed the owner login boundary. No credentials were
+entered, no live Recipe API call was exercised, and this does not prove deployment
+of the local Phase 1 candidate.
+
+### Phase 1 E2E preparation and deterministic cleanup
+
+Execute both desktop and mobile UAT after authorized deployment. Use a unique
+`P1-UAT-<run>` prefix; record the exact created Recipe and lookup IDs. Do not select
+or delete pre-existing owner data. Never clear the production library.
+
+| Scenario | Steps / expected result |
+|---|---|
+| E2E-01 | Create a manual Recipe with Title, ordinary-text Source, two named ingredient blocks including a blank line and repeated lines, and multiline Instructions. Search/open it, toggle Favorite without leaving Library, reload, open Detail, edit/save, confirm exact text/order, then cancel and confirm Recipe deletion. Repeat with an HTTP(S) Source and confirm safe link presentation. Also force a local fixture save error, verify retained input and successful retry, and exercise stay/discard on a dirty editor. |
+| E2E-02 | Create three prefixed Recipes with contrasting Category/Cuisine/Favorite values and literal `%`, `_`, backslash ingredient text. Search by mixed-case Title and ingredient substrings; verify excluded fields do not match. Apply all criteria together and verify AND; clear one at a time, verify zero results versus true empty, and exercise all desktop sort headers in both directions. Verify the mobile list has no desktop table or A-Z control. |
+| E2E-10 | Create uniquely prefixed Category and Cuisine in the editor, save a Recipe using both, verify availability in another editor, rename each and verify existing Recipe display changes. Referenced deletion must fail visibly; reassign both to None/save, then delete the unused values. Repeat duplicate/blank-name failure checks without losing Recipe text. |
+
+Cleanup in dependency order: remove only the run's confirmed Recipe IDs, then
+its now-unused Category/Cuisine IDs. Verify every created ID is absent, clear
+filters/selection and record the result. Do not remove a lookup that another
+Recipe now references; stop and report that cleanup conflict. No Shopping or
+meal-plan cleanup should be needed because these scenarios do not create them.
+For local synthetic reruns, stop the fixture and clear only
+`meals-recipe-synthetic-data`, `meals-recipe-test-control`, and
+`meals-synthetic-test-user` on its loopback origin, never production storage.
+
+### Phase 1 release boundary
+
+No schema, grants, RLS, configuration or production data change is performed.
+The deployed migration remains byte-identical:
+`5a741e8ccd0a0a74078fb07890af47ed0d2a74f2aeaafbc608559231f3959c27`.
+It must **not** be rerun. Reversal remains **NOT AUTHORIZED**.
+
+Source changes remain unstaged; no commit, push or deployment is performed.
+Review the explicit source/test/document/workbook allowlist before any release.
+A later authorized release must rebuild/publish normal assets (never the
+synthetic fixture), review the exact output, deploy through the existing
+workflow, and then perform live owner Recipe CRUD/API smoke and owner UAT.
+Production security/composite smoke rows cannot be inferred from local fixtures.
+Phase 0A Accepted and all Phase 0B evidence are protected; Phase 1 Final Decision
+remains owner-controlled and unchanged.
 
 ## Responsibilities
 

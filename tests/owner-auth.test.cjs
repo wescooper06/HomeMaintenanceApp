@@ -129,7 +129,12 @@ test("owner login preserves explicit private selections and otherwise defaults t
 test("both browser entry points gate route mounting and sign-out is exposed", () => {
   for (const file of ["src\\router\\LifeManagerRouter.jsx", "src\\activity-planner\\main.jsx"]) {
     const entry = fs.readFileSync(path.join(root, file), "utf8");
-    assert.match(entry, /<OwnerAuthBoundary>[\s\S]*<BrowserRouter/);
+    if (file.includes("LifeManagerRouter")) {
+      assert.match(entry, /<OwnerAuthBoundary>\s*<PrivateRouter \/>\s*<\/OwnerAuthBoundary>/);
+      assert.match(entry, /function PrivateRouter\(\)[\s\S]*useState\(getPrivateRouter\)/);
+      assert.match(entry, /function getPrivateRouter\(\)[\s\S]*if \(!privateRouter\) privateRouter = createBrowserRouter/);
+      assert.match(entry, /return <RouterProvider router=\{router\} \/>/);
+    } else assert.match(entry, /<OwnerAuthBoundary>[\s\S]*<BrowserRouter/);
   }
   const boundary = fs.readFileSync(path.join(root, "src\\components\\OwnerAuthBoundary.jsx"), "utf8");
   assert.match(boundary, /session.status === "owner"/);

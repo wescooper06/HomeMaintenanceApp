@@ -9,7 +9,7 @@ const root = path.join(__dirname, "..");
 const requireTrips = createRequire(path.join(root, "trips", "package.json"));
 const React = requireTrips("react");
 const { renderToStaticMarkup } = requireTrips("react-dom/server");
-const { MemoryRouter, Routes, Route, Navigate, NavLink, Link, useLocation } = requireTrips("react-router-dom");
+const { MemoryRouter, Routes, Route, Navigate, NavLink, Link, useLocation, useParams, useNavigate } = requireTrips("react-router-dom");
 const load = (file, names, context = {}) => vm.runInNewContext(`(() => {
   ${fs.readFileSync(path.join(root, file), "utf8").replace(/^export /gm, "")}
   return { ${names.join(",")} };
@@ -19,7 +19,7 @@ const { resolveLifeManagerRoute, lifeManagerBasename } = load("src\\router\\life
 const { restoreMealsDeepLink } = load("src\\router\\mealsDeepLink.js", ["restoreMealsDeepLink"], { URL });
 const { navigationLinks, standaloneNavigationHref } = load("src\\components\\layout\\navigationRoutes.js",
   ["navigationLinks", "standaloneNavigationHref"]);
-let MealsPage, Navigation, LifeRoutes, OwnerBoundary;
+let MealsPage, Navigation, LifeRoutes, OwnerBoundary, compileComponent;
 test.before(async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
   async function compile(relative, name, extra = {}) {
@@ -31,11 +31,16 @@ test.before(async () => {
       jsx: { runtime: "classic", pragma: "React.createElement", pragmaFrag: "React.Fragment" },
     });
     return vm.runInNewContext(`(() => { ${code}; return ${name}; })()`, {
-      React, Routes, Route, Navigate, NavLink, Link, useLocation, styles: { active: "active" },
+      React, Routes, Route, Navigate, NavLink, Link, useLocation, useParams, useNavigate,
+      useState: React.useState, useRef: React.useRef, useEffect: React.useEffect, styles: { active: "active" },
       lazy: () => () => null, ...extra,
     });
   }
-  MealsPage = await compile("src\\pages\\Meals\\MealsPage.jsx", "MealsPage");
+  compileComponent = compile;
+  const core = await compile("src\\pages\\Meals\\RecipeCore.jsx", "{ RecipeLibrary, RecipeEditor, RecipeDetail }", {
+    createRecipeService: () => ({}),
+  });
+  MealsPage = await compile("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", core);
   Navigation = await compile("src\\components\\layout\\MainNavigation.jsx", "MainNavigation", { navigationLinks });
   LifeRoutes = await compile("src\\router\\LifeManagerRouter.jsx", "LifeManagerRoutes", {
     resolveLifeManagerRoute, useLayoutEffect() {}, navigationStyles: {},
@@ -46,6 +51,33 @@ test.before(async () => {
     useState: (initial) => React.useState(initial?.status === "checking" ? { status, error: "" } : initial),
     useEffect: React.useEffect, createOwnerAuthController: () => ({}), getSupabaseClient: () => ({}),
   });
+});
+
+test("data router mounts only inside owner boundary, retains basename and survives StrictMode initializer replay", async () => {
+  for (const owner of [false, true]) {
+    let constructed = 0;
+    const Router = await compileComponent("src\\router\\LifeManagerRouter.jsx", "LifeManagerRouter", {
+      window: { location: { pathname: "/HomeMaintenanceApp/www/trips/meals/recipes/new" } },
+      lifeManagerBasename,
+      useState: (initialize) => {
+        const first = initialize();
+        assert.equal(initialize(), first, "StrictMode must not register a second browser router");
+        return [first];
+      },
+      OwnerAuthBoundary: ({ children }) => owner ? children : React.createElement("p", null, "Private routes blocked"),
+      RouterProvider: () => React.createElement("p", null, "Private router mounted"),
+      createBrowserRouter(routes, options) {
+        constructed++;
+        assert.equal(options.basename, "/HomeMaintenanceApp/www/trips");
+        assert.equal(routes.length, 1);
+        assert.equal(routes[0].path, "*");
+        return {};
+      },
+    });
+    const html = renderToStaticMarkup(React.createElement(Router));
+    assert.equal(constructed, owner ? 1 : 0);
+    assert.equal(html.includes("Private router mounted"), owner);
+  }
 });
 
 const paths = ["/meals", "/meals/", "/meals/recipes", "/meals/recipes/new",
@@ -76,7 +108,8 @@ test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping
   ]) {
     const html = render(MealsPage, "/HomeMaintenanceApp/www/trips" + pathname, "/HomeMaintenanceApp/www/trips");
     assert.match(html, new RegExp(`<h2[^>]*>${title}</h2>`));
-    assert.match(html, /Phase 0A foundation preview - not data-backed/);
+    if (active === "recipes") assert.match(html, /role="status"[^>]*>Loading Recipe/);
+    else assert.match(html, /Phase 0A foundation preview - not data-backed/);
     for (const destination of ["recipes", "shopping"]) {
       assert(html.includes(`href="/HomeMaintenanceApp/www/trips/meals/${destination}"`));
     }
@@ -98,7 +131,7 @@ test("ARCH-001/004/005: real owner boundary never mounts private Meals router wh
     function ProtectedRoutes() { mounts++; return React.createElement(LifeRoutes); }
     const html = render(() => React.createElement(Boundary, null, React.createElement(ProtectedRoutes)), "/meals/recipes");
     assert.equal(mounts, status === "owner" ? 1 : 0);
-    assert.equal(html.includes("foundation preview"), status === "owner");
+    assert.equal(html.includes("Loading Recipes"), status === "owner");
     if (status === "signed-out") assert.match(html, /Life Manager owner login/);
   }
   const main = fs.readFileSync(path.join(root, "src\\components\\layout\\MainApplication.jsx"), "utf8");

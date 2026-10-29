@@ -1,5 +1,5 @@
-import { lazy, Suspense, useLayoutEffect } from "react";
-import { BrowserRouter, useLocation } from "react-router-dom";
+import { lazy, Suspense, useLayoutEffect, useState } from "react";
+import { createBrowserRouter, RouterProvider, useLocation } from "react-router-dom";
 
 import MainApplication from "../components/layout/MainApplication.jsx";
 import MainNavigation from "../components/layout/MainNavigation.jsx";
@@ -38,13 +38,24 @@ export function LifeManagerRoutes() {
   );
 }
 
+let privateRouter;
+function getPrivateRouter() {
+  // One page-lifetime router, created only after the owner boundary mounts it.
+  if (!privateRouter) privateRouter = createBrowserRouter([
+    { path: "*", element: <LifeManagerRoutes /> },
+  ], { basename: lifeManagerBasename(window.location.pathname) });
+  return privateRouter;
+}
+
+function PrivateRouter() {
+  const [router] = useState(getPrivateRouter);
+  return <RouterProvider router={router} />;
+}
+
 export default function LifeManagerRouter() {
-  const basename = lifeManagerBasename(window.location.pathname);
   return (
     <OwnerAuthBoundary>
-      <BrowserRouter basename={basename}>
-        <LifeManagerRoutes />
-      </BrowserRouter>
+      <PrivateRouter />
     </OwnerAuthBoundary>
   );
 }

@@ -8,10 +8,10 @@ test("production build: real 404-only static host recovers every approved Meals 
   const { server, output, prefix, origin } = await createMealsStaticFixture();
   try {
     const scripts = output.filter((entry) => entry.type === "chunk").map((entry) => entry.code).join("\n");
-    for (const required of ["Phase 0A foundation preview", "/meals/recipes", "/meals/shopping",
+    for (const required of ["Loading Recipes...", "Phase 0A foundation preview", "/meals/recipes", "/meals/shopping",
       "e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60"]) assert(scripts.includes(required), required);
     assert.doesNotMatch(scripts, /planner_curated_api|planner_broker_access_token_hook|c01098c9-ffa6-4134-a1ad-025a076e9855/);
-    assert.doesNotMatch(scripts, /meals-synthetic-test-user|synthetic-local-token|synthetic-only/);
+    assert.doesNotMatch(scripts, /meals-synthetic-test-user|synthetic-local-token|synthetic-only|meals-recipe-synthetic-data|meals-recipe-test-control/);
     assert.doesNotMatch(scripts, /sb_secret_[a-zA-Z0-9_-]{20,}|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/);
     for (const jwt of scripts.matchAll(/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g)) {
       const payload = JSON.parse(Buffer.from(jwt[0].split(".")[1], "base64url").toString());
