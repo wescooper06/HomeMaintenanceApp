@@ -8,16 +8,18 @@ const aliases = {
   calendar: "calendar",
   daily: "daily",
   trips: "trips",
+  meals: "meals",
 };
 
 export function lifeManagerBasename(pathname) {
-  const match = pathname.match(/^(.*\/trips)(?:\/|$)/);
+  const match = pathname.match(/^(.*?\/trips)(?:\/|$)/);
   return match ? match[1] : "/";
 }
 
 export function resolveLifeManagerRoute({ pathname, hash }) {
   const hashRoute = hash.replace(/^#\/?/, "");
   const pathRoute = pathname.replace(/^\/|\/$/g, "");
+  if (pathRoute === "meals" || pathRoute.startsWith("meals/")) return "meals";
   if (pathRoute === "projects/new") return "project-create";
   if (Object.hasOwn(aliases, hashRoute)) return aliases[hashRoute];
   if (Object.hasOwn(aliases, pathRoute)) return aliases[pathRoute];

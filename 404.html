@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Page not found - Life Manager</title>
+  </head>
+  <body>
+    <h1>Page not found</h1>
+    <p>This address is not available.</p>
+    <script>
+      (() => {
+        const { pathname, search, hash } = window.location;
+        const match = pathname.match(/^(.*\/www\/trips)(\/meals(?:\/.*)?)$/);
+        if (!match) return;
+        const entry = `${match[1]}/index.html`;
+        const destination = `${match[2]}${search}${hash}`;
+        window.location.replace(`${entry}?__meals=${encodeURIComponent(destination)}`);
+      })();
+    </script>
+  </body>
+</html>

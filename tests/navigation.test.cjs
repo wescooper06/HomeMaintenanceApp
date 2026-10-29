@@ -24,7 +24,7 @@ test("standalone navigation uses the modern development shell and retains protec
     "/index.html#workbench");
   assert.equal(standaloneNavigationHref("daily", { pathname: "/activity-planner/", port: "" }), "#daily");
   assert.deepEqual(Array.from(navigationLinks, ([route]) => route),
-    ["dashboard", "workbench", "planner", "calendar", "daily", "trips"]);
+    ["dashboard", "workbench", "planner", "calendar", "daily", "meals", "trips"]);
 });
 
 test("modern projects/new route resolves to the create-mode ProjectEditor", () => {
@@ -141,8 +141,12 @@ test("rendered modern navigation omits Life Manager but retains every configured
   for (const [route, label] of navigationLinks) {
     const link = links.find((item) => item.children.includes(label));
     assert(link);
-    assert.equal(link.props.to.pathname, "/");
-    assert.equal(link.props.to.hash, `#${route}`);
+    if (route === "meals") {
+      assert.equal(link.props.to, "/meals");
+    } else {
+      assert.equal(link.props.to.pathname, "/");
+      assert.equal(link.props.to.hash, `#${route}`);
+    }
   }
   assert.equal(links.find((link) => link.children.includes("Planner")).props["aria-current"], "page");
 });
