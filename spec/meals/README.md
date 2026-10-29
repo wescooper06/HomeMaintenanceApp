@@ -81,6 +81,11 @@ The controlled workbook is not modified by the automated tooling tests; those te
 
 ## Future database/security gate
 
+The [Phase 0B Recipe Persistence Design](Phase%200B%20Recipe%20Persistence%20Design.md)
+records the proposed Recipe-only model, repository-canonical LF executable migration candidate, disabled reversal, local tests and future
+production verification gates. It is a review draft, not a deployed schema or
+Phase 1 acceptance; it does not change the accepted Phase 0A workbook baseline.
+
 Before any Phase 0B/1 object is implemented, prepare its justified object inventory and operation matrix. The required reusable review checklist is:
 
 1. Source-controlled migration; expected owner normally `postgres`; no speculative future-phase objects.
