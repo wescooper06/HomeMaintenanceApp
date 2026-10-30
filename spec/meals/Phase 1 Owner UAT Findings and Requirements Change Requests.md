@@ -1085,3 +1085,74 @@ not a separate documentation-only commit.
 - **Owner UAT:** Pending the five approved checks: multi-select filtering;
   combined filters; clear/zero-match; Detail navigation preservation; mobile
   plus Edit navigation. No additional owner scenarios are required.
+
+## Recipe Core R1 - CR-3 + CR-8 owner acceptance
+
+CR-3 + CR-8 OWNER UAT
+
+1. Multi-select filtering: PASS
+2. Combined filters: PASS
+3. Clear / zero-match: PASS
+4. Detail navigation preservation: PASS
+5. Mobile + Edit navigation: PASS
+
+Overall: PASS
+
+Notes: None
+
+Final dispositions:
+
+**CR-3: Accepted and complete.**
+**CR-8: Accepted and complete.**
+
+Recorded 2026-10-30. Source commit:
+`f13dc63a6a4bab1b17e92f759cd2fdf147ec1248`.
+Pages release commit: `923d19b9a25c8edbf7bf00a49827c4f28276c9bb`.
+This owner acceptance supersedes the pending-UAT disposition above without
+replacing its historical technical evidence. It accompanies the CR-1
+source/evidence commit, not a separate documentation-only commit.
+
+## Recipe Core R1 - CR-1 Ingredient paste refinement
+
+- **Technical validation:** 2026-10-30. CR-1 owner UAT pending, not accepted.
+- **Scope:** Only Ingredient-section textareas handle clipboard plain-text
+  paste. A pure normalizer recognizes LF/CRLF/CR, removes whitespace-only
+  lines, preserves retained text/whitespace/order/duplicates, and joins with
+  LF. Normalized text replaces only the selected range or inserts at the
+  caret, leaving surrounding text and other sections unchanged. The caret
+  follows the insertion. An all-blank paste is prevented without modifying
+  the value or selection.
+- **Undo:** Native insertText is used to retain the browser undo entry when
+  supported, with setRangeText as the unsupported-command fallback. Native
+  undo/redo passed in the tested desktop browser; fallback undo history is
+  browser-dependent and is not guaranteed.
+- **Preservation:** No normalization on load, Save, blur, typing, or display.
+  Existing/typed blank Ingredient lines remain. Instructions and all other
+  inputs have no CR-1 paste handler; no pasted HTML is parsed. No historical
+  data rewrite or Shopping implementation was performed. Future Shopping
+  generation must independently ignore empty Ingredient lines.
+- **Focused tests:** Interaction/service/routing: 39 passed, 0 failed.
+  Added coverage verifies LF/CRLF/CR, whitespace/NBSP, retained whitespace,
+  duplicates, literal markup, beginning/middle/end/selection paste,
+  native insertion and fallback paths, caret, all-blank no-op, targeted
+  section isolation, typed/legacy preservation through Save, and unchanged
+  Instructions. CR-2/CR-3/CR-8/CR-5 regression tests remain passing.
+- **Full validation:** 358 passed, 0 failed, 1 optional environment-dependent
+  PostgreSQL skip. Lint and production main-build/static deep-link tests
+  passed. Diff whitespace check passed.
+- **Isolated full-app browser:** Actual clipboard write plus Ctrl+V exercised
+  the real paste handler, including a trusted mobile-width paste event.
+  At 1280px desktop and 375px mobile, normalized insertion, selection
+  replacement, all-blank value/selection preservation, targeted section,
+  and Save/Edit round-trip passed. Regular typed blank lines, an unrelated
+  edit/save of existing Ingredient text, raw Instructions paste/edit, and
+  CR-2 ordered steps remained intact. Desktop undo/redo passed. No horizontal
+  document overflow; mobile Save target 44px. Synthetic local transport only;
+  no production Recipe data was created or changed.
+- **Boundaries:** Workbook, Phase 1 acceptance, formal requirements and
+  implementation-plan DOCX files, database/migrations, Supabase/RLS/policies/
+  grants/Auth, Shopping, and Activity Planner are unchanged. CR-3/CR-8 owner
+  acceptance above accompanies this implementation; no other CR is added.
+- **Owner UAT pending:** Four approved checks only: normal multiline paste;
+  paste into existing text; typing/existing-data preservation; mobile plus
+  Save/Edit round-trip.
