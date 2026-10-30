@@ -26,6 +26,7 @@ function harness(service = {}) {
   const context = {
     element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter((v) => v !== null && v !== undefined && v !== false) }),
     fragment: "fragment", Link: "link", styles: {}, createRecipeService: () => service, ...helpers,
+    confirm: () => { assert.fail("Classification errors must not use the browser confirmation dialog"); },
     useState(value) {
       const i = index++;
       if (!(i in slots)) slots[i] = typeof value === "function" ? value() : value;
@@ -60,10 +61,149 @@ function nodes(tree) {
 function text(tree) { return typeof tree === "object" ? tree.children.map(text).join("") : String(tree); }
 function button(tree, label) { return nodes(tree).find((n) => n.type === "button" && text(n) === label); }
 function labeledInput(tree, label) {
-  return nodes(tree).find((n) => n.type === "label" && n.children[0] === label).children.find((n) => typeof n === "object");
+  return nodes(tree).find((n) => n.type === "label"
+    && n.children.filter((value) => typeof value !== "object").join("") === label)
+    .children.find((n) => typeof n === "object");
 }
 const change = (node, value) => node.props.onChange({ target: { value } });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+function classificationEditor(kind, methods) {
+  const label = kind === "categories" ? "Category" : "Cuisine";
+  const editor = harness();
+  const classification = harness({ [kind]: methods });
+  const categories = [{ id: randomUUID(), name: "Dinner" }];
+  const cuisines = [{ id: randomUUID(), name: "French" }];
+  const props = { initial: { ...initial(), title: "Saved Recipe",
+    category_id: categories[0].id, cuisine_id: cuisines[0].id }, categories, cuisines, edit: true };
+  const renderEditor = () => editor.render(editor.EditorForm, props);
+  for (const [field, value] of [["Title", "Unsaved title"], ["Source", "Unsaved source"],
+    ["Section name", "Unsaved section"], ["Ingredient text", "\nFlour\n\nEggs"],
+    ["Instructions", "Mix\n\nBake"]]) {
+    change(labeledInput(renderEditor(), field), value);
+  }
+  nodes(renderEditor()).find((n) => n.type === "input" && n.props.type === "checkbox")
+    .props.onChange({ target: { checked: true } });
+  function snapshot() {
+    const tree = renderEditor();
+    return {
+      fields: nodes(tree).filter((n) => ["input", "textarea"].includes(n.type))
+        .map((n) => ({ value: n.props.value, checked: n.props.checked })),
+      classifications: nodes(tree).filter((n) => n.type.name === "Classification")
+        .map((n) => ({ kind: n.props.kind, value: n.props.value, values: n.props.values })),
+    };
+  }
+  return {
+    label, snapshot, editor,
+    render() {
+      const child = nodes(renderEditor()).find((n) => n.type.name === "Classification" && n.props.kind === kind);
+      return classification.render(classification.Classification, child.props);
+    },
+    alert(tree) {
+      const error = nodes(tree).find((n) => n.type.name === "ErrorMessage");
+      return classification.ErrorMessage(error.props);
+    },
+  };
+}
+
+for (const kind of ["categories", "cuisines"]) {
+  test(`${kind}: referenced deletion shows exact accessible refusal with browser confirm, preserves draft, retries and clears stale errors`, async () => {
+    let attempts = 0;
+    const h = classificationEditor(kind, {
+      remove: async () => { attempts++; throw Object.assign(new Error("foreign key violation"), { code: "23503" }); },
+      rename: async (id, name) => ({ id, name }),
+    });
+    const before = h.snapshot();
+    const expected = `Cannot delete this ${h.label} because it is used by a Recipe. Reassign Recipes using it, then try again.`;
+    const remove = () => button(h.render(), `Delete unused ${h.label}`).props.onClick();
+    await remove();
+    let tree = h.render();
+    assert.equal(nodes(tree).find((n) => n.type.name === "ErrorMessage").props.error, expected);
+    assert.equal(text(h.alert(tree)).trim(), expected);
+    assert.equal(h.alert(tree).props.role, "alert");
+    assert.equal(tree.type, "fieldset", "Alert remains beside the classification controls");
+    assert.deepEqual(h.snapshot(), before);
+    assert(h.editor.shouldBlock(), "Unsaved Recipe changes still require discard confirmation");
+    assert.equal(text(h.alert(h.render())).trim(), expected, "Refusal persists across renders");
+    assert.equal(button(tree, `Delete unused ${h.label}`).props.disabled, false);
+    assert.equal(tree.props.disabled, false, "Controls unlock after failure");
+    await remove();
+    assert.equal(attempts, 2);
+    assert.deepEqual(h.snapshot(), before);
+    change(labeledInput(h.render(), `Select ${h.label}`), "");
+    assert.equal(h.alert(h.render()), null, "Changing selection clears stale refusal");
+    change(labeledInput(h.render(), `Select ${h.label}`),
+      before.classifications.find((value) => value.kind === kind).value);
+    await remove();
+    change(labeledInput(h.render(), `${h.label} name`), "Renamed");
+    assert.equal(h.alert(h.render()), null, "Changing action input clears stale refusal");
+    await remove();
+    assert.equal(text(h.alert(h.render())).trim(), expected);
+    await button(h.render(), `Rename ${h.label}`).props.onClick();
+    assert.equal(h.alert(h.render()), null, "Successful classification action clears refusal");
+    const after = h.snapshot();
+    assert.deepEqual(after.fields, before.fields);
+    assert.equal(after.classifications.find((value) => value.kind === kind).value,
+      before.classifications.find((value) => value.kind === kind).value);
+    assert.equal(after.classifications.find((value) => value.kind === kind).values[0].name, "Renamed");
+    assert.equal(h.editor.navigations.length, 0);
+  });
+
+  test(`${kind}: network, authorization and unknown failures are not mislabeled as reference conflicts`, async () => {
+    for (const failure of [
+      new Error("Network request failed"),
+      Object.assign(new Error("Permission denied"), { code: "42501" }),
+      Object.assign(new Error("Authentication required"), { code: "PGRST301" }),
+      new Error("Unknown failure: used by a Recipe"),
+    ]) {
+      let attempts = 0;
+      const h = classificationEditor(kind, { remove: async () => {
+        attempts++;
+        if (attempts === 1) throw Object.assign(new Error("Reference refused"), { code: "23503" });
+        throw failure;
+      } });
+      const before = h.snapshot();
+      await button(h.render(), `Delete unused ${h.label}`).props.onClick();
+      await button(h.render(), `Delete unused ${h.label}`).props.onClick();
+      const alert = h.alert(h.render());
+      assert.equal(alert.props.role, "alert");
+      assert.equal(text(alert).trim(), `${failure.message} No classification change was confirmed; retry when ready.`);
+      assert.doesNotMatch(text(alert), /Cannot delete this/);
+      assert.deepEqual(h.snapshot(), before);
+    }
+  });
+
+  test(`${kind}: unused deletion still removes only the classification and clears its draft selection`, async () => {
+    let attempts = 0;
+    const h = classificationEditor(kind, { remove: async () => {
+      if (!attempts++) throw new Error("Offline");
+    } });
+    const before = h.snapshot();
+    await button(h.render(), `Delete unused ${h.label}`).props.onClick();
+    assert(h.alert(h.render()));
+    await button(h.render(), `Delete unused ${h.label}`).props.onClick();
+    assert.equal(h.alert(h.render()), null);
+    const after = h.snapshot();
+    assert.deepEqual(after.fields, before.fields);
+    assert.equal(after.classifications.find((value) => value.kind === kind).value, null);
+    assert.deepEqual(after.classifications.find((value) => value.kind === kind).values, []);
+    assert.deepEqual(after.classifications.find((value) => value.kind !== kind),
+      before.classifications.find((value) => value.kind !== kind));
+    assert.equal(button(h.render(), `Delete unused ${h.label}`).props.disabled, true);
+    assert.equal(attempts, 2);
+  });
+
+  test(`${kind}: a non-delete failure never receives the delete-refusal wording`, async () => {
+    const h = classificationEditor(kind, { rename: async () => {
+      throw Object.assign(new Error("Rename rejected"), { code: "23503" });
+    } });
+    const before = h.snapshot();
+    change(labeledInput(h.render(), `${h.label} name`), "New name");
+    await button(h.render(), `Rename ${h.label}`).props.onClick();
+    assert.equal(text(h.alert(h.render())).trim(), "Rename rejected No classification change was confirmed; retry when ready.");
+    assert.deepEqual(h.snapshot(), before);
+  });
+}
 
 test("editor title-only validation, multiline text, failed-save retention/retry and synchronous duplicate-submit guard", async () => {
   let attempts = 0, submitted, finish;

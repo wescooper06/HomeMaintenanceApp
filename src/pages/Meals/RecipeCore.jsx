@@ -183,20 +183,24 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
         onChange(values.filter((v) => v.id !== value)); onSelect(null);
       }
       setName("");
-    } catch (failure) { setError(`${failure.message} No classification change was confirmed; retry when ready.`); }
+    } catch (failure) {
+      setError(operation === "remove" && failure.code === "23503"
+        ? `Cannot delete this ${label} because it is used by a Recipe. Reassign Recipes using it, then try again.`
+        : `${failure.message} No classification change was confirmed; retry when ready.`);
+    }
     finally { lock.current = false; setBusy(false); onBusy(false); }
   }
   return <fieldset className={styles.classification} disabled={busy}><legend>{label}</legend>
-    <label>Select {label}<select value={value || ""} onChange={(e) => onSelect(e.target.value || null)}>
+    <label>Select {label}<select value={value || ""} onChange={(e) => { setError(""); onSelect(e.target.value || null); }}>
       <option value="">None</option>{values.map((v) => <option value={v.id} key={v.id}>{v.name}</option>)}
     </select></label>
-    <label>{label} name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
+    <label>{label} name<input value={name} onChange={(e) => { setError(""); setName(e.target.value); }} /></label>
     <div className={styles.actions}>
       <button type="button" disabled={!name.trim()} onClick={() => act("create")}>Create {label}</button>
       <button type="button" disabled={!value || !name.trim()} onClick={() => act("rename")}>Rename {label}</button>
       <button type="button" disabled={!value} onClick={() => act("remove")}>Delete unused {label}</button>
     </div>
-    {!confirm && <ErrorMessage error={error} />}
+    <ErrorMessage error={error} />
     <small>Classification changes save immediately. Referenced values cannot be deleted.</small>
   </fieldset>;
 }

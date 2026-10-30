@@ -36,7 +36,9 @@ async function result(request, operation) {
   if (error) {
     const hint = error.code === "23503" ? " This value is still referenced by a Recipe; remove its references first."
       : error.code === "23505" ? " That name or ID already exists." : "";
-    throw new Error(`${operation} failed.${hint} ${error.message || "Database request rejected."}`);
+    const failure = new Error(`${operation} failed.${hint} ${error.message || "Database request rejected."}`);
+    failure.code = error.code;
+    throw failure;
   }
   return data;
 }

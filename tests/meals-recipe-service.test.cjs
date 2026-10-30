@@ -127,7 +127,11 @@ test("service Category AND Cuisine create/rename/referenced refusal/unused delet
     assert.equal(renamed.name, "SUPPER");
     assert.equal((await lookup.list())[0].id, created.id);
     assert.equal((await service.get(draft.id))[field], created.id);
-    await assert.rejects(lookup.remove(created.id), /still referenced/);
+    await assert.rejects(lookup.remove(created.id), (error) => {
+      assert.equal(error.code, "23503");
+      assert.match(error.message, /still referenced/);
+      return true;
+    });
     await assert.rejects(lookup.create("supper"), /already exists/);
     await service.update(draft.id, { ...draft, [field]: null });
     await lookup.remove(created.id);
@@ -135,6 +139,33 @@ test("service Category AND Cuisine create/rename/referenced refusal/unused delet
     await assert.rejects(lookup.remove(created.id), /not deleted/);
     await assert.rejects(lookup.create("\n "), /name is required/);
     await service.remove([draft.id]);
+  }
+});
+
+test("classification deletion preserves structured error codes without inventing reference conflicts", async () => {
+  for (const kind of ["categories", "cuisines"]) {
+    for (const error of [
+      { code: "23503", message: "Referenced value" },
+      { code: "42501", message: "Permission denied" },
+      { code: "PGRST301", message: "Authentication required" },
+      { message: "Unknown failure: used by a Recipe" },
+      { code: "NETWORK", message: "Connection unavailable" },
+      { code: "OTHER" },
+    ]) {
+      const lookup = model.createRecipeService(() => ({ from(name) {
+        assert.equal(name, `meals_recipe_${kind}`);
+        const query = { delete() { return query; }, eq() { return query; }, select() { return query; },
+          then(resolve) { return Promise.resolve({ data: null, error }).then(resolve); } };
+        return query;
+      } }))[kind];
+      await assert.rejects(lookup.remove(randomUUID()), (failure) => {
+        assert.equal(failure.code, error.code);
+        assert.match(failure.message, /Delete classification failed/);
+        assert(failure.message.includes(error.message || "Database request rejected."));
+        assert.equal(failure.message.includes("This value is still referenced"), error.code === "23503");
+        return true;
+      });
+    }
   }
 });
 

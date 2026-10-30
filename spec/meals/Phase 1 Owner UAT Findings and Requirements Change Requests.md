@@ -840,3 +840,58 @@ this evidence/test commit.
 Only this register was edited by this task. No application, test, database,
 migration, RLS, policy, grant, or deployment changes were made. No files were
 staged, committed, or pushed.
+
+## Recipe Core R1 - Wave 1 - CR-5 technical implementation
+
+- **Technical run:** `RC-R1-TECH-001`, 2026-10-29.
+- **Baseline:** `604ab63903e9a24d77998e4975244e05360e144c`, branch `dev`.
+- **Scope:** CR-5 only. Owner UAT remains pending under `RC-R1-UAT-001`;
+  CR-5 is not recorded complete or accepted.
+- **Confirmed defect:** Classification-local error state was set after a
+  refused deletion, but `!confirm` resolved against the browser's global
+  confirmation function and suppressed the inline error component. A
+  pre-edit runtime reproduction showed zero rendered errors with that global
+  function present, versus one with a false comparison control.
+- **Implemented behavior:** Render the existing inline `role="alert"` beside
+  the affected classification controls. Preserve the service's structured
+  database error code; only a delete refusal with code `23503` receives:
+  - Category: "Cannot delete this Category because it is used by a Recipe.
+    Reassign Recipes using it, then try again."
+  - Cuisine: "Cannot delete this Cuisine because it is used by a Recipe.
+    Reassign Recipes using it, then try again."
+- **Preservation/fallback:** Failed deletion does not change the classification
+  list, selected value, or unsaved Recipe fields. Retry remains available.
+  Messages persist until another classification action or a selection/name
+  context change clears or replaces them. Network, authorization, unknown,
+  and non-delete failures retain the general failure explanation instead of
+  being inferred from arbitrary message text. No modal or browser alert is
+  used for refusal.
+- **Deletion rules unchanged:** Any persisted Recipe reference, including the
+  current Recipe, still prevents deletion. No automatic association clearing,
+  reference list, transaction, RPC, or CR-4 behavior was added.
+- **Focused validation:** `node --test tests/meals-recipe-interaction.test.cjs
+  tests/meals-recipe-service.test.cjs` passed 22 tests (15 interaction,
+  7 service), 0 failed, 0 skipped. Coverage includes both exact messages,
+  browser globals, alert semantics, preserved editor/list/selection state,
+  retry, stale-message clearing, non-reference error distinctions, and
+  unchanged unused-classification deletion. Existing migration-backed service
+  tests still reject referenced deletion for both classification types.
+- **Broader validation:** `npm test` passed 347 tests, 0 failed, 1 skipped
+  (optional real PostgreSQL environment requires `WORKBENCH_TEST_PG_BIN`);
+  `npm run lint` passed. Both production Vite configurations built successfully
+  with `build.write=false` (main: 17 output files; Activity Planner: 3).
+  Publishing was intentionally not run, so tracked generated web assets were
+  not overwritten. `git diff --check` passed.
+- **Isolated browser verification:** Existing synthetic-auth, in-memory
+  transport fixture only; no production requests. Category and Cuisine
+  refusal passed at 1280px desktop and 375px mobile widths, with exact text,
+  unchanged draft/selection, no horizontal alert overflow, and 44px enabled
+  retry controls. Context changes and later successful rename cleared stale
+  messages. This is technical verification, not owner UAT.
+- **Acceptance governance:** Controlled workbook and Word requirements were
+  not changed. Historical Phase 1 results, Accepted Final Decision, Deferred
+  rows, scope exclusions, and CR-1 through CR-8 history remain intact.
+  Refinement requirement/test IDs and workbook rows require separate approval.
+  Historical Security Acceptance reconciliation remains separate.
+- **Production/database/security/deployment:** None. No migration, RLS,
+  policy, grant, or Auth configuration changes. No staging, commit, or push.
