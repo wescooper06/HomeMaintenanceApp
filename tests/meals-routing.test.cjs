@@ -42,7 +42,10 @@ test.before(async () => {
   const core = await compile("src\\pages\\Meals\\RecipeCore.jsx", "{ RecipeLibrary, RecipeEditor, RecipeDetail }", {
     createRecipeService: () => ({}),
   });
-  MealsPage = await compile("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", core);
+  const ShoppingPage = await compile("src\\pages\\Meals\\ShoppingPage.jsx", "ShoppingPage", {
+    createShoppingService: () => ({}), crypto: require("node:crypto").webcrypto,
+  });
+  MealsPage = await compile("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", { ...core, ShoppingPage });
   Navigation = await compile("src\\components\\layout\\MainNavigation.jsx", "MainNavigation", { navigationLinks });
   LifeRoutes = await compile("src\\router\\LifeManagerRouter.jsx", "LifeManagerRoutes", {
     resolveLifeManagerRoute, useLayoutEffect() {}, navigationStyles: {},
@@ -61,6 +64,7 @@ test("Meals parent owns only criteria across subroutes and a fresh parent starts
     let pathname = "/meals/recipes";
     const Page = await compileComponent("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", {
       RecipeLibrary: () => null, RecipeEditor: () => null, RecipeDetail: () => null,
+      ShoppingPage: () => null,
       useLocation: () => ({ pathname, search: "" }),
       useState(initial) {
         criteria ??= initial();
@@ -144,12 +148,13 @@ function render(Page, pathname, basename = "/") {
 test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping links with active states", () => {
   for (const [pathname, title, active] of [
     ["/meals/recipes", "Recipes", "recipes"], ["/meals/recipes/new", "Add Recipe", "recipes"],
-    ["/meals/recipes/synthetic-id", "Recipe Detail", "recipes"], ["/meals/shopping", "Shopping", "shopping"],
+    ["/meals/recipes/synthetic-id", "Recipe Detail", "recipes"], ["/meals/shopping", null, "shopping"],
     ["/meals/not-found", "Meals page not found", null],
   ]) {
     const html = render(MealsPage, "/HomeMaintenanceApp/www/trips" + pathname, "/HomeMaintenanceApp/www/trips");
-    assert.match(html, new RegExp(`<h2[^>]*>${title}</h2>`));
+    if (title) assert.match(html, new RegExp(`<h2[^>]*>${title}</h2>`));
     if (active === "recipes") assert.match(html, /role="status"[^>]*>Loading Recipe/);
+    else if (active === "shopping") assert.match(html, /role="status"[^>]*>Loading Shopping/);
     else assert.match(html, /Phase 0A foundation preview - not data-backed/);
     for (const destination of ["recipes", "shopping"]) {
       assert(html.includes(`href="/HomeMaintenanceApp/www/trips/meals/${destination}"`));

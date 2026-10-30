@@ -1,0 +1,26 @@
+{
+  "provenance": "Generated only from immutable candidate f7d436dd8b4102c9a57a3dbf9b81abfdf3c5d3b85ea616aa9321df08cb75e768, with the single execution guard enabled, in disposable local PGlite. No production baseline was blessed.",
+  "localEngine": "PostgreSQL 17.5 on aarch64-unknown-linux-gnu, compiled by emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 3.1.74 (1092ec30a3fb1d46b1782ff1b4db5094d3d06ae5), 32-bit",
+  "fields": {
+    "browser_memberships": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "browser_roles": "0824b4c9506f17047a50c2c30962f8a09fa4ca64fbab57a4b5b88dfa334b3a82",
+    "column_acls": "f15e53d0b3e0ed4013749e3c9a2054467282a1ed7ac59466c803373c92d548ab",
+    "column_grants": "8068f6b81c92a5f52058c3d7639baa0930dfa49e9111199529ef7d57b0ebd67e",
+    "column_privileges": "56d2d3754b271b0823d6e88794d8c182e4fd2fb439e49224874758c4ddd02d0a",
+    "columns": "c4811e0032802cdd2dbff98464f6f45321f60343987b51d6c50759bbb02277a9",
+    "constraints": "27072a3a0f9599a4f3ad078a9eea7bd1f6b236c7b42f108bb9e821e19d800113",
+    "counts": "67040e702f4e0076f5cdaf26f9b84dfd509167e6759cc245fff6a1c8f8aa3de8",
+    "function_privileges": "104387b5181ad39ed75bc39d60069ca8c67318c138607752560544c6c45b47fd",
+    "functions": "14bc29df69af3bdd6e85cc0ee015fe4d14556dae02d800665a4d96647dc63573",
+    "index_state": "98ee4828865af89ad4e91efbde095ca3396494982909df8ad5a73444d6501518",
+    "indexes": "2635c51363b3d36926a2fbbfccf5635b901d9da3b6e6575dbdcb1e6df5139ad2",
+    "policies": "3173131e1aea9169c7fae2db30e0f1823539819eccd846023d68634634304761",
+    "public_grants": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "relations": "8143b253ce6665e05387d042c8ef3ebb4aeb3c6a2916b0f65656c738a0b97109",
+    "seeds": "8649c6bd5a389165f4816e775b01e94ca16586a0f79771aeeeed48c844dfc5ac",
+    "table_privileges": "a6a2e52dc8336937985e231c4eb1f223aecfa502e6a6180e209ca8725a03f985",
+    "trigger_details": "6f67b454b6290befab7aaae133ffb41a9f9cf8e07be61007fa7e7134141bb9f1",
+    "triggers": "3bc5c6a6ff0a8d30b99f03a160a704acaf9965f9378dd29dfa4eaa8023967cfb",
+    "types": "96d26cab79f628ae0815f537956a00d3f30f51345b6208effeb16d7ef5cd2569"
+  }
+}

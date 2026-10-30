@@ -5,6 +5,7 @@ import { newRecipeFilters } from "../../services/recipeService.js";
 
 import styles from "./MealsPage.module.css";
 import { RecipeDetail, RecipeEditor, RecipeLibrary } from "./RecipeCore.jsx";
+import ShoppingPage from "./ShoppingPage.jsx";
 
 function FoundationScreen({ title, children }) {
   return (
@@ -43,11 +44,7 @@ export default function MealsPage() {
         <Route path="/meals/recipes/new" element={<RecipeEditor />} />
         <Route path="/meals/recipes/:id/edit" element={<RecipeEditor edit />} />
         <Route path="/meals/recipes/:id" element={<RecipeDetail />} />
-        <Route path="/meals/shopping" element={
-          <FoundationScreen title="Shopping">
-            Shopping functionality will be implemented in Phase 2. No shopping items are loaded or saved here.
-          </FoundationScreen>
-        } />
+        <Route path="/meals/shopping" element={<ShoppingPage />} />
         <Route path="*" element={
           <FoundationScreen title="Meals page not found">
             This Meals path is not available. Choose Recipes or Shopping above. Recipe Import remains deferred.
