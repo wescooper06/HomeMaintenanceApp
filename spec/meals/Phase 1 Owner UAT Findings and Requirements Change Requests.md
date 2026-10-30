@@ -1156,3 +1156,687 @@ source/evidence commit, not a separate documentation-only commit.
 - **Owner UAT pending:** Four approved checks only: normal multiline paste;
   paste into existing text; typing/existing-data preservation; mobile plus
   Save/Edit round-trip.
+
+## Recipe Core R1 - CR-1 owner acceptance
+
+CR-1 OWNER UAT
+
+1. Normal multiline paste: PASS
+2. Paste into existing text: PASS
+3. Typing and existing-data preservation: PASS
+4. Mobile + Save/Edit round-trip: PASS
+
+Overall: PASS
+
+Notes: None
+
+Final CR-1 disposition: **Accepted and complete.**
+
+Source commit: `3cfb3931fac49197a019d42f0d242a5fd9a1c833`.
+Pages release commit: `44deb0666df1e4f881d7a554c5ec0ffc70be78b6`.
+Recorded 2026-10-30. This supersedes the pending owner-UAT disposition above,
+preserving all prior technical evidence. No separate CR-1 documentation-only
+commit is authorized or created.
+
+## Recipe Core R1 - CR-7 Source page-title investigation
+
+**Status: Investigation complete; not implemented, deployed, or accepted.**
+Recorded 2026-10-30. Only this findings register is changed. CR-4 remains
+paused at its separate real-PostgreSQL validation gate.
+
+### Current implementation and trust boundaries
+
+- Source is `public.meals_recipes.source`, a non-null text column defaulting
+  to the empty string. `recipeService.recipeValues` copies it verbatim.
+  The Source editor directly updates the draft; no title or normalized URL
+  is stored. Existing Source remains unchanged through unrelated saves.
+- Recipe Detail's `Source` component calls `recipeSourceUrl`: `new URL`
+  accepts HTTP/HTTPS and returns its normalized href. The visible label is
+  the original Source text. Thus storage is unchanged, although the browser
+  link representation can be normalized. Links open in a new tab with
+  `noopener noreferrer`; non-URL Source is React plain text.
+- This is a safe-link protocol check, NOT an outbound-fetch safety check.
+  It does not exclude private destinations, credentials or unusual ports.
+  No Recipe title lookup currently occurs.
+- The entire `src/utils/resolveLinkTitle.js` was reviewed. Its caller is
+  Trips `ViewTripModal`, through `TripDetailsPanel`, not Recipe Core.
+  A separate same-named implementation exists in `plannerService.js`;
+  it is not the shared utility and is also unsuitable for blind reuse.
+  Neither unrelated implementation is changed by this investigation.
+
+### Existing title utility mechanism classification
+
+| Mechanism | Classification | CR-7 conclusion |
+|---|---|---|
+| Original-URL fallback and plain-text React label | A - acceptable concept | Preserve original destination; never render returned HTML. |
+| In-memory positive cache | A - acceptable concept, implementation needs limits | Existing unbounded module Map has no TTL or logout scoping. |
+| YouTube-specific canonicalization/oEmbed | B - unsuitable for arbitrary Sources; C - opt-in/provider review | Provider integration is not general HTML title retrieval. Never canonicalize the displayed Source destination. |
+| noembed and r.jina.ai proxy | C - owner privacy decision required | Disclose destination URLs to extra parties; not recommended for this wave. |
+| JSONP script injection | D - replace/do not reuse | Executes third-party script in the application context. |
+| Direct arbitrary browser fetch | B - unsuitable | CORS, opaque responses and mixed-content restrictions prevent reliable reads. |
+| URL safety and request limiting implementation | D - replace for any server resolver | Hostname/query regexes are not SSRF controls; no DNS/connect-address or redirect enforcement, streamed byte cap or overall deadline. |
+
+The utility rejects several obvious local/credential-like URLs but does not
+resolve DNS, constrain ports or validate redirect destinations. Individual
+fetch attempts use 8-second timeouts; sequential fallbacks have no overall
+deadline. JSONP has its own 6-second timer. The caller ignores late results on
+unmount but does not pass its abort signal into the resolver. Returned title
+text is parsed/decoded, and the original URL is returned with the title.
+These browser assumptions must not be copied into an authenticated server
+fetcher. No production Recipe Source was passed to any resolver.
+
+### Browser-only feasibility evidence
+
+Controlled browser probes ran from the live application's HTTPS origin,
+using public test URLs only, credentials omitted and no referrer:
+
+- Normal fetch of `https://example.com/` failed with an explicit browser CORS
+  error (no Access-Control-Allow-Origin).
+- The same URL with `no-cors` returned an opaque response: status 0 and
+  unreadable/empty body. It cannot supply a title.
+- `https://httpbingo.org/html` returned readable CORS-enabled HTML, status
+  200, but no title. A same-origin public application index returned the
+  title "Life Manager"; neither proves arbitrary cross-origin access.
+- A public redirect to example.com failed at the destination's CORS check.
+  Manual redirect mode yielded an unreadable opaqueredirect response.
+  A redirect to the CORS-enabled public HTML page succeeded without a title.
+- A delayed public request aborted with TimeoutError using a 700ms deadline.
+- `http://example.com/` was blocked as mixed content from the HTTPS app.
+- Inert local HTML parsing decoded entities in
+  `Soup &amp; Bread &#8212; Test`; a missing title returned no result.
+
+**Reject browser-only arbitrary title retrieval.** No CORS bypass, JSONP,
+private Recipe URL, authenticated Recipe request or production data mutation
+was used. These are networking/parsing probes, not a CR-7 production prototype.
+
+### Backend capability and SSRF gate
+
+The repository is a Vite static application published to GitHub Pages.
+Its browser Supabase client, owner-auth controller and SQL/RPC patterns do
+not constitute a server-side HTML-fetch service. No local `supabase/functions`,
+Supabase CLI configuration, Edge invocation or established Edge deployment
+pattern was found. Remote function inventory was not queried; this finding
+does not assert that the remote project has no functions.
+
+CR-7 would introduce a new backend deployment surface. Official Supabase
+documentation describes authenticated Edge Functions, worker limits and
+outbound port restrictions, but does not establish a private-network egress
+boundary for this proposed feature. General Deno DNS/custom HTTP client APIs
+do not prove that the hosted runtime supports vetted DNS-to-socket pinning
+with correct original-host TLS SNI and certificate verification.
+
+Actual hosted-runtime enforceability is therefore **unverified**, not assumed
+safe or assumed absent. DNS prechecks followed by ordinary fetch can
+re-resolve and permit rebinding. A hostname regex or allowlist alone is not
+sufficient. Do not approve arbitrary server-side URL fetching at this gate.
+
+A future fetcher must demonstrably reject loopback, private, link-local,
+metadata, unspecified, multicast and other non-public IPv4/IPv6 destinations,
+including IPv4-mapped IPv6, CGNAT and mixed allowed/restricted DNS answers.
+It must validate DNS chains and enforce the approved connection address,
+not merely inspect the initial hostname. Apply equivalent checks to every
+redirect if redirects are ever enabled.
+
+### Recommendation, privacy and caching
+
+Keep the current raw clickable Source as the default. The least intrusive
+useful optional enhancement is an owner-triggered **Resolve page title**
+action, not automatic requests on Detail open or Source Save. Consider only
+explicitly reviewed public hosts with demonstrably safe egress. If the hosted
+runtime cannot establish that boundary, retain no title lookup, or separately
+review a provider-specific integration. Do not introduce a third-party proxy.
+
+Render Source immediately. A small adjacent status can say "Resolving title";
+do not block Detail or hide the link. On success replace only its visible
+label with a bounded, wrapping plain-text title. On failure retain the raw
+clickable Source and show "Title unavailable" with an explicit retry after
+cooldown. No-title/non-URL input does not become an error blocking the Recipe.
+Cancel work on unmount and ignore stale results after Source/Recipe changes.
+Never use an endpoint-returned URL as the link destination.
+
+Lookup discloses the requested URL (including its path/query) and resolver
+network metadata to the destination and potentially infrastructure logs.
+Authentication goes only to the application's endpoint. Never forward browser
+cookies, bearer/session tokens, authorization headers or referrers to the
+destination. Do not log full Source URLs or credential-bearing values.
+HTTPS-only lookup is recommended; an HTTP Source remains clickable but is
+not fetched or silently upgraded. This narrower lookup policy needs approval.
+
+Prefer authenticated-page-lifetime memory caching only: at most 50 successful
+titles, 15-minute TTL, clear on logout/unmount; a 30-second failed-attempt
+cooldown allows explicit retry. No browser persistent storage, Recipe title
+column, database cache or server cache. Cache hits need not trigger new
+destination requests. This is intentionally not a durable title guarantee.
+Per-isolate server memory cannot provide a reliable global rate limit.
+Propose 10 owner lookups/minute with one in flight; an enforceable shared or
+platform rate-limit mechanism must be verified before endpoint approval.
+Do not silently substitute a best-effort Map or introduce a database schema.
+
+### Proposed future contract and limits - not implemented
+
+- Proposed `POST /functions/v1/recipe-source-title`, body `{ "url": "..." }`.
+  One URL per request. Verify the user JWT AND exact designated-owner identity,
+  using the established owner identity contract. Auth alone is not owner
+  authorization. No service-role credentials or database writes are needed.
+- `200 { "status": "resolved", "title": "..." }`, or
+  `200 { "status": "unavailable", "reason": "..." }`. Reasons:
+  `not_allowed`, `no_title`, `timeout`, `too_large`, `not_html`, `upstream`.
+  Unavailability is explicit, never a success-shaped fabricated title.
+- Malformed request: 400; absent/invalid authentication: 401; non-owner: 403;
+  enforced rate limit: 429 with Retry-After; unavailable safety configuration:
+  503. All client outcomes retain the existing Source and usable Detail.
+- Lookup URLs: HTTPS on 443 only, maximum 2048 UTF-8 bytes; reject userinfo,
+  IP literals, local/special hostnames, other ports/schemes, credential/signed
+  query values and unreviewed host/path combinations. Use exact reviewed
+  hosts, not implicit arbitrary subdomains. Reject proxy/redirect endpoint
+  paths; sensitive path values still require owner caution. Remove fragments
+  from the fetch target only; never rewrite persisted Source or link href.
+- **Redirect limit: zero.** Treat every 3xx as unavailable without following
+  it. Supporting any redirects later requires a separate reviewed policy
+  with the same host/DNS/connect-address checks at every hop.
+- Total server deadline 5 seconds, including DNS, connect, headers and body;
+  client endpoint deadline 6 seconds with cancellation. Bound request JSON to
+  4 KiB, decompressed HTML to 512 KiB while streaming, response to 2 KiB,
+  and title to 300 Unicode code points. A Content-Length header alone is not
+  sufficient; abort oversized, slow or compressed expansion responses.
+- Accept `text/html` with absent/UTF-8 charset only for the first version;
+  reject other declared charsets/content types. Parse bounded HTML using a
+  non-executing parser, decode entities once, extract title as plain text,
+  normalize title whitespace/control characters and bound its length.
+  No JavaScript, subresource loading, JSONP or raw HTML insertion.
+
+### Likely future files and verification
+
+Existing files likely to change after approval:
+`src/pages/Meals/RecipeCore.jsx`, `src/pages/Meals/MealsPage.module.css`,
+`tests/meals-recipe-interaction.test.cjs`, and this register.
+Proposed new files: `src/services/recipeSourceTitleService.js`,
+`tests/meals-recipe-source-title.test.cjs`,
+`supabase/functions/recipe-source-title/index.ts`, its focused test file, and
+`supabase/config.toml` only if required by the approved deployment tooling.
+The existing Trips/Planner resolver is not a proposed dependency or change.
+
+Future automated cases:
+
+1. Approved HTTPS Source resolves a title.
+2. HTTP remains clickable but lookup is refused under the approved policy.
+3. Missing/blank title retains raw clickable fallback.
+4. DNS/connect/body timeout aborts and falls back.
+5. Public redirect is refused without a second request.
+6. Redirect to private/restricted destination makes no destination request.
+7. Localhost/private IPv4, alternate numeric forms, restricted DNS answers
+   and rebinding attempts are blocked at the connection boundary.
+8. Restricted IPv6, mapped IPv4 and mixed A/AAAA answers are blocked.
+9. Userinfo, credential-bearing/signed URLs and unusual ports are refused.
+10. Oversized/chunked/compressed responses abort within the streamed cap.
+11. Non-HTML/unsupported charset falls back.
+12. Malicious title markup/entities render only as bounded inert text.
+13. Original Source storage and link destination survive lookup unchanged.
+14. Non-URL Source stays plain text without a request.
+15. Unavailable/network/auth/rate-limit responses never break Detail;
+    stale results, cancellation, retry, cache expiry/logout and accessible
+    desktop/mobile wrapping behave predictably.
+16. CR-1/2/3/5/8 focused regressions remain passing.
+
+Also test exact-owner authorization, no credential/header forwarding, no
+sensitive URL logs, enforced shared rate limiting and zero subresource/script
+requests. Hosted-runtime egress tests are a release gate, not replaceable by
+mocked DNS alone.
+
+### Evidence references and disposition
+
+- [Browser fetch modes and opaque responses](https://developer.mozilla.org/en-US/docs/Web/API/Request/mode)
+- [Supabase Edge authentication](https://supabase.com/docs/guides/functions/auth)
+- [Supabase Edge architecture](https://supabase.com/docs/guides/functions/architecture)
+- [Supabase Edge limits](https://supabase.com/docs/guides/functions/limits)
+- [Deno runtime network permissions](https://docs.deno.com/runtime/fundamentals/security/)
+- [Deno DNS API](https://docs.deno.com/api/deno/network/#Deno.resolveDns)
+- [Deno HTTP client options](https://docs.deno.com/api/deno/fetch/#Deno.CreateHttpClientOptions)
+
+No endpoint, production prototype, infrastructure installation, secret,
+database/migration, RLS/policy/grant/Auth change or deployment was made.
+The Acceptance Workbook and Phase 1 acceptance remain untouched.
+No staging, commit or push is authorized. The unrelated
+`supabase/review/owner-auth-broker-cleanup.sql` remains excluded.
+Owner decision remains: keep current Source labels, or authorize a separately
+scoped owner-triggered reviewed-host feature and its privacy, HTTPS-only,
+new-backend and enforceable-egress/rate-limit prerequisites.
+
+## Recipe Core R1 - CR-7 owner disposition
+
+Recorded 2026-10-30.
+
+**CR-7: Deferred**
+
+Reason:
+Page-title resolution would require a new network/backend trust boundary and
+security controls disproportionate to the value of this personal-app
+enhancement.
+
+Current behavior retained:
+Recipe Source URLs remain clickable and display the stored Source URL.
+
+Possible future approach:
+Owner-triggered title resolution for a restricted set of reviewed hosts, if a
+safe backend pattern is established later.
+
+This owner disposition supersedes the pending decision above and preserves
+the investigation as history. CR-7 is not implemented or accepted. No
+application, database, workbook or deployment change accompanies this record.
+
+## Recipe Core R1 Refinement Closeout
+
+Recorded 2026-10-30. This is the current disposition summary; earlier
+proposals, pending-UAT statements and failed observations remain historical
+evidence, superseded by the final owner dispositions below. Detailed owner
+UAT records are not repeated.
+
+| Refinement | Final disposition | Retained behavior / boundary |
+|---|---|---|
+| CR-1 | Accepted and complete; owner Overall PASS | Ingredient paste removes blank/whitespace-only pasted lines, preserving typing, existing data, retained line text, order, duplicates and Save/Edit behavior. |
+| CR-2 | Accepted and complete; owner retest Overall PASS | Nonblank Instructions lines display as numbered steps; raw multiline persistence/Edit remains unchanged. Original failure and hard-refresh diagnosis remain historical evidence. |
+| CR-3 | Accepted and complete; owner Overall PASS | Multiple Categories/Cuisines: OR within each group; AND across search, Category, Cuisine and Favorites. |
+| CR-5 | Accepted and complete; owner Overall PASS | Referenced classification deletion is refused with a clear accessible explanation, preserving Recipe draft state. |
+| CR-8 | Accepted and complete; owner Overall PASS | Library criteria survive supported Meals/Detail/Edit navigation, not full refresh/logout. |
+| CR-6 | Deferred / Optional | Listing Recipes referencing a blocked classification is a nice-to-have, not required for current Recipe Core or CR-5 refusal behavior. |
+| CR-7 | Deferred - Investigation Complete, Not Implemented | Browser-only arbitrary titles are unreliable; existing title utility is unsuitable for general Recipe Sources. A new backend/network trust boundary is disproportionate to the enhancement's value. |
+| CR-4 | Paused - Not Implemented | Requires disposable real-PostgreSQL validation capability and separate authorization before resumption. |
+
+### Paused CR-4 validation boundary
+
+Atomic clearing of the current persisted Recipe's association plus
+Category/Cuisine deletion requires real PostgreSQL transaction, rollback,
+locking, race and multi-session concurrency validation. The current environment
+does not provide the required disposable tooling: `initdb`, `pg_ctl`,
+`postgres` and `psql`; `WORKBENCH_TEST_PG_BIN` is unavailable.
+PGlite is not sufficient proof of these concurrency requirements.
+
+No CR-4 application implementation, migration, database change, production
+operation, commit or deployment has been performed. Resume only when suitable
+disposable local PostgreSQL tooling is available and separately authorized.
+Do not weaken the future validation requirement to unblock CR-4.
+
+### Deferred CR-7 and cycle boundaries
+
+The existing CR-7 investigation remains the single investigation record.
+No established repository Edge Function deployment pattern was found;
+SSRF-safe arbitrary outbound retrieval was not demonstrated. Security/privacy
+complexity is disproportionate for this personal-app enhancement.
+Source remains stored unchanged; valid HTTP/HTTPS values remain clickable
+with the stored Source as the visible label, and non-URL values remain plain
+text. A possible future direction is owner-triggered resolution for reviewed
+hosts only after a safe backend pattern and egress controls are established.
+
+- Accepted Phase 1 Recipe Core baseline remains unchanged.
+- Historical Phase 1 Acceptance Workbook remains unchanged.
+- No database change is part of this closeout.
+- No deployment is required for this closeout.
+- Historical security-ledger reconciliation remains separate technical
+  governance work and does not reopen the accepted owner functional baseline.
+- Only this findings register is authorized for the closeout commit and push
+  to dev; source, tests, workbook, migrations, generated Pages assets and the
+  excluded cleanup SQL are not part of this change.
+
+## Phase 2 Shopping - kickoff and Wave 1 local candidate
+
+Run **P2-TECH-001**, 2026-10-30. Baseline `dev` and `origin/dev`:
+`d0620ffacd49849273f8d3603f5728a611b536ff`; index initially empty.
+The R1 closeout is already committed and pushed separately. CR-1/2/3/5/8
+remain accepted, CR-4 paused/not implemented, CR-6 optional/deferred and
+CR-7 deferred after investigation. The excluded cleanup SQL is untouched.
+
+Requirements v0.3, Implementation Plan v1.0, current workbook Phase 2 rows,
+Update Protocol and Recipe persistence/security evidence were inspected.
+The owner's explicit no-workbook-update instruction controls this kickoff:
+no workbook status, formula, evidence or Phase Sign-Off change is made.
+
+### Complete Phase 2 requirement map and bounded waves
+
+| Area | Exact requirement IDs | Implementation wave / coverage |
+|---|---|---|
+| A. Navigation / entry points | NAV-007; RL-FUNC-013, RL-FUNC-014, RL-FUNC-015; RD-FUNC-001 | Shopping route Wave 1; Recipe entry actions Wave 2. |
+| B. Recipe -> Shopping | SHOP-FUNC-002, SHOP-FUNC-025; RD-STATE-001; ASL-STATE-001 | Wave 2: new unchecked items, no automatic navigation. |
+| C. Ingredient checklist | ASL-UI-001, ASL-UI-002; ASL-FUNC-001 through ASL-FUNC-013 | Wave 2: single Recipe, ordered section groups, independent default-selected lines, Select/Clear all, cancel, selected-only add, zero-selected guard, verbatim text and duplicates. |
+| D. List presentation | SHOP-UI-001; SHOP-FUNC-001, SHOP-FUNC-009 | Wave 1: one categorized list; checked rows remain subdued. |
+| E. Manual items | SHOP-FUNC-003, SHOP-FUNC-016, SHOP-FUNC-018, SHOP-FUNC-019 | Wave 1: add/edit/remove; auto assignment visible; no individual removal confirmation; no Recipe writes. |
+| F. Categorization | SHOP-FUNC-004, SHOP-FUNC-005, SHOP-FUNC-006, SHOP-FUNC-015, SHOP-FUNC-017, SHOP-FUNC-020 | Shared deterministic map/override in Wave 1; Recipe ingestion uses it in Wave 2. No quantity/unit normalization. |
+| G. Purchased behavior | SHOP-FUNC-008, SHOP-FUNC-009, SHOP-FUNC-010, SHOP-FUNC-013, SHOP-FUNC-014, SHOP-FUNC-026 | Wave 1: immediate persistence; sink within category; mobile auto-collapse and manual expansion; no desktop auto-collapse. |
+| H. Clear operations | SHOP-FUNC-011, SHOP-FUNC-012, SHOP-FUNC-024; STATE-006 | Wave 1: Clear Checked without prompt; confirmed Clear List retains all categories. |
+| I. Categories | SHOP-FUNC-007, SHOP-FUNC-021, SHOP-FUNC-022, SHOP-FUNC-023 | Wave 1: custom create/rename/delete-unused; predefined protection in UI and database. |
+| J. Ordering | SHOP-FUNC-010, SHOP-FUNC-027 | Wave 1: configured predefined order, custom creation order, unchecked then checked in each group. |
+| K. Desktop | ASL-UI-001; SHOP-FUNC-026; RESP-001, RESP-002 | Manual/list Wave 1; ingredient modal Wave 2. |
+| L. Mobile | ASL-UI-002; SHOP-FUNC-013, SHOP-FUNC-014; RESP-001, RESP-003 | Touch/checked behavior Wave 1; ingredient bottom sheet/equivalent Wave 2. |
+| M. State/errors | SHOP-STATE-001; STATE-001, STATE-002, STATE-003, STATE-004, STATE-006, STATE-007 | Wave 1 loading/retry, empty state, duplicate guard, explicit failures and retained attempted values; Wave 2 repeats for checklist. |
+| N. Persistence | Section 14 Shopping Category/Item capabilities; DB-DATA-001; ARCH-013, ARCH-015 | Wave 1 additive schema only; no Planner/Import objects. |
+| O. Security | ARCH-001 through ARCH-009, ARCH-012 through ARCH-015; DB-SEC-001 through DB-SEC-012; SEC-TST-001 through SEC-TST-010 | Applicable shared exact-owner/security/catalog gates. No views, sequences or browser RPCs; their positive-access checks are inapplicable. Production identity/Advisor/smoke remain future gates. |
+| P. Recipe regression | RE-FUNC-006; accepted CR-1/2/3/5/8; RL/RD/RE and Phase 0 navigation/security | Existing Recipe text/persistence/filter/navigation/error contracts retained. Wave 2 independently excludes legacy/typed blank ingredient lines. |
+| Q. End-to-end | E2E-03, E2E-04, E2E-11; previous-phase E2E-00, E2E-01, E2E-02, E2E-10 regression | E2E-04/11 local equivalents Wave 1; E2E-03 Wave 2. No owner acceptance claimed. |
+
+Functional Test IDs are the corresponding controlled IDs with `-T01`
+(including NAV-007-T01, RL-FUNC-013-T01 through RL-FUNC-015-T01,
+RD-FUNC-001-T01, RD-STATE-001-T01, all ASL/SHOP rows and STATE-006-T01).
+Shared security IDs include ARCH-*-T01 and SEC-TST-*-T01; existing database
+checks include DBV-DB-SEC-001 through DBV-DB-SEC-012, DBV-DB-DATA-001,
+DBV-PROJECT-001 and DBV-BROKER-001. Their historical evidence is not replaced.
+
+Two waves are smaller practical deployable slices than splitting purchased/
+category/clear/mobile requirements away from a usable manual list:
+
+1. **Wave 1 - persistence + complete manual Shopping.** Locally implemented:
+   NAV-007, SHOP-UI-001, SHOP-FUNC-001, SHOP-FUNC-003,
+   SHOP-FUNC-005 through SHOP-FUNC-024, SHOP-FUNC-026, SHOP-FUNC-027,
+   SHOP-STATE-001 and STATE-006, with shared security/state/regression gates.
+   Service text editing supports any Shopping row independently of provenance.
+   Files: Shopping service/page/CSS, Meals route, four reviewed SQL candidates,
+   Shopping service/interaction/persistence tests and isolated fixtures.
+   Objects: the two Shopping tables and supporting objects below.
+   Tests: focused, role/catalog, full suite and desktop/mobile browser.
+   Owner UAT: five checks below, only after an authorized migration/release.
+   Deployment dependency: verified Shopping migration before UI release.
+2. **Wave 2 - Recipe -> Shopping.** Designed, NOT implemented:
+   RL-FUNC-013 through RL-FUNC-015, RD-FUNC-001, RD-STATE-001,
+   ASL-UI-001/002, ASL-FUNC-001 through ASL-FUNC-013, ASL-STATE-001,
+   SHOP-FUNC-002, SHOP-FUNC-004 and SHOP-FUNC-025; E2E-03.
+   Expected files: RecipeCore, shared ingredient-selection component,
+   responsive CSS, Shopping service batch method and focused/E2E tests.
+   No additional database object is currently needed. Five owner checks:
+   one-selection enablement, grouped/default selection, selected-only/cancel,
+   duplicates/verbatim text, mobile sheet plus Detail-stays-open confirmation.
+   Depends on accepted Wave 1 persistence; requires its own validation/release.
+
+Wave 2 design: fetch the selected Recipe's current persisted data, split each
+section on LF/CRLF/CR, ignore whitespace-only lines and preserve every retained
+line/duplicate and section order. Use independent stable row identities,
+initially select all, and submit one atomic bulk INSERT of selected new
+unchecked rows (with stable retry IDs and reconciliation after uncertain
+responses). Do not loop independent inserts and claim all-or-nothing success.
+Desktop uses a modal, mobile an equivalent bottom sheet; Cancel adds nothing.
+Library enables only exactly one selected Recipe. Detail stays open with
+success status and optional View Shopping List. No ingredient parsing,
+Recipe mutation, multi-Recipe aggregation or navigation-state rewrite.
+
+### Wave 1 model and behavior
+
+- One list represented by `meals_shopping_items` and
+  `meals_shopping_categories`, not a speculative lists hierarchy.
+- Items: UUID, verbatim nonblank text, nullable category FK, checked boolean
+  default false, server-managed created_at/updated_at. Duplicates are allowed.
+  No Recipe FK/provenance is needed: text copies are independent, and editing
+  or deleting a Shopping row cannot affect its source Recipe.
+- Categories: UUID, canonical nonblank case-insensitive unique name, nullable
+  predefined_order (1..28, unique), server timestamps. All 28 predefined names
+  are seeded in specification order, Baking through Wine & Spirits.
+  Null category is a UI "Uncategorized" group, not an invented 29th seed.
+- Ordering: configured predefined order; custom categories by created_at/id;
+  items by unchecked/checked then created_at/id within category. Timestamp/ID
+  ties are deterministic. No manual ordering, sequence or reorder RPC.
+- OD-004 permits a technical mapping decision. A small explicit keyword/phrase
+  map uses case-insensitive whole-token/phrase boundaries after punctuation
+  separation. The first matching category in configured order wins. Unknown
+  text remains Uncategorized; custom categories are manual overrides only.
+  Matching never rewrites the stored text. The same helper is reserved for
+  Wave 2. Ambiguous phrases can require manual override; this is best effort,
+  not semantic interpretation (for example flour wins in "rice flour").
+- The manual input visibly previews automatic assignment. Overrides persist
+  immediately; editing text does not silently reassign an overridden category.
+  Each add is new/unchecked; retries retain the draft UUID and reconcile a
+  previously committed identical insert rather than duplicate it.
+- Service uses injected Supabase client, complete keyset pagination with exact
+  counts, explicit field mapping and direct table operations. No generic RPC,
+  external request, durable browser store or cache replaces database loading.
+- List shows only populated groups, full retained text and subdued checked
+  rows. Purchased changes persist immediately and sink within the category.
+  Only mobile auto-collapses a fully checked group; it remains expandable.
+- Individual removal and Clear Checked require no confirmation. Clear List
+  uses a native modal dialog, Cancel/Escape, contained keyboard focus and
+  explicit confirmation; both category kinds are preserved.
+- Failed loads offer retry, not a misleading empty list. Mutations block
+  duplicate submission, retain current/draft values on failure and offer
+  explicit retry. Reliable validation/auth/FK/unique/network codes receive
+  distinct safe messages; unknown results are not presented as success.
+  Uncertain failures explicitly say the change could not be confirmed.
+  Single-row deletions require an exact affected count of one; zero-row
+  deletes are not presented as success. Reload Shopping reconciles uncertain
+  persisted state without resubmitting a mutation.
+
+### Exact local migration and security authorization package
+
+**Candidate:** `supabase/review/202610300001_meals_shopping.sql`.
+Execution guard remains false. Candidate SHA-256:
+`f7d436dd8b4102c9a57a3dbf9b81abfdf3c5d3b85ea616aa9321df08cb75e768`.
+The LF copy with only the single execution guard changed to true has SHA-256:
+`d42fe15d0f187fffd4376af50371577d8bcfabf82e3d08d154f7c1d674ea3ea9`.
+Neither production execution nor that gate change has occurred.
+
+Object inventory (all schema public, postgres-owned):
+
+- Tables `meals_shopping_categories`, `meals_shopping_items`.
+- Five indexes: `meals_shopping_categories_pkey`,
+  `meals_shopping_items_pkey`,
+  `meals_shopping_categories_predefined_order_key`,
+  `meals_shopping_categories_name_key`,
+  `meals_shopping_items_category_id_idx`.
+- One SECURITY INVOKER internal trigger function
+  `meals_shopping_before_write()` with empty search_path, no browser EXECUTE.
+  It assigns timestamps, preserves created_at and identity, canonicalizes
+  category names and blocks predefined category insert/change/delete.
+- Three triggers: `meals_shopping_before_write` on each table (INSERT/UPDATE)
+  and `meals_shopping_before_delete` on categories.
+- Eight permissive operation-specific policies:
+  `meals_shopping_categories_owner_select/insert/update/delete` and
+  `meals_shopping_items_owner_select/insert/update/delete`.
+  Roles: authenticated only; every applicable USING/WITH CHECK is
+  `(SELECT auth.uid()) = 'e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60'::uuid`.
+- Both tables explicitly ENABLE ROW LEVEL SECURITY. No generic authenticated
+  policy or anon access. Table ACLs are explicitly reset, not inherited.
+- Exact authenticated grants: SELECT, DELETE on both tables;
+  categories INSERT(id,name), UPDATE(name);
+  items INSERT(id,text,category_id,checked), UPDATE(text,category_id,checked).
+  No authenticated timestamp/predefined_order/identity UPDATE.
+- Exact service_role table grants: SELECT, INSERT, UPDATE, DELETE, consistent
+  with reviewed Recipe conventions; no service-role material in browser code.
+  PUBLIC/anon have no table privileges; PUBLIC/anon/authenticated/service_role
+  have no EXECUTE on the internal trigger function.
+- Constraints: PKs, nonblank text/name, canonical unique category names,
+  unique/range-constrained predefined position, NOT NULLs and
+  `category_id` FK with ON UPDATE/DELETE RESTRICT. FK enforcement, not a
+  race-prone application count check, protects in-use custom categories.
+  Named CHECK/FK constraints:
+  `meals_shopping_categories_name_check`,
+  `meals_shopping_categories_predefined_order_check`,
+  `meals_shopping_items_text_check`,
+  `meals_shopping_items_category_id_fkey`; PK/unique constraints share their
+  corresponding index names above.
+- No views, sequences, extensions, browser RPCs, new roles, default-privilege
+  changes, Recipe object changes or abandoned-broker dependency.
+
+Prepared read-only `meals_shopping_preflight.sql` inventories project-confirmation
+gate, executor/owner identity, Recipe table ownership/RLS/ACLs, browser roles/
+inheritance and Shopping name collisions. Production preflight was NOT run;
+confirm home-maintenance-app / tawvchmjtkgykwwvnnnn, exact owner, safe roles,
+expected Recipe baseline and no collisions before requesting execution.
+`meals_shopping_postflight.sql` inventories relations/owners/ACLs, columns,
+column grants, all policy roles/commands/expressions, function definition/
+security/config/ACL, triggers, constraints, indexes and exact seed order.
+Compare against this inventory; stop on drift.
+
+Reversal: `meals_shopping_reversal_DISABLED.sql`, separately guarded and never
+automatically executed. Locks both tables, refuses existing items/custom
+categories, then drops only Shopping tables/function without CASCADE.
+If used data exists, export/retention review and a new authorization are
+required; prepared reversal does not authorize data deletion.
+
+Data impact: forward migration creates empty Shopping storage and 28 category
+seeds only. No existing Recipe/Planner/Shopping data is modified. Direct CRUD/
+clear operations are single PostgreSQL statements; no custom multi-statement
+race/locking protocol analogous to paused CR-4 is introduced. PGlite validates
+single-session PostgreSQL semantics, not multi-session concurrency. No real
+PostgreSQL concurrency proof or production catalog result is claimed.
+
+### Local validation and remaining release gate
+
+- Shopping persistence tests: 5 passed, covering disabled/identity/collision
+  gates, exact catalogs/ACLs/policies/seeds, anon/non-owner/missing-JWT denial,
+  owner lifecycle, immutable predefined categories, FK refusal, raw text/
+  duplicates/timestamps, unchanged Recipe/default ACL and guarded reversal.
+- Shopping service and interaction tests exercise mapping, full pagination,
+  stable retry IDs after lost insert response, overrides/edit/remove/clear,
+  draft retention, duplicate-submit guard, mobile collapse and keyboard dialog
+  cancellation. Existing Recipe tests are not weakened.
+- Isolated production-build browser, 1280px desktop and 375px mobile:
+  actual add/edit/remove, automatic category preview, overrides, custom
+  create/rename/in-use refusal/unused delete, purchased ordering/subdued paint,
+  mobile collapse/expand/uncheck, Clear Checked, Clear List cancel/confirm,
+  failed add/load retry and uncertain committed-insert reconciliation passed.
+  No horizontal overflow; tested button/select/summary targets >=44px.
+  Modal Tab containment and Escape cancellation passed. Long mobile text wraps.
+  Recipe search/Favorites survived Shopping navigation. Test transport only;
+  CSP blocks external connections. Fixture servers are stopped after testing.
+- Final aggregate test/lint/build counts are recorded below after the final
+  validation run. Main production/static-host build is in memory only, with
+  no generated Pages/Activity Planner publication.
+
+Proposed source commit after separately authorized successful migration:
+`Meals Phase 2: add manual Shopping List and persistence`.
+Do not stage/commit/push/release this migration-dependent candidate now.
+After read-only preflight and explicit authorization of the exact gate-enabled
+SQL: execute once, stop on any error without retry/automatic reversal, inspect
+postflight/owner API denial-allow results and Security Advisor, then authorize
+the source commit/dev push and established main-only Pages release. Verify
+live assets/deep links and safe smoke before the five owner checks:
+
+1. Add manual items, see automatic/unknown category, and override a category.
+2. Edit/remove an item without affecting Recipes.
+3. Create/rename a custom category; verify in-use refusal then unused deletion.
+4. Check/uncheck, verify sinking and mobile collapse/expansion.
+5. Clear Checked; cancel/confirm Clear List and verify categories remain.
+
+No owner UAT has been performed. Wave 2/E2E-03 and overall Phase 2 acceptance
+remain outstanding. Later workbook updates require separate authorization;
+no initial Shopping row is marked Pass or Ready to Test in this task.
+
+### P2-TECH-001 final local results and file manifest
+
+- Focused Shopping/Recipe service, interaction, routing and actual
+  production-build/static-host checks: **58 passed, 0 failed, 0 skipped**.
+- Full configured suite: **376 passed, 0 failed, 1 optional pre-existing
+  WORKBENCH_TEST_PG_BIN-dependent skip** (377 total). No real PostgreSQL
+  multi-session claim is made. A final reload-status clarification was
+  subsequently covered by the focused suite/build/browser smoke above.
+- Shopping-only coverage: **18 passed** (5 persistence/security, 6 service,
+  7 interaction). Lint: passed with no errors/warnings. Git whitespace check:
+  passed. Main production build and Meals deep-link recovery passed in memory;
+  no generated application or Activity Planner assets were published.
+- Final browser smoke additionally verified failed deletion retains the row,
+  Reload Shopping reconciles persisted state, desktop Escape cancels, and
+  mobile checking/collapse/expand/Clear Checked works at 375px without overflow.
+  Earlier desktop/mobile lifecycle, custom-category, layout and keyboard
+  evidence above remains applicable. All local fixture processes are stopped.
+- Test logs are session evidence `files/p2-wave1-full-tests.txt` and
+  `files/p2-wave1-focused-tests.txt`, not production/owner acceptance evidence.
+
+Exact source files changed:
+
+- `src/pages/Meals/MealsPage.jsx`
+- `src/pages/Meals/ShoppingPage.jsx` (new)
+- `src/pages/Meals/ShoppingPage.module.css` (new)
+- `src/services/shoppingService.js` (new)
+
+Exact test/fixture files changed:
+
+- `tests/meals-shopping-persistence.test.cjs` (new)
+- `tests/meals-shopping-service.test.cjs` (new)
+- `tests/meals-shopping-interaction.test.cjs` (new)
+- `tests/fixtures/shopping-memory-client.js` (new, test-only)
+- `tests/fixtures/meals-synthetic-auth.js`
+- `tests/meals-routing.test.cjs`
+- `tests/meals-static-host.test.cjs`
+
+Exact database candidate files (new, all under `supabase/review`):
+
+- `202610300001_meals_shopping.sql`
+- `meals_shopping_preflight.sql`
+- `meals_shopping_postflight.sql`
+- `meals_shopping_reversal_DISABLED.sql`
+
+Exact findings-register change: this single Phase 2 kickoff/Wave 1 section;
+prior R1 evidence and closeout are preserved. No other controlled document,
+workbook, Recipe application/service or deployed Recipe SQL was changed.
+Workbook baseline SHA-256 remains
+`A5033EFC216EDAE9F640B6E8D1B2AEBB5DA1B82D545C8562717620F131E4915B`.
+
+**STOPPED before production authorization.** No production database operation,
+migration application, owner UAT, staging, commit, push or deployment occurred.
+Production preflight, exact migration execution authorization, postflight/
+owner API/security verification and release authorization remain outstanding.
+Only Wave 1 is a locally validated candidate; Phase 2 is not complete.
+
+### Wave 1 production verification and owner release authorization
+
+Run **P2-TECH-002**, 2026-10-30, exact project
+home-maintenance-app / tawvchmjtkgykwwvnnnn. This supersedes the historical
+pre-execution gate above, not any prior Recipe acceptance evidence.
+
+- Exact migration execution: **1**, normal HTTP 201 `[]` success. The editor
+  matched authorized SHA-256
+  `d42fe15d0f187fffd4376af50371577d8bcfabf82e3d08d154f7c1d674ea3ea9`,
+  7,207 UTF-8 bytes, no BOM, 124 CRLF endings and final newline. The owner
+  explicitly approved one "Run without RLS" confirmation; no supplemental
+  Dashboard RLS rewriting was selected.
+- Exact Shopping postflight comparator: **PASS**, before authorization
+  fixtures and after rollback/cleanup. Verified 2 tables, 5 indexes, 8 policies,
+  3 triggers, 1 internal SECURITY INVOKER function, exact columns/defaults/
+  nullability/constraints/FK/grants/revokes, 28 predefined categories,
+  zero items and zero custom categories.
+- Exact rollback fixture execution: **1**, enabled SHA-256
+  `f149bc49f947a978a4cedfccdc64fe13bde055bca2a598f2a60e558ffb0846c1`.
+  Owner SQL/RLS CRUD and anonymous/non-owner/null/malformed-subject denial
+  passed. Browser direct internal-function EXECUTE was denied. The whole
+  BEGIN-through-ROLLBACK request succeeded; fresh independent cleanup and
+  repeated postflight confirmed zero fixture rows/items/custom categories,
+  with all 28 predefined categories intact. This is SQL-role/auth.uid()/RLS
+  evidence, not proof of JWT/PostgREST transport or owner UI acceptance.
+- Generic preservation after-snapshot: all **139 pre-existing fingerprints**
+  covered, 12 exact authorized new Shopping exclusions, zero uncovered objects.
+  Recipe and Planner/Project preservation passed. Both Trips catalogs and all
+  other pre-existing catalogs remained unchanged.
+- **Strict preservation exception:** public.trips rows 11 -> 12 and
+  public.trips_workflow_metadata rows 3 -> 4, with changed data fingerprints.
+  The comparator remains **FAIL** for these two pre-existing tables only.
+  Verification stopped for owner review; no production repair was attempted.
+- One authorized read-only investigation confirmed saved after-fingerprints.
+  It identified the added workflow row by restoring its before-fingerprint
+  on exclusion, but no single Trip exclusion restored the Trips fingerprint.
+  The workflow's referenced Trip was not proven to be the new Trip. Neither
+  table appears in Shopping migration SQL; no triggers or foreign keys
+  touching either were found. No private Trip content is recorded here.
+- Refreshed Security Advisor: **0 errors, 1 unchanged Auth warning, 10
+  unchanged informational findings, no new Shopping-related findings**.
+  The Auth warning is Leaked Password Protection Disabled; informational
+  findings are existing RLS Enabled No Policy entries on pre-existing tables.
+
+**Owner disposition / release authorization, 2026-10-30:** accept the Trips
+preservation mismatch as **unrelated, unattributed concurrent production
+activity** and proceed with the reviewed Wave 1 source commit/dev push,
+established Pages deployment and read-only live login/asset/route smoke.
+This is the owner's accepted exception, **not an established cause**, and
+does not convert the strict preservation failure into a pass.
+No further migration, reversal, fixtures, production-data modification or
+Wave 2 is authorized. Owner UAT remains pending; Phase 2 is not complete.
+
+The complete review package also includes the disabled authorization fixture,
+independent cleanup SQL, generic preservation SQL, exact expected catalog,
+offline comparator, verification tests and
+[completed verification runbook](../../supabase/review/meals_shopping_verification_runbook.md).
+The narrow Git attribute rule preserves reviewed SQL bytes without text
+normalization. Both execution guards remain disabled; the excluded
+owner-auth-broker-cleanup.sql remains outside staging/release.
+The Acceptance Workbook is unchanged at SHA-256
+`a5033efc216edae9f640b6e8d1b2aebb5da1b82d545c8562717620f131e4915b`.
+
+Release validation rerun after recording this disposition: **69 passed, 0
+failed, 0 skipped**, covering the verification package, Shopping persistence/
+service/interaction, routing/static-host production build and Recipe service/
+interaction regressions. Scoped ESLint (including the review comparator/tests)
+and whitespace checks passed. The earlier full-suite result remains 376
+passed, 0 failed and 1 optional pre-existing native-PostgreSQL skip.

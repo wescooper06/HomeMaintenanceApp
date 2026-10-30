@@ -1,1 +1,2 @@
 * text=auto eol=lf
+supabase/review/*meals_shopping*.sql -text whitespace=cr-at-eol
