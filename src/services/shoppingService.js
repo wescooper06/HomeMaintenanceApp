@@ -143,6 +143,30 @@ export function createShoppingService(clientProvider = getSupabaseClient) {
     }
   }
   return {
+    categories: () => complete("categories", categoryColumns),
+    addSelected: async (drafts) => {
+      if (!Array.isArray(drafts) || !drafts.length) throw failure("Select at least one ingredient.");
+      const values = drafts.map((draft) => ({
+        id: id(draft.id), text: nonblank(draft.text),
+        category_id: draft.category_id === null ? null : id(draft.category_id), checked: false,
+      }));
+      const identities = new Set(values.map((value) => value.id));
+      if (identities.size !== values.length) throw failure("Ingredient identities must be distinct.");
+      async function reconcile() {
+        const existing = (await complete("items", itemColumns)).filter((row) => identities.has(row.id));
+        if (!existing.length) return false;
+        if (existing.length !== values.length || existing.some((row) => {
+          const value = values.find((candidate) => candidate.id === row.id);
+          return ["text", "category_id", "checked"].some((field) => row[field] !== value[field]);
+        })) throw failure("The previous addition has changed or is incomplete. Reload Shopping before continuing.", "CONFLICT");
+        return true;
+      }
+      if (await reconcile()) return values.length;
+      // One INSERT is atomic; retained identities reconcile a lost response on retry.
+      await result(table("items").insert(values));
+      if (!await reconcile()) throw failure("Shopping addition was not confirmed. Retry the same selection.", "CONFLICT");
+      return values.length;
+    },
     load: async () => {
       const [items, categories] = await Promise.all([complete("items", itemColumns), complete("categories", categoryColumns)]);
       return { items, categories };

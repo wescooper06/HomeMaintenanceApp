@@ -1840,3 +1840,124 @@ service/interaction, routing/static-host production build and Recipe service/
 interaction regressions. Scoped ESLint (including the review comparator/tests)
 and whitespace checks passed. The earlier full-suite result remains 376
 passed, 0 failed and 1 optional pre-existing native-PostgreSQL skip.
+
+### Shopping Wave 1 owner UAT and acceptance
+
+Owner report, 2026-10-30, for deployed Shopping Wave 1:
+
+1. Manual items + categorization: **PASS**
+2. Edit + remove: **PASS**
+3. Custom categories: **PASS**
+4. Purchased behavior + mobile: **PASS**
+5. Clear Checked + Clear List: **PASS**
+
+**Overall: PASS. Remaining functional issues: None.**
+
+**Final owner disposition: Shopping Wave 1 accepted and complete.**
+
+Release traceability: source commit
+`3038a61c46ac841ed30e2787b3faf2482edc5846` pushed to dev; Pages release
+`0308c7b7871841a9393a5d3639e7fc59924f8425` deployed successfully through
+[Pages run 41097250688](https://github.com/wescooper06/HomeMaintenanceApp/actions/runs/41097250688).
+Technical release smoke verified all 19 main-app publication files and root
+404 against release bytes, Shopping deep-link recovery and the normal owner
+login boundary. This owner report supplies the subsequent functional UAT.
+The recorded Trips preservation failure and owner-accepted, unattributed
+exception remain intact; acceptance does not establish a cause.
+
+**Deferred UX follow-up:** Shopping functionality works as expected, but the
+current interaction flow is not especially efficient. Defer UX optimization
+until the remaining Meals pages and functional workflows are complete.
+This is a deferred improvement, not an open Wave 1 functional defect.
+
+Wave 2 and overall Phase 2 acceptance remain outstanding; neither is started
+or accepted by this closeout. No cleanup result was supplied in this owner
+report, so none is inferred. No repeat owner UAT, migration/fixture execution,
+reversal, production change or deployment is part of recording this result.
+Both repository SQL execution guards remain disabled. The Acceptance Workbook
+is unchanged; no workbook status or sign-off is updated.
+
+### Shopping Wave 2 - Recipe to Shopping
+
+Run **P2-TECH-003**, 2026-10-30. Owner authorized the streamlined Wave 2
+implementation, validation and established source/Pages release process.
+The Wave 1 acceptance and deferred UX note immediately above are preserved
+once, not replaced: Shopping works correctly; revisit overall UX efficiency
+only after the remaining Meals pages and functional workflows are complete.
+No Shopping UX redesign, CR-4/6/7 resumption or Planner implementation is
+included.
+
+Baseline verified: dev/origin/dev
+`3038a61c46ac841ed30e2787b3faf2482edc5846`; deployed main/Pages
+`0308c7b7871841a9393a5d3639e7fc59924f8425`; index empty. The only existing
+tracked modification was the owner-authorized Wave 1 acceptance record above.
+Wave 1 production health evidence is the completed P2-TECH-002 checks and
+subsequent five-check owner PASS, with no remaining functional issues.
+No production SQL, fixtures, baseline discovery or database governance cycle
+was repeated merely to reuse the existing Shopping tables.
+
+Implemented:
+
+- Library Add to Shopping List requires exactly one selected Recipe; zero or
+  multiple selections disable it. Existing multi-select/delete/filter/Favorite
+  behavior is retained.
+- Detail offers Add to Shopping List, stays open after success, displays the
+  confirmed added count and an explicit View Shopping List link. No automatic
+  navigation or source Recipe mutation.
+- Shared accessible native modal with responsive bottom-sheet positioning,
+  labelled title, section fieldsets/legends, labelled checkbox rows, native
+  keyboard focus containment, explicit Escape/Cancel and restored opener focus.
+  The selected Recipe is freshly loaded when opening the picker.
+- LF/CRLF/CR ingredient lines: omit whitespace-only lines, preserve every
+  retained line verbatim, keep duplicate lines and section/line order, select
+  all initially. Individual selection, Select all/Clear all and a disabled
+  zero-selected Add are implemented. Cancel performs no Shopping write.
+- Reuse Wave 1 categorization and existing Shopping storage. Each selected
+  ingredient gets a distinct stable UUID and creates one new unchecked row;
+  no merging/deduplication/reactivation of existing items.
+- One array INSERT creates the complete selected batch atomically under the
+  existing grants/RLS. No loop of independently committed inserts. Local
+  PostgreSQL validation proves an invalid row rejects the complete batch and
+  valid duplicate-text rows can be inserted as distinct unchecked items.
+- The attempted UUID/text/category manifest is retained after submission.
+  Failure reports no success, retains selection, freezes edits to that attempt
+  and offers explicit retry. Existing UUIDs are reconciled through complete,
+  count-checked keyset reads before inserting; a lost committed response
+  resolves without another insert. Partial/different existing manifests fail
+  closed. A duplicate-submit lock prevents simultaneous UI submissions.
+  Cancelling an uncertain attempt warns to check Shopping before starting
+  another addition; a new explicit addition is not treated as a retry.
+
+Validation:
+
+- Focused component/service/persistence/interaction/routing/production-static
+  tests: **57 passed, 0 failed, 0 skipped**.
+- Full configured suite: **383 passed, 0 failed, 1 optional pre-existing
+  native-PostgreSQL skip** (384 total).
+- Repository-wide ESLint, production main-app build and whitespace checks passed.
+  Production build retains the existing large-chunk advisory.
+- Actual isolated production-build browser at 1280px desktop and 375px mobile:
+  zero/one/multiple Library selection, grouped five nonblank candidates,
+  initial/individual/all/none selection, zero-selected guard, Cancel/Escape
+  with no writes, focus return and forward/reverse Tab containment passed.
+  An explicit Escape key handler was added after the initial browser check.
+- Desktop Detail added only three selected lines (`  eggs ` and two `salt`
+  rows), preserved raw whitespace/duplicates, applied categories, kept an
+  existing checked item checked, stayed on Detail and confirmed success.
+  View Shopping List navigated explicitly. The source Recipe remained exactly
+  unchanged.
+- Browser-injected failed request and committed-but-lost response retained
+  selection/UUIDs. Retry added no duplicates: desktop three new rows used one
+  batch INSERT; mobile five new rows used one additional batch INSERT.
+  Mobile displayed no horizontal overflow with 44px minimum row/button targets,
+  bottom-aligned responsive dialog and working zero-selection protection.
+  Wave 1 Clear Checked still removed only the existing checked row.
+- Browser transport was isolated synthetic data with external connections
+  blocked; no production owner UAT or production-data mutation was performed.
+  The local browser fixture was stopped after validation.
+
+**Database Changes: None.** Existing Shopping migration/schema untouched.
+Both SQL guards remain disabled and byte-identical; excluded cleanup SQL
+untouched. Acceptance Workbook remains unchanged at SHA-256
+`a5033efc216edae9f640b6e8d1b2aebb5da1b82d545c8562717620f131e4915b`.
+Wave 2 owner acceptance and overall Phase 2 acceptance remain pending.
