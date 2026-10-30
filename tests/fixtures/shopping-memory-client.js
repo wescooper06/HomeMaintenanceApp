@@ -34,11 +34,13 @@ export function createMemoryShoppingClient() {
           const error = (code, message) => ({ data: null, error: { code, message } });
           let selected = data[name].filter((row) => predicates.every((predicate) => predicate(row)));
           if (mode === "insert") {
-            if (data[name].some((row) => row.id === values.id)) return error("23505", "Duplicate identity");
+            const batch = Array.isArray(values) ? values : [values];
+            if (new Set(batch.map((row) => row.id)).size !== batch.length
+              || batch.some((value) => data[name].some((row) => row.id === value.id))) return error("23505", "Duplicate identity");
             if (name.endsWith("categories") && data[name].some((row) => row.name.toLowerCase() === values.name.trim().toLowerCase())) return error("23505", "Duplicate name");
             const now = new Date(Date.now() + control.calls.length).toISOString();
-            selected = [{ ...values, ...(name.endsWith("categories") ? { predefined_order: null } : {}),
-              created_at: now, updated_at: now }];
+            selected = batch.map((value) => ({ ...value, ...(name.endsWith("categories") ? { predefined_order: null } : {}),
+              created_at: now, updated_at: now }));
             data[name].push(...selected);
             if (control.loseInsert) {
               control.loseInsert = false; return error("NETWORK", "Response lost after insert");

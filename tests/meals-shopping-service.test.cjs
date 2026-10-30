@@ -42,6 +42,40 @@ test("manual additions preserve exact text and duplicates; retry identity reconc
   await assert.rejects(service.add({ ...draft, text: "changed" }), /different values/);
 });
 
+test("selected Recipe ingredients use one atomic INSERT, retain duplicates/category/text, and reconcile uncertain response", async () => {
+  const { service, client } = setup();
+  const categories = await service.categories();
+  const category_id = model.automaticShoppingCategory(" eggs ", categories);
+  const old = await service.add({ id: randomUUID(), text: " eggs ", category_id });
+  await service.check(old.id, true);
+  const drafts = [0, 1, 2].map(() => ({ id: randomUUID(), text: " eggs ", category_id }));
+  client.control.loseInsert = true;
+  await assert.rejects(service.addSelected(drafts), (error) => error.code === "NETWORK");
+  assert.equal(await service.addSelected(drafts), 3);
+  assert.equal(await service.addSelected(drafts), 3);
+  const items = (await service.load()).items;
+  assert.equal(items.length, 4);
+  assert.equal(items.find((row) => row.id === old.id).checked, true);
+  assert(items.filter((row) => row.id !== old.id).every((row) => !row.checked && row.text === " eggs " && row.category_id === category_id));
+  assert.equal(client.control.calls.filter((call) => call.mode === "insert" && Array.isArray(call.values)).length, 1);
+  await assert.rejects(service.addSelected([]), /Select at least/);
+  await assert.rejects(service.addSelected([drafts[0], drafts[0]]), /distinct/);
+  await assert.rejects(service.addSelected([{ ...drafts[0], text: "changed" }]), /changed or is incomplete/);
+});
+
+test("batch failure keeps identities retryable, partial or changed prior results fail closed, capped loads reconcile fully", async () => {
+  const { service, client } = setup();
+  const drafts = [0, 1, 2, 3].map(() => ({ id: randomUUID(), text: "duplicate", category_id: null }));
+  client.control.cap = 1;
+  client.control.failure = { code: "NETWORK", message: "offline" };
+  await assert.rejects(service.addSelected(drafts), (error) => error.code === "NETWORK");
+  assert.equal(client.control.data.meals_shopping_items.length, 0);
+  assert.equal(await service.addSelected(drafts), 4);
+  await service.remove(drafts[0].id);
+  await assert.rejects(service.addSelected(drafts), /changed or is incomplete/);
+  assert.equal(client.control.data.meals_shopping_items.length, 3);
+});
+
 test("full manual lifecycle and exact clear semantics preserve category rows and overrides", async () => {
   const { service } = setup();
   const custom = await service.createCategory({ id: randomUUID(), name: "  Custom  " });

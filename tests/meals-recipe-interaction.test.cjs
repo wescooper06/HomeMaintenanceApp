@@ -25,7 +25,7 @@ function harness(service = {}) {
   const blocker = { state: "unblocked", reset() { blocker.state = "unblocked"; }, proceed() { navigations.push("discard"); } };
   const context = {
     element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter((v) => v !== null && v !== undefined && v !== false) }),
-    fragment: "fragment", Link: "link", styles: {}, createRecipeService: () => service, ...helpers,
+    fragment: "fragment", Link: "link", RecipeShopping: "recipe-shopping", styles: {}, createRecipeService: () => service, ...helpers,
     confirm: () => { assert.fail("Classification errors must not use the browser confirmation dialog"); },
     useState(value) {
       const i = index++;
@@ -68,6 +68,45 @@ function labeledInput(tree, label) {
     .children.find((n) => typeof n === "object");
 }
 const change = (node, value) => node.props.onChange({ target: { value } });
+
+test("Wave 2 Library action requires exactly one selection and preserves multi-delete; Detail stays open with confirmation/link", async () => {
+  const recipe = { ...initial(), id: "recipe-1", title: "First" };
+  const second = { ...initial(), id: "recipe-2", title: "Second" };
+  const before = JSON.stringify(recipe);
+  const service = { list: async () => [recipe, second], get: async () => recipe,
+    categories: { list: async () => [] }, cuisines: { list: async () => [] } };
+  const h = harness(service);
+  h.render(h.RecipeLibrary);
+  await new Promise((resolve) => setImmediate(resolve));
+  let tree = h.render(h.RecipeLibrary);
+  const select = (name) => nodes(tree).find((n) => n.type === "input" && n.props["aria-label"] === `Select ${name}`).props.onChange();
+  assert.equal(button(tree, "Add to Shopping List").props.disabled, true);
+  select("First"); tree = h.render(h.RecipeLibrary);
+  assert.equal(button(tree, "Add to Shopping List").props.disabled, false);
+  select("Second"); tree = h.render(h.RecipeLibrary);
+  assert.equal(button(tree, "Add to Shopping List").props.disabled, true);
+  assert.equal(button(tree, "Delete selected").props.disabled, false);
+  select("Second"); tree = h.render(h.RecipeLibrary);
+  button(tree, "Add to Shopping List").props.onClick();
+  tree = h.render(h.RecipeLibrary);
+  const modal = nodes(tree).find((n) => n.type === "recipe-shopping");
+  assert.equal(modal.props.recipeId, recipe.id);
+  modal.props.onClose();
+  assert.equal(nodes(h.render(h.RecipeLibrary)).filter((n) => n.type === "recipe-shopping").length, 0);
+  const detail = harness(service);
+  detail.render(detail.RecipeDetail);
+  await new Promise((resolve) => setImmediate(resolve));
+  tree = detail.render(detail.RecipeDetail);
+  button(tree, "Add to Shopping List").props.onClick();
+  tree = detail.render(detail.RecipeDetail);
+  const picker = nodes(tree).find((n) => n.type === "recipe-shopping");
+  picker.props.onAdded(2); picker.props.onClose();
+  tree = detail.render(detail.RecipeDetail);
+  assert(text(tree).includes("2 ingredients added to Shopping List."));
+  assert(nodes(tree).some((n) => n.type === "link" && n.props.to === "/meals/shopping" && text(n) === "View Shopping List"));
+  assert.equal(detail.navigations.length, 0);
+  assert.equal(JSON.stringify(recipe), before);
+});
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 test("Ingredient paste normalization removes only blank LF/CRLF/CR lines and preserves retained text and duplicates", () => {

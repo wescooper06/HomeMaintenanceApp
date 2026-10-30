@@ -106,6 +106,20 @@ test("exact catalog: ownership, RLS, policies, column ACLs, invoker trigger, see
   assert.deepEqual(catalog.seeds.map((seed) => seed.position), Array.from({ length: 28 }, (_, i) => i + 1));
 });
 
+test("Wave 2 owner multi-row INSERT is atomic under existing grants and RLS", async () => {
+  await as("authenticated", owner);
+  const first = "b08d1cd9-4c50-4ea6-9f75-000000000001";
+  const second = "b08d1cd9-4c50-4ea6-9f75-000000000002";
+  await assert.rejects(rows(`INSERT INTO meals_shopping_items(id,text,checked) VALUES
+    ('${first}','duplicate',false),('${second}',' ',false)`), /check constraint/);
+  assert.equal((await rows("SELECT count(*)::int AS n FROM meals_shopping_items WHERE id IN ($1,$2)", [first, second]))[0].n, 0);
+  await rows(`INSERT INTO meals_shopping_items(id,text,checked) VALUES
+    ('${first}','duplicate',false),('${second}','duplicate',false)`);
+  assert.equal((await rows("SELECT count(*)::int AS n FROM meals_shopping_items WHERE id IN ($1,$2) AND NOT checked", [first, second]))[0].n, 2);
+  await rows("DELETE FROM meals_shopping_items WHERE id IN ($1,$2)", [first, second]);
+  await as();
+});
+
 test("anon denied all operations; authenticated nonowner and missing JWT denied reads/mutations", async () => {
   await as("anon");
   for (const table of tables) {

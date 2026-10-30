@@ -4,6 +4,7 @@ import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
 import { createRecipeService, newRecipe, newRecipeFilters, recipeMatches, recipeSourceUrl, sortRecipes } from "../../services/recipeService.js";
 
 import styles from "./MealsPage.module.css";
+import RecipeShopping from "./RecipeShopping.jsx";
 
 const service = createRecipeService();
 
@@ -104,6 +105,8 @@ export function RecipeLibrary({ filters, setFilters }) {
   }, [loaded.data, setFilters]);
   const [sort, setSort] = useState({ key: "title", direction: 1 });
   const [selected, setSelected] = useState([]);
+  const [shoppingRecipe, setShoppingRecipe] = useState(null);
+  const [shoppingMessage, setShoppingMessage] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -157,8 +160,13 @@ export function RecipeLibrary({ filters, setFilters }) {
         </div>
         <div className={styles.actions}><span>{selected.length} selected</span>
           <button type="button" disabled={!selected.length || busy} onClick={() => setConfirm(true)}>Delete selected</button>
-          <button type="button" disabled title="Available in Phase 2">Add to Shopping List (not available yet)</button>
+          <button type="button" disabled={selected.length !== 1 || busy} onClick={() => {
+            setShoppingMessage(""); setShoppingRecipe(selected[0]);
+          }}>Add to Shopping List</button>
         </div>
+        {shoppingMessage && <p role="status">{shoppingMessage} <Link to="/meals/shopping">View Shopping List</Link></p>}
+        {shoppingRecipe && <RecipeShopping recipeId={shoppingRecipe} onClose={() => setShoppingRecipe(null)}
+          onAdded={(count) => setShoppingMessage(`${count} ingredients added to Shopping List.`)} />}
         {!confirm && <ErrorMessage error={error} retryLabel="Reload Recipes" retry={() => {
           setSelected([]); setError(""); loaded.retry();
         }} />}
@@ -342,6 +350,8 @@ export function RecipeDetail() {
   const lock = useRef(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [shoppingOpen, setShoppingOpen] = useState(false);
+  const [shoppingMessage, setShoppingMessage] = useState("");
   async function mutate(remove) {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError("");
@@ -369,11 +379,14 @@ export function RecipeDetail() {
             <Favorite recipe={recipe} pending={busy} onChange={() => mutate(false)} />
             <Link to={`/meals/recipes/${id}/edit`} aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>Edit Recipe</Link>
             <button type="button" disabled={busy} onClick={() => setConfirm(true)}>Delete Recipe</button>
-            <button type="button" disabled>Add to Shopping List (not available yet)</button>
+            <button type="button" disabled={busy} onClick={() => { setShoppingMessage(""); setShoppingOpen(true); }}>Add to Shopping List</button>
             <button type="button" disabled>Plan Meal (not available yet)</button>
             <Link to="/meals/recipes">Back to Recipes</Link>
           </div>
           <ErrorMessage error={error} />
+          {shoppingMessage && <p role="status">{shoppingMessage} <Link to="/meals/shopping">View Shopping List</Link></p>}
+          {shoppingOpen && <RecipeShopping key={id} recipeId={id} onClose={() => setShoppingOpen(false)}
+            onAdded={(count) => setShoppingMessage(`${count} ingredients added to Shopping List.`)} />}
           {recipe.ingredient_sections.map((section, index) => <section key={index}>
             <h3 className={styles.preserved}>{section.name}</h3><div className={styles.preserved}>{section.text}</div>
           </section>)}
