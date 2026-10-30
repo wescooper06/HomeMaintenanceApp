@@ -45,7 +45,7 @@ function harness(service = {}) {
     window: { addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: (key) => listeners.delete(key) },
   };
   const components = vm.runInNewContext(`(() => { ${compiled}; return {
-    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification, ClassificationFilter, instructionLines
+    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification, ClassificationFilter, instructionLines, ingredientPasteText
   }; })()`, context);
   let filters = helpers.newRecipeFilters();
   const setFilters = (next) => { filters = typeof next === "function" ? next(filters) : next; };
@@ -69,6 +69,97 @@ function labeledInput(tree, label) {
 }
 const change = (node, value) => node.props.onChange({ target: { value } });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("Ingredient paste normalization removes only blank LF/CRLF/CR lines and preserves retained text and duplicates", () => {
+  const h = harness();
+  for (const separator of ["\n", "\r\n", "\r"]) {
+    const raw = ["", "  2 eggs  ", " \t ", "\tFlour\t", "", "2 eggs", "2 eggs", "\u00a0", ""].join(separator);
+    assert.equal(h.ingredientPasteText(raw), "  2 eggs  \n\tFlour\t\n2 eggs\n2 eggs");
+  }
+  assert.equal(h.ingredientPasteText(" \t\r\n\u00a0\r \n"), "");
+  assert.equal(h.ingredientPasteText("<b>Salt</b>\n\nPepper"), "<b>Salt</b>\nPepper");
+});
+
+function pasteEvent(value, start, end, raw, native = false) {
+  let prevented = false, commands = 0;
+  const textarea = { value, selectionStart: start, selectionEnd: end,
+    setRangeText(insert, from, to, mode) {
+      assert.equal(mode, "end");
+      this.value = this.value.slice(0, from) + insert + this.value.slice(to);
+      this.selectionStart = this.selectionEnd = from + insert.length;
+    },
+    setSelectionRange(from, to) { this.selectionStart = from; this.selectionEnd = to; },
+    ownerDocument: { execCommand(command, showUI, insert) {
+      commands++;
+      assert.equal(command, "insertText");
+      assert.equal(showUI, false);
+      if (native) textarea.setRangeText(insert, textarea.selectionStart, textarea.selectionEnd, "end");
+      return native;
+    } },
+  };
+  return { currentTarget: textarea, clipboardData: { getData(format) { assert.equal(format, "text/plain"); return raw; } },
+    preventDefault() { prevented = true; }, prevented: () => prevented, commands: () => commands };
+}
+
+test("Ingredient paste inserts at beginning, middle, selection and end, preserving outside text and other sections", () => {
+  for (const native of [true, false]) {
+    for (const [start, end] of [[0, 0], [3, 3], [2, 6], [8, 8]]) {
+      const h = harness();
+      const props = { initial: { ...initial(), ingredient_sections: [
+        { name: "First", text: "legacy\n\nunchanged" }, { name: "Second", text: "abcdefgh" },
+      ] }, categories: [], cuisines: [], edit: true };
+      let tree = h.render(h.EditorForm, props);
+      const inputs = nodes(tree).filter((node) => node.type === "textarea");
+      const event = pasteEvent("abcdefgh", start, end, "\n  Salt \r\n\r\nPepper\r \t\r", native);
+      inputs[1].props.onPaste(event);
+      const expected = "abcdefgh".slice(0, start) + "  Salt \nPepper" + "abcdefgh".slice(end);
+      tree = h.render(h.EditorForm, props);
+      const updated = nodes(tree).filter((node) => node.type === "textarea");
+      assert(event.prevented());
+      assert.equal(event.commands(), 1);
+      assert.equal(updated[0].props.value, "legacy\n\nunchanged");
+      assert.equal(updated[1].props.value, expected);
+      assert.equal(event.currentTarget.value, expected);
+      assert.equal(event.currentTarget.selectionStart, start + "  Salt \nPepper".length);
+      assert.equal(event.currentTarget.selectionEnd, event.currentTarget.selectionStart);
+      assert.equal(props.initial.ingredient_sections[1].text, "abcdefgh");
+    }
+  }
+});
+
+test("All-blank Ingredient paste preserves selected text, value, selection and undo history", () => {
+  const h = harness();
+  const props = { initial: { ...initial(), ingredient_sections: [{ name: "", text: "keep\n\nthis" }] },
+    categories: [], cuisines: [], edit: true };
+  const tree = h.render(h.EditorForm, props);
+  const event = pasteEvent("keep\n\nthis", 1, 8, "\r\n \t\r\u00a0\n");
+  labeledInput(tree, "Ingredient text").props.onPaste(event);
+  assert(event.prevented());
+  assert.equal(event.commands(), 0);
+  assert.equal(event.currentTarget.value, "keep\n\nthis");
+  assert.equal(event.currentTarget.selectionStart, 1);
+  assert.equal(event.currentTarget.selectionEnd, 8);
+  assert.equal(labeledInput(h.render(h.EditorForm, props), "Ingredient text").props.value, "keep\n\nthis");
+});
+
+test("Ingredient typing and untouched legacy data survive Save, while Instructions and other fields have no paste normalizer", async () => {
+  const legacy = "\n  old \r\n\r\n\ttext \n";
+  for (const typed of [null, "\nTyped\n\n \t\nIngredients\n"]) {
+    let submitted;
+    const h = harness({ update: async (_id, draft) => { submitted = structuredClone(draft); return draft; } });
+    const props = { initial: { ...initial(), title: "Existing", ingredient_sections: [{ name: "Legacy", text: legacy }],
+      instructions: "\nMix\n\nBake\n" }, categories: [], cuisines: [], edit: true };
+    let tree = h.render(h.EditorForm, props);
+    for (const label of ["Title", "Source", "Instructions"]) assert.equal(labeledInput(tree, label).props.onPaste, undefined);
+    if (typed !== null) change(labeledInput(tree, "Ingredient text"), typed);
+    change(labeledInput(tree, "Title"), "Unrelated change");
+    tree = h.render(h.EditorForm, props);
+    await nodes(tree).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
+    assert.equal(submitted.ingredient_sections[0].text, typed ?? legacy);
+    assert.equal(submitted.instructions, "\nMix\n\nBake\n");
+    assert.equal(props.initial.ingredient_sections[0].text, legacy);
+  }
+});
 
 const instructionCases = [
   { raw: "", expected: [] },

@@ -11,6 +11,10 @@ function instructionLines(text) {
   return text.split(/\r\n|\r|\n/).filter((line) => /\S/u.test(line));
 }
 
+function ingredientPasteText(text) {
+  return instructionLines(text).join("\n");
+}
+
 function ErrorMessage({ error, retry, retryLabel = "Retry" }) {
   return error ? <div role="alert" className={styles.error}>{error} {retry && <button type="button" onClick={retry}>{retryLabel}</button>}</div> : null;
 }
@@ -251,6 +255,20 @@ function EditorForm({ initial, categories: initialCategories, cuisines: initialC
   function section(index, key, value) {
     field("ingredient_sections", draft.ingredient_sections.map((s, i) => i === index ? { ...s, [key]: value } : s));
   }
+  function pasteIngredients(event, index) {
+    const text = ingredientPasteText(event.clipboardData.getData("text/plain"));
+    event.preventDefault();
+    if (!text) return;
+    const textarea = event.currentTarget;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    // insertText retains the browser undo entry; setRangeText covers browsers without it.
+    if (!textarea.ownerDocument.execCommand?.("insertText", false, text)) {
+      textarea.setRangeText(text, start, end, "end");
+    }
+    section(index, "text", textarea.value);
+    textarea.setSelectionRange(start + text.length, start + text.length);
+  }
   async function save(event) {
     event.preventDefault();
     if (lock.current || classificationBusy) return;
@@ -276,7 +294,8 @@ function EditorForm({ initial, categories: initialCategories, cuisines: initialC
         <h3>Ingredients</h3>
         {draft.ingredient_sections.map((s, index) => <fieldset key={index}><legend>Ingredient section {index + 1}</legend>
           <label>Section name<input value={s.name} onChange={(e) => section(index, "name", e.target.value)} /></label>
-          <label>Ingredient text<textarea rows={6} value={s.text} onChange={(e) => section(index, "text", e.target.value)} /></label>
+          <label>Ingredient text<textarea rows={6} value={s.text} onChange={(e) => section(index, "text", e.target.value)}
+            onPaste={(event) => pasteIngredients(event, index)} /></label>
           <button type="button" onClick={() => field("ingredient_sections", draft.ingredient_sections.filter((_, i) => i !== index))}>Remove section {index + 1}</button>
         </fieldset>)}
         <button type="button" onClick={() => field("ingredient_sections", [...draft.ingredient_sections, { name: "", text: "" }])}>Add ingredient section</button>
