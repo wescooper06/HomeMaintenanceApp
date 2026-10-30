@@ -105,6 +105,9 @@
 .preserved { white-space: pre-wrap; overflow-wrap: anywhere; }
 .instructions { padding-inline-start: 2rem; }
 .instructions li + li { margin-top: 0.5rem; }
+.multiSelect { min-width: 0; max-width: 100%; flex: 1 1 12rem; }
+.multiSelect summary { border: 1px solid var(--border, #dbe3ec); border-radius: 0.5rem; padding: 0.6rem; }
+.multiSelect label { display: flex; align-items: center; min-height: 44px; }
 .error { color: #a01717; margin: 1rem 0; }
 .editor { max-width: 52rem; }
 .editor fieldset { min-width: 0; margin: 0.75rem 0; padding: 0.75rem; }
@@ -137,5 +140,6 @@
   .mobileList a { display: block; min-height: 44px; }
   .mobileList small { display: block; }
   .filters { align-items: stretch; flex-direction: column; }
+  .multiSelect { flex-basis: auto; width: 100%; }
   .filters input[type="search"], .filters select { width: 100%; }
 }

@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
 
-import { createRecipeService, newRecipe, recipeMatches, recipeSourceUrl, sortRecipes } from "../../services/recipeService.js";
+import { createRecipeService, newRecipe, newRecipeFilters, recipeMatches, recipeSourceUrl, sortRecipes } from "../../services/recipeService.js";
 
 import styles from "./MealsPage.module.css";
 
 const service = createRecipeService();
-const emptyFilters = { search: "", category: "", cuisine: "", favorites: false };
 
 function instructionLines(text) {
   return text.split(/\r\n|\r|\n/).filter((line) => /\S/u.test(line));
@@ -70,13 +69,35 @@ function DeleteConfirmation({ count, pending, onCancel, onDelete, error }) {
   </Modal>;
 }
 
-export function RecipeLibrary() {
+function ClassificationFilter({ label, values, selected, onChange }) {
+  const names = values.filter((value) => selected.includes(value.id)).map((value) => value.name);
+  return <details className={styles.multiSelect}>
+    <summary>{label}: {names.length ? `${names.length} selected - ${names.join(", ")}` : "All"}</summary>
+    <div role="group" aria-label={`Filter Recipes by ${label}`}>
+      {values.length ? values.map((value) => <label key={value.id}>
+        <input type="checkbox" checked={selected.includes(value.id)} onChange={(event) =>
+          onChange(event.target.checked ? [...selected, value.id] : selected.filter((id) => id !== value.id))} />
+        {value.name}
+      </label>) : <p>No {label === "Category" ? "Categories" : "Cuisines"} available.</p>}
+    </div>
+  </details>;
+}
+
+export function RecipeLibrary({ filters, setFilters }) {
   const navigate = useNavigate();
   const loaded = useRecipeLoad(async () => {
     const [recipes, categories, cuisines] = await Promise.all([service.list(), service.categories.list(), service.cuisines.list()]);
     return { recipes, categories, cuisines };
   }, []);
-  const [filters, setFilters] = useState(emptyFilters);
+  useEffect(() => {
+    if (!loaded.data) return;
+    setFilters((current) => {
+      const categoryIds = current.categoryIds.filter((id) => loaded.data.categories.some((value) => value.id === id));
+      const cuisineIds = current.cuisineIds.filter((id) => loaded.data.cuisines.some((value) => value.id === id));
+      return categoryIds.length === current.categoryIds.length && cuisineIds.length === current.cuisineIds.length
+        ? current : { ...current, categoryIds, cuisineIds };
+    });
+  }, [loaded.data, setFilters]);
   const [sort, setSort] = useState({ key: "title", direction: 1 });
   const [selected, setSelected] = useState([]);
   const [confirm, setConfirm] = useState(false);
@@ -123,14 +144,12 @@ export function RecipeLibrary() {
       ? <ErrorMessage error={loaded.error} retry={loaded.retry} /> : <>
         <div className={styles.filters}>
           <label>Search Recipes<input type="search" value={filters.search} onChange={(e) => changeFilter("search", e.target.value)} /></label>
-          <label>Category<select value={filters.category} onChange={(e) => changeFilter("category", e.target.value)}>
-            <option value="">All Categories</option>{data.categories.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </select></label>
-          <label>Cuisine<select value={filters.cuisine} onChange={(e) => changeFilter("cuisine", e.target.value)}>
-            <option value="">All Cuisines</option>{data.cuisines.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </select></label>
+          <ClassificationFilter label="Category" values={data.categories} selected={filters.categoryIds}
+            onChange={(ids) => changeFilter("categoryIds", ids)} />
+          <ClassificationFilter label="Cuisine" values={data.cuisines} selected={filters.cuisineIds}
+            onChange={(ids) => changeFilter("cuisineIds", ids)} />
           <label><input type="checkbox" checked={filters.favorites} onChange={(e) => changeFilter("favorites", e.target.checked)} />Favorites only</label>
-          <button type="button" onClick={() => { setFilters(emptyFilters); setSelected([]); }}>Clear search and filters</button>
+          <button type="button" onClick={() => { setFilters(newRecipeFilters()); setSelected([]); }}>Clear search and filters</button>
         </div>
         <div className={styles.actions}><span>{selected.length} selected</span>
           <button type="button" disabled={!selected.length || busy} onClick={() => setConfirm(true)}>Delete selected</button>

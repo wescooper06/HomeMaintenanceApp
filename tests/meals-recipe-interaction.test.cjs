@@ -8,7 +8,7 @@ const vm = require("node:vm");
 const root = path.join(__dirname, "..");
 const serviceSource = fs.readFileSync(path.join(root, "src", "services", "recipeService.js"), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
-const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {newRecipe,recipeMatches,sortRecipes}; })()`);
+const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {newRecipe,newRecipeFilters,recipeMatches,sortRecipes}; })()`);
 const initial = () => ({ id: randomUUID(), title: "", source: "", category_id: null, cuisine_id: null,
   instructions: "", favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }] });
 let compiled;
@@ -45,12 +45,14 @@ function harness(service = {}) {
     window: { addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: (key) => listeners.delete(key) },
   };
   const components = vm.runInNewContext(`(() => { ${compiled}; return {
-    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification, instructionLines
+    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification, ClassificationFilter, instructionLines
   }; })()`, context);
-  return { ...components, navigations, listeners, blocker, shouldBlock: () => blocking(),
+  let filters = helpers.newRecipeFilters();
+  const setFilters = (next) => { filters = typeof next === "function" ? next(filters) : next; };
+  return { ...components, navigations, listeners, blocker, shouldBlock: () => blocking(), getFilters: () => filters,
     render(Component, props) {
       index = 0;
-      const tree = Component(props);
+      const tree = Component(Component === components.RecipeLibrary ? { filters, setFilters, ...props } : props);
       effects.splice(0).forEach((fn) => fn());
       return tree;
     } };
@@ -403,6 +405,83 @@ test("library loading/error/retry, empty and filtered zero-result states", async
   tree = h2.render(h2.RecipeLibrary);
   assert.doesNotMatch(text(tree), /No Recipes match/);
   assert.match(text(tree), /Soup/);
+});
+
+test("Library checkbox disclosures combine OR selections with AND groups and clear all criteria", async () => {
+  const categories = [{ id: "c1", name: "Dinner" }, { id: "c2", name: "Lunch" }, { id: "c3", name: "Breakfast" }];
+  const cuisines = [{ id: "u1", name: "French" }, { id: "u2", name: "Italian" }, { id: "u3", name: "Greek" }];
+  const recipes = [
+    { ...initial(), title: "Soup one", category_id: "c1", cuisine_id: "u1", favorite: true },
+    { ...initial(), title: "Soup two", category_id: "c2", cuisine_id: "u2", favorite: true },
+    { ...initial(), title: "Soup three", category_id: "c3", cuisine_id: "u3", favorite: true },
+    { ...initial(), title: "Other", category_id: "c1", cuisine_id: "u1", favorite: true },
+    { ...initial(), title: "Soup unfavored", category_id: "c2", cuisine_id: "u1" },
+  ];
+  const h = harness({ list: async () => recipes, categories: { list: async () => categories },
+    cuisines: { list: async () => cuisines } });
+  const render = () => h.render(h.RecipeLibrary);
+  render(); await flush();
+  function select(label, name, checked) {
+    const filter = nodes(render()).find((n) => n.type.name === "ClassificationFilter" && n.props.label === label);
+    const disclosure = h.ClassificationFilter(filter.props);
+    assert.equal(disclosure.type, "details");
+    assert(nodes(disclosure).some((n) => n.type === "summary" && text(n).startsWith(label)));
+    assert(nodes(disclosure).some((n) => n.props.role === "group" && n.props["aria-label"].includes(label)));
+    labeledInput(disclosure, name).props.onChange({ target: { checked } });
+  }
+  select("Category", "Dinner", true); select("Category", "Lunch", true);
+  let tree = render();
+  assert.match(text(tree), /Soup one/); assert.match(text(tree), /Soup two/);
+  assert.doesNotMatch(text(tree), /Soup three/);
+  select("Cuisine", "French", true); select("Cuisine", "Italian", true);
+  tree = render();
+  change(labeledInput(tree, "Search Recipes"), "soup");
+  labeledInput(render(), "Favorites only").props.onChange({ target: { checked: true } });
+  tree = render();
+  assert.match(text(tree), /Soup one/); assert.match(text(tree), /Soup two/);
+  assert.doesNotMatch(text(tree), /Soup three|Soup unfavored|Other/);
+  select("Category", "Dinner", false);
+  tree = render();
+  assert.doesNotMatch(text(tree), /Soup one/); assert.match(text(tree), /Soup two/);
+  assert.deepEqual(Array.from(h.getFilters().categoryIds), ["c2"]);
+  select("Cuisine", "Italian", false);
+  tree = render();
+  assert.match(text(tree), /No Recipes match the current criteria/);
+  assert.doesNotMatch(text(tree), /No Recipes yet/);
+  button(tree, "Clear search and filters").props.onClick();
+  tree = render();
+  assert.deepEqual(h.getFilters(), helpers.newRecipeFilters());
+  for (const recipe of recipes) assert(text(tree).includes(recipe.title));
+});
+
+test("Library remount reloads current data, drops dead lookup IDs, and never restores transient selection", async () => {
+  let recipes = [{ ...initial(), title: "Soup", category_id: "c1", cuisine_id: "u1" }];
+  let categories = [{ id: "c1", name: "Dinner" }];
+  let loads = 0;
+  const service = { list: async () => { loads++; return recipes; }, categories: { list: async () => categories },
+    cuisines: { list: async () => [{ id: "u1", name: "French" }] } };
+  let filters = { search: "Soup", categoryIds: ["c1", "deleted"], cuisineIds: ["u1", "deleted"], favorites: false };
+  const setFilters = (update) => { filters = update(filters); };
+  const first = harness(service);
+  const render = (h) => h.render(h.RecipeLibrary, { filters, setFilters });
+  render(first); await flush();
+  let tree = render(first);
+  assert.deepEqual(Array.from(filters.categoryIds), ["c1"]);
+  assert.deepEqual(Array.from(filters.cuisineIds), ["u1"]);
+  nodes(tree).find((n) => n.type === "input" && n.props["aria-label"] === "Select Soup")
+    .props.onChange();
+  tree = render(first); assert.match(text(tree), /1 selected/);
+  recipes = []; categories = [];
+  const second = harness(service);
+  render(second); await flush(); tree = render(second);
+  assert.equal(loads, 2);
+  assert.equal(filters.search, "Soup");
+  assert.deepEqual(Array.from(filters.categoryIds), []);
+  assert.deepEqual(Array.from(filters.cuisineIds), ["u1"]);
+  assert.match(text(tree), /0 selected/);
+  assert.match(text(tree), /No Recipes yet/);
+  assert.doesNotMatch(text(tree), /No Recipes match/);
+  assert(!nodes(tree).some((n) => n.type.name === "DeleteConfirmation"));
 });
 
 test("data-backed Meals pages render accessible load errors and recover through Retry", async () => {

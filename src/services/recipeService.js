@@ -149,12 +149,16 @@ export function createRecipeService(clientProvider = getSupabaseClient) {
   ]));
 }
 
-export function recipeMatches(recipe, { search = "", category = "", cuisine = "", favorites = false }) {
+export function newRecipeFilters() {
+  return { search: "", categoryIds: [], cuisineIds: [], favorites: false };
+}
+
+export function recipeMatches(recipe, { search = "", categoryIds = [], cuisineIds = [], favorites = false }) {
   const term = search.toLowerCase();
   return (!term || recipe.title.toLowerCase().includes(term)
     || recipe.ingredient_sections.some((section) => section.text.toLowerCase().includes(term)))
-    && (!category || recipe.category_id === category)
-    && (!cuisine || recipe.cuisine_id === cuisine)
+    && (!categoryIds.length || categoryIds.includes(recipe.category_id))
+    && (!cuisineIds.length || cuisineIds.includes(recipe.cuisine_id))
     && (!favorites || recipe.favorite);
 }
 

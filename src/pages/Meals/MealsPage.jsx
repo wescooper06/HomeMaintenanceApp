@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+
+import { newRecipeFilters } from "../../services/recipeService.js";
 
 import styles from "./MealsPage.module.css";
 import { RecipeDetail, RecipeEditor, RecipeLibrary } from "./RecipeCore.jsx";
@@ -14,6 +17,7 @@ function FoundationScreen({ title, children }) {
 }
 
 export default function MealsPage() {
+  const [filters, setFilters] = useState(newRecipeFilters);
   const { pathname, search } = useLocation();
   // Retain legacy module selection without leaving Meals on a hash-only URL.
   if (!/^\/meals(?:\/|$)/.test(pathname)) {
@@ -35,7 +39,7 @@ export default function MealsPage() {
       </nav>
       <Routes>
         <Route path="/meals" element={<Navigate to={{ pathname: "/meals/recipes", search }} replace />} />
-        <Route path="/meals/recipes" element={<RecipeLibrary />} />
+        <Route path="/meals/recipes" element={<RecipeLibrary filters={filters} setFilters={setFilters} />} />
         <Route path="/meals/recipes/new" element={<RecipeEditor />} />
         <Route path="/meals/recipes/:id/edit" element={<RecipeEditor edit />} />
         <Route path="/meals/recipes/:id" element={<RecipeDetail />} />

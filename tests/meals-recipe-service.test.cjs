@@ -216,8 +216,8 @@ test("literal title/ingredient search, excluded fields, AND filters, sort and sa
     ingredient_sections: [{ name: "UNSEARCHABLE", text: "Potato\n\nCARROT 50%_\\" }] };
   for (const search of ["sOuP", "POTATO", "carrot", "%", "_", "\\", "50%_\\"]) assert(model.recipeMatches(a, { search }));
   for (const search of ["UNSEARCHABLE", "tomato"]) assert.equal(model.recipeMatches(a, { search }), false);
-  assert(model.recipeMatches(a, { search: "carrot", category, cuisine, favorites: true }));
-  for (const filters of [{ category: randomUUID() }, { cuisine: randomUUID() }]) assert.equal(model.recipeMatches(a, filters), false);
+  assert(model.recipeMatches(a, { search: "carrot", categoryIds: [category], cuisineIds: [cuisine], favorites: true }));
+  for (const filters of [{ categoryIds: [randomUUID()] }, { cuisineIds: [randomUUID()] }]) assert.equal(model.recipeMatches(a, filters), false);
   assert.equal(model.recipeMatches({ ...a, favorite: false }, { favorites: true }), false);
   assert.equal(model.recipeMatches({ ...a, ingredient_sections: [{ name: "", text: "a" }, { name: "", text: "b" }] }, { search: "ab" }), false);
   const b = { ...a, id: randomUUID(), title: "Apple", category_id: null, cuisine_id: null, source: "A" };
@@ -231,6 +231,20 @@ test("literal title/ingredient search, excluded fields, AND filters, sort and sa
   assert.equal(model.recipeSourceUrl("javascript:alert(1)"), null);
   assert.equal(model.recipeSourceUrl("data:text/html,test"), null);
   assert.equal(model.recipeSourceUrl("https://example.test/recipe"), "https://example.test/recipe");
+});
+
+test("multi-value classification filters use OR within groups and AND across every group", () => {
+  const recipe = { ...model.newRecipe(randomUUID()), title: "Soup", category_id: "c2", cuisine_id: "u2", favorite: true };
+  assert(model.recipeMatches(recipe, {}));
+  assert(model.recipeMatches({ ...recipe, category_id: null, cuisine_id: null }, { categoryIds: [], cuisineIds: [] }));
+  const filters = { search: "soup", categoryIds: ["c1", "c2"], cuisineIds: ["u1", "u2"], favorites: true };
+  assert(model.recipeMatches(recipe, filters));
+  for (const change of [{ category_id: "c3" }, { cuisine_id: "u3" }, { category_id: null },
+    { cuisine_id: null }, { favorite: false }, { title: "Stew" }]) {
+    assert.equal(model.recipeMatches({ ...recipe, ...change }, filters), false);
+  }
+  assert.equal(model.recipeMatches(recipe, { ...filters, categoryIds: ["c1"] }), false);
+  assert.equal(model.recipeMatches(recipe, { ...filters, cuisineIds: ["u1"] }), false);
 });
 
 test("pagination and deletion fail closed on count drift, invalid IDs/order or missing count", async () => {
