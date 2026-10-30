@@ -40,7 +40,7 @@ test.before(async () => {
   }
   compileComponent = compile;
   const core = await compile("src\\pages\\Meals\\RecipeCore.jsx", "{ RecipeLibrary, RecipeEditor, RecipeDetail }", {
-    createRecipeService: () => ({}),
+    createRecipeService: () => ({}), MealEntryDialog: () => null,
   });
   const ShoppingPage = await compile("src\\pages\\Meals\\ShoppingPage.jsx", "ShoppingPage", {
     createShoppingService: () => ({}), crypto: require("node:crypto").webcrypto,

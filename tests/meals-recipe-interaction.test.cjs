@@ -25,7 +25,7 @@ function harness(service = {}) {
   const blocker = { state: "unblocked", reset() { blocker.state = "unblocked"; }, proceed() { navigations.push("discard"); } };
   const context = {
     element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter((v) => v !== null && v !== undefined && v !== false) }),
-    fragment: "fragment", Link: "link", RecipeShopping: "recipe-shopping", styles: {}, createRecipeService: () => service, ...helpers,
+    fragment: "fragment", Link: "link", RecipeShopping: "recipe-shopping", MealEntryDialog: "meal-entry-dialog", styles: {}, createRecipeService: () => service, ...helpers,
     confirm: () => { assert.fail("Classification errors must not use the browser confirmation dialog"); },
     useState(value) {
       const i = index++;
@@ -108,6 +108,22 @@ test("Wave 2 Library action requires exactly one selection and preserves multi-d
   assert.equal(JSON.stringify(recipe), before);
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test("RD-FUNC-002/RD-STATE-002/PLAN-STATE-001: Plan Meal stays on Detail, confirms date/meal and links to correct Planner week; deletion warns", async () => {
+  const recipe = { ...initial(), id: "recipe-1", title: "Meal Recipe" };
+  const h = harness({ get: async () => recipe, categories: { list: async () => [] }, cuisines: { list: async () => [] } });
+  h.render(h.RecipeDetail); await flush(); let tree = h.render(h.RecipeDetail);
+  button(tree, "Plan Meal").props.onClick(); tree = h.render(h.RecipeDetail);
+  const modal = nodes(tree).find((n) => n.type === "meal-entry-dialog");
+  assert.equal(modal.props.recipeId, recipe.id);
+  modal.props.onAdded({ meal_date: "2026-11-02", meal_type: "lunch" }); modal.props.onClose();
+  tree = h.render(h.RecipeDetail);
+  assert(text(tree).includes("Meal planned for 2026-11-02, lunch."));
+  assert(nodes(tree).some((n) => n.type === "link" && n.props.to === "/?mealDate=2026-11-02#planner"));
+  assert.equal(h.navigations.length, 0);
+  const confirm = h.render(h.DeleteConfirmation, { count: 1 });
+  assert(text(confirm).includes("scheduled entries will remain in Planner as editable plain text"));
+});
 
 test("Ingredient paste normalization removes only blank LF/CRLF/CR lines and preserves retained text and duplicates", () => {
   const h = harness();

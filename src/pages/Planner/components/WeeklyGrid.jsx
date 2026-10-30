@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { selectWeeklyView } from "../../../services/plannerService.js";
+import { MealPlannerProvider, MealRow } from "../../Meals/MealRows.jsx";
 import styles from "../PlannerPage.module.css";
 
 import { WeeklyTaskCard } from "./ProjectCard.jsx";
@@ -36,13 +37,15 @@ export default function WeeklyGrid() {
         <button type="button" id="week-today" className={styles["weekly-week-today"]} aria-label="Go to current week" onClick={actions.goToCurrentWeek}>Today</button>
         <button type="button" id="week-next" aria-label="Next week" onClick={() => actions.shiftPlannerWeek(7)}>{"\u25b6"}</button>
       </div>
-      <div id="weekly-scroll-container" ref={scroll}>
-        <div className={styles["weekly-week-block"]}>
-          <div id="plannerWeekGrid" className={`${styles["planner-week-grid"]} ${styles["weekly-week-grid"]}`} aria-live="polite">
-            {view.days.map((day) => <WeeklyDay key={day.date} day={day} />)}
+      <MealPlannerProvider week={snapshot.planner.weekStartDate}>
+        <div id="weekly-scroll-container" ref={scroll}>
+          <div className={styles["weekly-week-block"]}>
+            <div id="plannerWeekGrid" className={`${styles["planner-week-grid"]} ${styles["weekly-week-grid"]}`} aria-live="polite">
+              {view.days.map((day) => <WeeklyDay key={day.date} day={day} />)}
+            </div>
           </div>
         </div>
-      </div>
+      </MealPlannerProvider>
     </section>
   );
 }
@@ -80,6 +83,7 @@ export function DaySlot({ day, date, slot, label, tasks }) {
         finally { drag.end(); }
       }}>
       <h4 className={styles["day-slot-label"]}>{label}</h4>
+      <MealRow date={date} slot={slot} />
       <div className={styles["slot-task-list"]}>
         {tasks.length ? tasks.map((task) => <div key={task.id}
           className={`${styles["weekly-insertion-target"]} ${drag.dropTarget === `${target}:before:${task.id}` ? styles["insert-before"] : ""} ${drag.dropTarget === `${target}:after:${task.id}` ? styles["insert-after"] : ""}`}

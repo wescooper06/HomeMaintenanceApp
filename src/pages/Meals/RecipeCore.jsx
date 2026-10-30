@@ -3,6 +3,7 @@ import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
 
 import { createRecipeService, newRecipe, newRecipeFilters, recipeMatches, recipeSourceUrl, sortRecipes } from "../../services/recipeService.js";
 
+import MealEntryDialog from "./MealEntryDialog.jsx";
 import styles from "./MealsPage.module.css";
 import RecipeShopping from "./RecipeShopping.jsx";
 
@@ -68,6 +69,7 @@ function DeleteConfirmation({ count, pending, onCancel, onDelete, error }) {
   return <Modal titleId="delete-recipes-title" onCancel={() => { if (!pending) onCancel(); }}>
     <h3 id="delete-recipes-title">Delete {count === 1 ? "Recipe" : `${count} Recipes`}?</h3>
     <p>This permanently deletes the selected Recipes. Category and Cuisine values are kept.</p>
+    <p>Any scheduled entries will remain in Planner as editable plain text.</p>
     <ErrorMessage error={error} />
     <button type="button" disabled={pending} onClick={onCancel}>Cancel deletion</button>
     <button type="button" disabled={pending} onClick={onDelete}>{pending ? "Deleting..." : "Confirm delete"}</button>
@@ -352,6 +354,8 @@ export function RecipeDetail() {
   const [confirm, setConfirm] = useState(false);
   const [shoppingOpen, setShoppingOpen] = useState(false);
   const [shoppingMessage, setShoppingMessage] = useState("");
+  const [planning, setPlanning] = useState(false);
+  const [planned, setPlanned] = useState(null);
   async function mutate(remove) {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError("");
@@ -380,11 +384,14 @@ export function RecipeDetail() {
             <Link to={`/meals/recipes/${id}/edit`} aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>Edit Recipe</Link>
             <button type="button" disabled={busy} onClick={() => setConfirm(true)}>Delete Recipe</button>
             <button type="button" disabled={busy} onClick={() => { setShoppingMessage(""); setShoppingOpen(true); }}>Add to Shopping List</button>
-            <button type="button" disabled>Plan Meal (not available yet)</button>
+            <button type="button" disabled={busy} onClick={() => { setPlanned(null); setPlanning(true); }}>Plan Meal</button>
             <Link to="/meals/recipes">Back to Recipes</Link>
           </div>
           <ErrorMessage error={error} />
           {shoppingMessage && <p role="status">{shoppingMessage} <Link to="/meals/shopping">View Shopping List</Link></p>}
+          {planned && <p role="status">Meal planned for {planned.meal_date}, {planned.meal_type}.{" "}
+            <Link to={`/?mealDate=${planned.meal_date}#planner`}>View in Planner</Link></p>}
+          {planning && <MealEntryDialog key={id} recipeId={id} onClose={() => setPlanning(false)} onAdded={setPlanned} />}
           {shoppingOpen && <RecipeShopping key={id} recipeId={id} onClose={() => setShoppingOpen(false)}
             onAdded={(count) => setShoppingMessage(`${count} ingredients added to Shopping List.`)} />}
           {recipe.ingredient_sections.map((section, index) => <section key={index}>

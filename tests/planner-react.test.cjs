@@ -49,6 +49,15 @@ const servicePromise = Promise.resolve(vm.runInThisContext(`((plannerStorage, ap
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const repeatableId = "11111111-1111-4111-8111-111111111111";
 
+test("Planner meal dates retain four-digit early years and the existing week helpers never remap years 1-99 to 1900", async () => {
+  const service = await servicePromise;
+  for (const date of ["0001-01-01", "0099-02-28", "0100-03-01", "2000-02-29", "9999-12-31"]) {
+    assert.equal(service.toDateKey(service.parseDateKey(date)), date);
+  }
+  assert.equal(service.getWeekStartISO("0001-01-01"), "0001-01-01");
+  assert.equal(service.getWeekDateKey("0001-01-01", 6), "0001-01-07");
+});
+
 function adapters(initial, projects = []) {
   let stored = clone(initial);
   let cached = clone(projects);
@@ -237,7 +246,7 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
   const DaySlot = vm.runInNewContext(`(() => { ${code}; return DaySlot; })()`, {
     element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
     usePlanner: () => ({ actions: { dropOnSlot: (...args) => dropOnSlot(...args) } }),
-    usePlannerDrag: () => drag, WeeklyTaskCard: () => {}, styles: new Proxy({}, { get: (_, key) => key }),
+    usePlannerDrag: () => drag, WeeklyTaskCard: () => {}, MealRow: () => {}, styles: new Proxy({}, { get: (_, key) => key }),
     console: { warn: (...args) => warnings.push(args) },
   });
   const props = { day: "mon", date: "2026-10-19", slot: "morning", label: "Morning", tasks: [{ id: "A" }] };
@@ -245,8 +254,9 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
     clientY, currentTarget: { getBoundingClientRect: () => ({ top: 100, height: 100 }) },
     preventDefault() {}, stopPropagation() {},
   });
+  const taskList = (node) => node.children.find((child) => child?.props?.className === "slot-task-list");
   let tree = DaySlot(props);
-  let card = tree.children[1].children[0];
+  let card = taskList(tree).children[0];
   card.props.onDragOver(event(110));
   assert.equal(targets.at(-1), "slot:2026-10-19:morning:before:A");
   card.props.onDrop(event(110));
@@ -257,13 +267,13 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
   assert.deepEqual(calls.at(-1).at(-1), { targetId: "A", side: "after" });
   drag.dropTarget = targets.at(-1);
   tree = DaySlot(props);
-  assert.match(tree.children[1].children[0].props.className, /insert-after/);
+  assert.match(taskList(tree).children[0].props.className, /insert-after/);
   tree.props.onDrop(event(250));
   assert.equal(calls.at(-1).length, 4, "Container background/end uses default append");
   assert.equal(ended, 3);
   drag.drag = { kind: "checklist-reorder", taskId: "A", checklistId: "check" };
   tree = DaySlot(props);
-  card = tree.children[1].children[0];
+  card = taskList(tree).children[0];
   const before = calls.length, beforeTargets = targets.length;
   card.props.onDragOver(event(110));
   card.props.onDrop(event(110));
