@@ -1,4 +1,5 @@
 // Test-build-only Auth transport. Never imported by the application or production Vite configuration.
+import { createMemoryMealPlannerClient, createMemoryWeeklyClient } from "../../tests/fixtures/meal-planner-memory-client.js";
 import { createMemoryRecipeClient } from "../../tests/fixtures/recipe-memory-client.js";
 import { createMemoryShoppingClient } from "../../tests/fixtures/shopping-memory-client.js";
 
@@ -11,8 +12,13 @@ const session = () => globalThis.sessionStorage.getItem(key) ? {
 } : null;
 const recipes = createMemoryRecipeClient();
 const shopping = createMemoryShoppingClient();
+const meals = createMemoryMealPlannerClient();
+const weekly = createMemoryWeeklyClient();
+globalThis.__mealPlannerTest = meals.control;
 globalThis.__shoppingTest = shopping.control;
-const client = { from: (name) => name.startsWith("meals_shopping_") ? shopping.from(name) : recipes.from(name), auth: {
+const client = { from: (name) => name === "meals_planner_entries" ? meals.from(name)
+  : name.startsWith("meals_shopping_") ? shopping.from(name)
+    : name.startsWith("meals_recipe") ? recipes.from(name) : weekly.from(name), auth: {
   onAuthStateChange(callback) {
     listener = callback;
     return { data: { subscription: { unsubscribe() { listener = undefined; } } } };

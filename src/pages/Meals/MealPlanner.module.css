@@ -1,0 +1,20 @@
+.dialog { box-sizing: border-box; width: min(36rem, calc(100% - 2rem)); max-height: 85dvh; overflow: auto; border: 1px solid #888; border-radius: .75rem; padding: 1rem; }
+.dialog::backdrop { background: #0008; }
+.dialog fieldset { min-width: 0; margin-bottom: .75rem; }
+.dialog label, .edit label { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; min-height: 44px; margin: .25rem 0; }
+.dialog input:not([type=radio]), .dialog select, .dialog textarea, .edit textarea { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; min-height: 44px; font: inherit; }
+.dialog input[type=radio] { flex-shrink: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.dialog button, .row button, .row a { min-height: 44px; padding: .5rem; box-sizing: border-box; font: inherit; }
+.row { border-top: 1px solid #aaa6; padding: .35rem; min-width: 0; }
+.row h5 { margin: .25rem 0; font-size: .9rem; }
+.row ul { list-style: none; padding: 0; margin: 0; }
+.row li { margin: .35rem 0; min-width: 0; }
+.text, .row button, .row p { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.row a { display: inline-flex; align-items: center; }
+.row > button { width: 100%; }
+.error { color: #a21919; }
+.status { padding: .5rem; overflow-wrap: anywhere; }
+@media (max-width: 40rem) {
+  .dialog { position: fixed; inset: auto 0 0; margin: 0; width: 100%; max-height: 90dvh; border-radius: .75rem .75rem 0 0; }
+}

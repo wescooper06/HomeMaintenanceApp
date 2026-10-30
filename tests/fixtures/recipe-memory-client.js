@@ -45,6 +45,15 @@ export function createMemoryRecipeClient() {
                 return { data: null, error: { code: "23503", message: "In use" } };
               }
               store[table] = store[table].filter((r) => !rows.includes(r));
+              if (table === "meals_recipes") {
+                const mealsKey = "meals-planner-synthetic-data";
+                const meals = JSON.parse(sessionStorage.getItem(mealsKey) || "[]");
+                meals.forEach((entry) => {
+                  const recipe = rows.find((r) => r.id === entry.recipe_id);
+                  if (recipe) Object.assign(entry, { recipe_id: null, display_text: recipe.title, updated_at: new Date().toISOString() });
+                });
+                sessionStorage.setItem(mealsKey, JSON.stringify(meals));
+              }
             }
             if (ordered) rows.sort((a, b) => a.id.localeCompare(b.id));
             if (action === "select" && !mode) rows = rows.slice(0, maximum);

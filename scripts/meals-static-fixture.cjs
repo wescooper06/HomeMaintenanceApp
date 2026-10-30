@@ -31,7 +31,12 @@ async function createMealsStaticFixture(port = 0, { syntheticAuth = false } = {}
   const server = http.createServer((request, response) => {
     response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; form-action 'none'");
     const url = new URL(request.url, "http://localhost");
-    const filename = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : null;
+    if (url.pathname === prefix.slice(0, -1)) {
+      response.writeHead(301, { Location: prefix + url.search });
+      response.end();
+      return;
+    }
+    const filename = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) || "index.html" : null;
     if (filename && files.has(filename)) {
       response.writeHead(200, { "Content-Type": mime[path.extname(filename)] || "application/octet-stream", "Cache-Control": "no-store" });
       response.end(files.get(filename));

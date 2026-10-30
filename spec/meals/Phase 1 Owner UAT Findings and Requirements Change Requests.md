@@ -1961,3 +1961,366 @@ Both SQL guards remain disabled and byte-identical; excluded cleanup SQL
 untouched. Acceptance Workbook remains unchanged at SHA-256
 `a5033efc216edae9f640b6e8d1b2aebb5da1b82d545c8562717620f131e4915b`.
 Wave 2 owner acceptance and overall Phase 2 acceptance remain pending.
+
+### Shopping Wave 2 owner UAT and acceptance
+
+Owner report, 2026-10-30, for deployed Shopping Wave 2:
+
+1. Recipe Library action: **PASS**
+2. Ingredient selection: **PASS**
+3. Add selected ingredients: **PASS**
+4. Recipe Detail workflow: **PASS**
+5. Mobile behavior: **PASS**
+
+**Overall: PASS. Remaining functional issues: None.**
+
+**Final owner disposition: Shopping Wave 2 accepted and complete.**
+
+Release traceability: source commit
+`3d453a6c62cce8071fcbaf96bc8cb4f4b767002c` pushed to dev; Pages release
+`0e3b394c804e2fe2be6ae93c8514614d61f4bd4a` pushed to main.
+All 19 live main-app publication files and root 404 matched the exact release
+bytes. Recipe Library, Detail and Shopping deep links reached the normal owner
+login boundary with valid assets and no runtime errors in technical smoke.
+[Pages run 41101089251](https://github.com/wescooper06/HomeMaintenanceApp/actions/runs/41101089251)
+still reported waiting at the last technical check; a final workflow success
+conclusion is not inferred from live propagation or this owner report.
+
+**UX follow-up:** Deferred until Meals functional pages are complete.
+No Shopping UX redesign is initiated by this acceptance.
+
+This report supersedes the pending Wave 2 owner-acceptance status above.
+Wave 1 acceptance and its recorded preservation exception remain intact.
+The owner's fifth result is recorded exactly as Mobile behavior; retry
+protection retains P2-TECH-003 technical evidence and is not represented as a
+separately reported owner retry test. No cleanup result was supplied, so none
+is inferred. Overall Phase 2 workbook sign-off is not inferred.
+
+No repeat UAT, schema/migration/fixture execution, production change,
+deployment, Planner implementation or CR-4/6/7 work is part of recording this
+result. Both SQL execution guards remain disabled. The Acceptance Workbook
+is unchanged; no workbook status or sign-off is updated.
+
+### Phase 3 Meal Planner Wave 1 - database authorization gate
+
+Run **P3-DB-001**, 2026-10-30. Owner authorized Phase 3 kickoff and local
+additive database preparation; stop before production SQL, commit or deployment.
+
+**Shopping Wave 2 remains owner PASS, accepted and complete**, as recorded once
+above. Additional owner note for the later Meals improvement pass:
+Shopping works functionally, but cross-page UX/efficiency optimization is
+deferred until the remaining Meals functionality is complete.
+No Shopping UX work is included here.
+
+#### Controlled scope and baseline
+
+Read the current controlled Requirements v0.3, Implementation Plan v1.0,
+Acceptance Checklist v1.0, update protocol and applicable findings history.
+Requirements SHA-256:
+`477dd50089025ad226554bd4d6d335f62f80d982caa10814d602cf600bedac68`.
+Implementation Plan SHA-256:
+`f900f2e6ba82af2687ca441103de1b5d5f301090717a2cc5b6d46614bd95d7e6`.
+
+Remote heads verified: dev
+`3d453a6c62cce8071fcbaf96bc8cb4f4b767002c`, main/Pages
+`0e3b394c804e2fe2be6ae93c8514614d61f4bd4a`; the Wave 2 source is an
+ancestor of main. Index empty. Application source matched the accepted release;
+the sole starting tracked change was the pending Wave 2 acceptance record,
+preserved without reset or commit. The starting worktree was not literally clean.
+
+All **46 Phase 3 requirements** were extracted, including the architecture
+gate. The workbook has **45 Phase 3 Functional Acceptance rows**, all Not Built,
+and five Phase 3 E2E rows, all Not Built:
+
+| Requirement IDs (inclusive ranges) | Controlled acceptance mapping |
+|---|---|
+| ARCH-011 | Coverage row 12, Implementation Review gate; no standalone functional Test ID |
+| RD-FUNC-002; RD-STATE-002 | RD-FUNC-002-T01; RD-STATE-002-T01, Functional Acceptance rows 43 and 49 |
+| PLAN-FUNC-001 through PLAN-FUNC-011; PLAN-DATA-001; PLAN-STATE-001 | Each corresponding `-T01` Test ID, Functional Acceptance rows 120-132 |
+| WP-UI-001 through WP-UI-004; WP-FUNC-001 through WP-FUNC-012; WP-DATA-001; WP-VAL-001 | Each corresponding `-T01` Test ID, Functional Acceptance rows 133-150 |
+| PM-FUNC-001 through PM-FUNC-012 | Each corresponding `-T01` Test ID, Functional Acceptance rows 151-162 |
+| Recipe scheduling, Planner-first entry, occurrence management, Recipe deletion, Recipe rename | E2E-05, E2E-06, E2E-07, E2E-08, E2E-09 respectively |
+
+Carry forward the tightly coupled RL-FUNC-020 / RL-FUNC-020-T01 scheduled-Recipe
+delete warning (previously unbuilt), ARCH-010/012-015, DB-SEC-001 through
+DB-SEC-012, DB-DATA-001, SEC-TST-001 through SEC-TST-010 and applicable responsive,
+loading/error, duplicate-submit and mutation-retry requirements.
+No workbook cells were changed.
+
+#### Wave decision before application implementation
+
+Select one coherent **Recipe/Weekly Planner meal-occurrence workflow**:
+Recipe Detail scheduling and stay-on-Detail confirmation/View in Planner;
+always-visible mapped meal rows; direct Recipe/free-text entry and title-only
+picker; insertion-ordered mixed entries; occurrence View/Edit/Remove; Recipe
+rename reflection and deleted-Recipe preservation. Defaults, date/meal choices,
+duplicates, picker ordering/Favorite stars and validation follow the controlled
+requirements above. Compact free-text editing is essential for preserved
+occurrences; direct free-text entry reuses it instead of creating a micro-wave.
+
+Reuse owner Auth, Recipe service/detail, Planner local date keys/week navigation,
+PlannerProvider and WeeklyGrid/DaySlot. The repository and saved complete
+production catalog have no meal-plan domain table; no fresh production
+inspection is claimed. **A separate meal-entry table is required** by
+ARCH-010/011 and WP-DATA-001. Task/project persistence cannot be repurposed.
+No new calendar, duplicate Planner model or broker dependency.
+
+Current changed files are this register, the narrow byte-preservation rule in
+`.gitattributes`, four Planner SQL/review files and the new local persistence
+test. After database authorization/verification, expected application surfaces
+are RecipeCore, shared compact meal-entry controls, WeeklyGrid/Planner context,
+a dedicated Meals persistence service, and their service/component/browser
+fixtures. None is changed before this database gate.
+
+#### Additive migration and local verification
+
+Candidate: `supabase/review/202610300002_meals_planner.sql`.
+
+- One `public.meals_planner_entries` table: UUID identity, local SQL date,
+  Breakfast/Lunch/Dinner value, optional Recipe FK, preserved raw display text,
+  database-managed timestamps and immutable identity-backed insertion order.
+- Four indexes including PK, unique insertion order, week/meal/order lookup and
+  Recipe FK lookup; one identity sequence, with all browser/service-role direct
+  sequence privileges revoked. Owner INSERT with generated identity works;
+  failed/rolled-back inserts may leave harmless sequence gaps.
+- Four exact designated-owner CRUD RLS policies; anon/PUBLIC table access
+  revoked; authenticated SELECT/DELETE plus only approved INSERT columns and
+  UPDATE(display_text). No browser updates to identity/date/type/ordering or
+  writes to operational timestamps.
+- Two postgres-owned internal SECURITY INVOKER functions with empty search_path
+  and no PUBLIC/anon/authenticated/service_role EXECUTE grants.
+- Two new triggers: meal metadata/title snapshot validation, and a BEFORE DELETE
+  trigger on existing Recipes. Capture current title before FK ON DELETE SET
+  NULL preserves all occurrences atomically as editable text. Future linked
+  display joins current Recipe title; deletion preserves the final renamed title.
+- No migration-time Recipe/Shopping/task/project/Trips data changes; no new
+  view, RPC, extension or default-privilege alteration. Existing Recipe functions
+  are unchanged; the additive delete trigger/FK is the deliberate integration.
+
+Local validation in PGlite/PostgreSQL:
+
+- **22 focused tests passed**, including eight new Planner database tests and
+  existing Recipe/Shopping persistence regression.
+- Guards/collisions, exact catalog/ACL/RLS, owner CRUD, duplicates/order/dates,
+  raw/nonblank text, atomic invalid batches, immutable metadata, occurrence-only
+  removal and renamed-Recipe deletion preservation passed.
+- Anonymous/nonowner/null/malformed-subject denial, internal EXECUTE/sequence
+  denial and exact guarded fixture ROLLBACK passed. Independent postflight:
+  zero fixture Recipes/entries and zero total meal entries. Existing local
+  Recipe/Shopping data, unrelated sentinel rows and default ACLs unchanged.
+  This is SQL-role/auth.uid()/RLS evidence, not JWT transport, fresh production
+  preservation or native multi-session concurrency.
+- Full configured suite: **391 passed, 0 failed, 1 pre-existing optional native
+  PostgreSQL skip** (392 total). Repository-wide ESLint, main-app production
+  build and `git diff --check` passed; existing large-bundle advisory only.
+- Desktop/mobile browser fixtures, Planner UI/navigation/retry and owner UAT
+  pending, not passed by database tests. Recipe/Shopping source/routing unchanged.
+
+#### Exact production authorization package - NOT EXECUTED
+
+Target only **home-maintenance-app / tawvchmjtkgykwwvnnnn**.
+Execution attempt count for this new migration: **0**.
+
+| Artifact | Disabled repository SHA-256 | In-memory enabled SHA-256 |
+|---|---|---|
+| `202610300002_meals_planner.sql` | `dbbb08ee673901b2f1a2fb937a2a0d9055fa37bc682aff4fb2024269c1f05604` | `28d061167d91fb7c8afe9ac8d9cd40c1230211210a33aa3ba6c4cc01120fe719` |
+| `meals_planner_authorization_DISABLED.sql` | `3b97f4a10d698243dc971c11f083b961ff115614d3e7574a5c40d72dd1152c93` | `39e98792364dd3031b2687016ff68a98e19c0345c2ffdc8748c5ebc960ba4fb4` |
+
+Both representations are UTF-8 without BOM, 116 CRLF line endings and a final
+newline. Migration: 6,932 disabled / 6,931 enabled bytes. Fixture: 5,567 disabled /
+5,566 enabled bytes. Enable only the single respective false-to-true guard in
+memory; do not save an enabled copy. The narrow `.gitattributes` addition
+preserves these review SQL bytes across future Git staging, as for Shopping.
+
+Requested next authorization is bounded:
+
+1. Confirm exact Dashboard project; run `meals_planner_preflight.sql` read-only.
+   Require postgres, confirmed owner, expected postgres-owned RLS Recipe table/
+   trigger, ordinary browser roles without memberships and zero collisions.
+2. Load/verify and execute the exact enabled migration once via the established
+   Dashboard UI; no blind retry or automatic reversal on error/ambiguity.
+3. Capture `meals_planner_postflight.sql`; compare the complete catalog to the
+   exact local contract above, including function definitions, policy expressions,
+   effective grants/sequence denial, unchanged Recipe ACL/original trigger,
+   added preservation trigger and zero initial meal entries.
+4. Execute the exact enabled rollback-controlled fixture once. Require every
+   assertion and final ROLLBACK to succeed; independently rerun read-only
+   postflight for zero fixture/total meal entries and zero fixture Recipes.
+5. Verify the narrowly affected Recipe behavior/catalog and unchanged Shopping/
+   Planner/project surfaces; review new Meals-related Security Advisor findings.
+   Stop on unexpected differences, uncertain rollback/cleanup, execution/catalog
+   errors, material security findings or the owner's storage/Git-object monitor.
+   No Shopping migration re-verification, Shopping fixture rerun or automatic repair.
+
+Production execution/inspection was not performed for this kickoff. Migration
+and fixture guards remain false. Existing Shopping migration and fixture remain
+byte-identical and disabled; excluded cleanup SQL untouched. Index remains
+empty; **no source commit, push or deployment**. Acceptance Workbook SHA-256
+remains `a5033efc216edae9f640b6e8d1b2aebb5da1b82d545c8562717620f131e4915b`.
+No CR-4/6/7, Recipe Import or UX redesign. Owner UAT and application
+implementation/validation/release remain pending after database authorization;
+no next Planner wave has started and no Final Decision is changed.
+
+### Phase 3 Meal Planner Wave 1 - production database verified
+
+Run **P3-DB-002**, 2026-10-30. Owner authorized the exact migration and
+rollback-controlled fixture against **home-maintenance-app /
+tawvchmjtkgykwwvnnnn**, stopping before application implementation, commit or
+deployment. This supersedes the pending production execution status in
+P3-DB-001, not its controlled scope or application/owner-UAT pending status.
+
+- **Preflight PASS:** Dashboard project identity confirmed; postgres executor,
+  confirmed designated owner, ordinary anon/authenticated roles without
+  memberships, expected postgres-owned RLS Recipe table and original trigger,
+  zero Planner namespace collisions.
+- **Migration PASS, one execution:** exactly one active editor model, 6,931
+  UTF-8 bytes without BOM, 116 CRLF endings/final newline, byte equality and
+  authorized enabled SHA-256
+  `28d061167d91fb7c8afe9ac8d9cd40c1230211210a33aa3ba6c4cc01120fe719`
+  verified before invoking the existing Run control once. Dashboard returned
+  **Success. No rows returned**. No RLS confirmation dialog appeared.
+  No execution retry, SQL supplementation, repair or reversal.
+- **Postflight/RLS PASS:** HTTP 201; every prepared catalog field matched an
+  independently generated local contract, normalizing only ACL privilege
+  character ordering and CRLF in catalog strings. Exactly one table, four
+  indexes, four exact-owner policies, one ordering sequence, two internal
+  SECURITY INVOKER functions, two triggers and zero initial meal entries.
+  Ownership, columns, constraints, index state, function definitions/ACL/config,
+  sequence/effective grants, existing Recipe ACL/original trigger and the
+  approved additive Recipe-delete trigger all matched.
+- **Fixture authorization PASS, one execution:** editor and actual Dashboard
+  request both matched enabled SHA-256
+  `39e98792364dd3031b2687016ff68a98e19c0345c2ffdc8748c5ebc960ba4fb4`
+  (5,566 UTF-8 bytes, 116 CRLF endings/final newline). The existing destructive
+  operation warning was confirmed with Run query once; no SQL rewrite.
+  HTTP 201 returned `PASS - ROLLBACK follows` for the exact full BEGIN-through-
+  ROLLBACK request. Owner CRUD/duplicate ordering, anonymous denial,
+  non-owner/null/malformed-subject denial, renamed Recipe deletion and editable
+  preserved occurrences passed. Claims are SQL-role/auth.uid()/RLS, not JWT
+  transport or native multi-session concurrency.
+- **Independent cleanup PASS:** a separate postflight request returned HTTP 201,
+  zero fixture Recipes, zero fixture meal entries and zero total meal entries.
+  The complete postflight catalog was unchanged after the fixture.
+- **Targeted preservation PASS:** identical repeatable-read read-only snapshots
+  before migration and after fixture rollback matched count and complete
+  sorted row fingerprints for all 14 targeted Recipe/classification, Shopping,
+  Planner task/profile/parking and project/registry tables. Existing six Recipes,
+  28 Shopping categories and eight Shopping items were unchanged; no private
+  row content was exported. Auth instances, database-role configuration and
+  auth.uid() definition hashes were unchanged. The exact executed migration
+  contains no Auth-configuration write and no Auth settings were changed.
+  This is targeted preservation, not a broad Auth audit or the old generic
+  139-object comparison.
+- **Fresh Security Advisor PASS:** Refresh and Rerun linter completed; zero
+  errors, the same one pre-existing leaked-password-protection Auth warning
+  and the same ten pre-existing no-policy informational rows. No new Shopping
+  or Meal Planner finding. No unrelated security remediation.
+
+Production evidence summary is retained in session file
+`planner-wave1-production-20261030T1847.json`. Repository migration and fixture
+remain disabled at their P3-DB-001 hashes. Both Shopping SQL hashes and the
+Acceptance Workbook hash remain unchanged; excluded cleanup SQL untouched.
+Index empty; no commit, push, deployment or application implementation.
+
+**Production meal-entry schema ready: YES. Application deployed: NO.**
+Next authorization: implement the controlled Planner Wave 1 application,
+desktop/mobile validation and subsequent source/Pages release. Owner UAT
+remains pending; no next wave, UX redesign or workbook Final Decision change.
+
+### Meal Planner follow-up - drag/drop rescheduling
+
+Owner-requested post-Wave-1 enhancement, 2026-10-30:
+
+In the Weekly Planner, drag and drop a scheduled meal from one day to another,
+similar to the existing task drag/drop interaction. The same Recipe-backed or
+free-text occurrence remains; only its scheduled date changes. Persist after
+a successful drop; failed persistence must not leave a false move displayed.
+Desktop drag/drop and an appropriate touch-accessible mobile rescheduling
+interaction are required.
+
+**Deferred beyond Wave 1; requirements/schema review required.** The verified
+Wave 1 schema is unchanged, with no date-update grant or rescheduling UI.
+Wave 1 owner UAT check is **Edit / remove occurrence**, not move.
+This functional enhancement is separate from the later cross-page Meals
+UX/efficiency pass, which remains deferred until Meals functional pages are
+complete. No next Planner wave or UX redesign is authorized by this note.
+
+### Phase 3 Meal Planner Wave 1 - application validation / owner UAT pending
+
+Run **P3-TECH-001**, 2026-10-30. Owner authorized application implementation
+against the P3-DB-002 verified schema, explicit source commit/dev push and the
+established main-app Pages publication after validation. This supersedes the
+application-implementation authorization pending status above, not owner UAT.
+Shopping Wave 2 remains **owner PASS, accepted and complete**; its later
+cross-page Meals efficiency/UX pass remains separately deferred.
+
+**Controlled scope implemented:** ARCH-011 gate; RD-FUNC-002, RD-STATE-002;
+PLAN-FUNC-001 through 011, PLAN-DATA-001, PLAN-STATE-001; WP-UI-001 through 004,
+WP-FUNC-001 through 012, WP-DATA-001, WP-VAL-001; PM-FUNC-001 through 012;
+coupled RL-FUNC-020 scheduled-entry deletion warning. This is the previously
+extracted 46-requirement Phase 3 scope / 45 Functional Acceptance rows and
+E2E-05 through E2E-09, with inherited responsive/security/data/error controls.
+No workbook statuses or Final Decision have been changed.
+
+- Recipe Detail Plan Meal defaults to local today / Dinner, accepts past and
+  future dates and all three meals, allows distinct duplicate occurrences,
+  stays on Detail after adding and confirms date/meal. Explicit View in Planner
+  opens the correct week through existing routing and date navigation.
+- Always-visible Breakfast/Lunch/Dinner rows map to Morning/Afternoon/Evening.
+  Recipe-backed and verbatim nonblank free-text meals share persisted insertion
+  order; task cards/storage remain separate. Direct slot entry offers Recipe
+  and Free text without an intermediate choice menu. Recipe picker is
+  alphabetical, title-only case-insensitive substring search, with Favorite
+  indicators but no Favorite-first ordering.
+- Linked occurrences show current Recipe titles and View Recipe / Remove.
+  Plain-text occurrences offer Edit / Save / Cancel / Remove. Remove affects
+  only that occurrence, with no confirmation. Recipe deletion warning applies
+  to shared Library/Detail deletion; the verified database trigger preserves
+  current titles as editable text with no Recipe link.
+- Stable UUID additions reconcile uncertain responses without duplicate
+  inserts; edit/delete use updated-at guards and retry reconciliation.
+  Failed writes retain displayed entries/drafts; failed reads are explicit,
+  retryable and never shown as a successful empty list.
+- Reused existing week/date/grid, navigation, task drag/drop, Recipe CRUD,
+  complete Recipe loading, owner boundary, Supabase client and native dialogs.
+  Shared date helpers now preserve four-digit years 0001-0099 instead of
+  JavaScript's constructor remapping them into 1900-1999.
+
+**Validation evidence:** focused Planner/persistence/Recipe/Shopping/routing
+selection passed (97 tests before the additional early-year regression).
+Final full configured suite: **401 passed, 0 failed, 1 pre-existing optional
+native PostgreSQL skip (402 total)**. Lint, production main-app build and
+whitespace checks passed; release hashes are retained with the session release
+evidence. The existing optional native PostgreSQL test is skipped when
+its configured binary is absent; the existing large-chunk build warning remains.
+
+Actual production-build desktop (final 1440x1000) and 390x844 mobile fixtures exercised real
+Planner/Recipe UI, service paths and isolated persisted test transport:
+today/Dinner defaults; past/future scheduling; explicit correct-week navigation;
+all meal rows; mixed entries and duplicate ordering; title-only picker/Favorite
+indicator; free-text edit/cancel/remove; current renamed title; deleted Recipe
+occurrences becoming editable unlinked text; reload persistence; failed
+edit/remove retention and retry; lost-insert-response retry yielding one meal;
+failed initial load with no false empty and successful Retry; week navigation;
+native modal focus trap/Escape/opener restoration; 44px meal-action targets.
+The final build additionally scheduled 0001-01-01, opened that exact Planner
+week and retained a direct mobile meal after reload, without application alerts.
+Existing task row stayed byte-identical beside meals; task drag/drop regression
+coverage passed. Mobile page-width overflow was unchanged with meal rows
+removed (existing Planner layout); meal controls wrap and the existing grid
+retains its horizontal scroll. This is no Shopping/Planner UX redesign.
+Recipe-to-Shopping ingredient selection/add/navigation also passed in the
+mobile fixture. Isolated CSP intentionally blocks external fonts/Google/weather;
+no production Auth session or data mutation was used for browser validation.
+
+**Database changes: None during application implementation; previously verified
+Planner Wave 1 schema reused.** No production SQL/fixture rerun or migration
+modification. Both Planner SQL guards remain disabled; both Shopping guards,
+the controlled workbook and excluded cleanup SQL remain untouched.
+
+Owner UAT is **pending** after publication: Recipe scheduling; Weekly Planner
+meal display; Free-text / direct meal entry; **Edit / remove occurrence**;
+Mobile + Recipe-link behavior. No owner migration/security/failure-injection
+retest. Drag/drop/touch rescheduling remains the separate post-Wave-1
+requirements/schema-review enhancement above. No next wave, Recipe Import,
+CR-4/6/7 or UX redesign.
