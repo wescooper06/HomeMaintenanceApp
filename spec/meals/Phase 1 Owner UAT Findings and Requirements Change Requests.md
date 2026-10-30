@@ -895,3 +895,74 @@ staged, committed, or pushed.
   Historical Security Acceptance reconciliation remains separate.
 - **Production/database/security/deployment:** None. No migration, RLS,
   policy, grant, or Auth configuration changes. No staging, commit, or push.
+
+## Recipe Core R1 - Wave 1 - CR-5 owner UAT result
+
+- **Run ID:** `RC-R1-UAT-001`.
+- **Owner results recorded:** 2026-10-30.
+- **Source commit:** `5a9d0f694552c8dc2341973849d65bd94a9d4c25`.
+- **Pages release commit:** `1aa7a6a86a0f652d6da109dd352aa7fc83cfb42f`.
+
+1. Desktop Category referenced-delete refusal: PASS
+2. Desktop Cuisine referenced-delete refusal: PASS
+3. Mobile Category referenced-delete refusal: PASS
+4. Mobile Cuisine referenced-delete refusal: PASS
+5. Retry and stale-message behavior: PASS
+6. Unknown/network error distinction:
+   TECHNICAL EVIDENCE SUFFICIENT under RC-R1-TECH-001
+
+Overall owner result: PASS
+
+Remaining owner-observed issues: None
+
+Cleanup completed: YES
+
+**Final CR-5 disposition: Accepted and complete.**
+
+This owner result supersedes the pending-UAT disposition in the preceding
+technical record without replacing or duplicating that record. Historical
+Phase 1 acceptance and scope exclusions remain unchanged. No Acceptance
+Workbook, application, test, database, migration, or release file was changed
+to record this result. No deployment, staging, commit, or push was performed.
+
+## Recipe Core R1 - Wave 2 - CR-2 numbered Instructions
+
+- **Technical run:** `RC-R1-TECH-002`, 2026-10-30.
+- **Scope:** Owner-approved CR-2 implementation only; related requirements
+  `RD-UI-004` and `RE-DATA-007`. Owner UAT remains pending under
+  `RC-R1-UAT-002`; this is not an owner acceptance result.
+- **Behavior:** Recipe Detail renders one semantic ordered-list item per
+  nonblank logical Instructions line, recognizing LF, CRLF, and CR.
+  Blank/whitespace-only lines do not generate steps. Nonblank lines retain
+  whitespace, duplicate content, numeric prefixes, and other text verbatim.
+  Already-numbered text is not inferred or stripped, so duplicate displayed
+  numbering is intentional. Empty Instructions retain the heading and show
+  "No instructions provided." Edit retains the multiline textarea; display
+  parsing does not modify persisted raw text.
+- **Implementation:** Small local `instructionLines` helper, Detail list
+  rendering, and minimal list indentation/spacing. Existing preserved-text
+  styling provides whitespace preservation and long-content wrapping.
+- **Validation:** Focused interaction/service tests passed 25, failed 0,
+  skipped 0 (18 interaction, 7 service). New tests cover mixed line endings,
+  empty/single/repeated lines, whitespace, existing numbering/numeric content,
+  literal markup, semantic lists, and unchanged raw Instructions through an
+  unrelated Recipe edit/save. Existing CR-5 regression coverage still passes.
+  Full configured suite: 350 passed, 0 failed, 1 optional PostgreSQL-environment
+  skip (`WORKBENCH_TEST_PG_BIN`). Lint passed. Main production Vite configuration
+  compiled to 17 in-memory outputs without publishing generated assets.
+  `git diff --check` passed.
+- **Isolated browser verification:** Synthetic local fixture only; desktop
+  1280px and mobile 375px views showed decimal list numbering, preserved text,
+  readable wrapping without horizontal list overflow, and literal markup
+  rather than rendered HTML. Empty/single-line states and raw Edit/unrelated
+  Save round-trip passed. This is technical verification, not owner UAT.
+- **Short owner checks:** (1) normal multiline/single-line Instructions;
+  (2) blank-line handling; (3) existing numbered/numeric content, including
+  expected duplicate numbering; (4) mobile presentation and Edit round-trip.
+  Suggested response: `1 PASS`, `2 PASS`, `3 PASS`, `4 PASS`, `Overall PASS`,
+  with notes for any failure. A live release requires separate authorization.
+- **Preserved boundaries:** CR-5 Accepted and complete closure above remains
+  intact. Historical Phase 1 acceptance and scope exclusions are unchanged.
+  No workbook, requirements Word document, database, migration, RLS, policy,
+  grant, Auth configuration, or generated release asset changed. Other CRs
+  were not implemented. No staging, commit, push, or deployment performed.

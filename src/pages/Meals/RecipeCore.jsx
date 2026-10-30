@@ -8,6 +8,10 @@ import styles from "./MealsPage.module.css";
 const service = createRecipeService();
 const emptyFilters = { search: "", category: "", cuisine: "", favorites: false };
 
+function instructionLines(text) {
+  return text.split(/\r\n|\r|\n/).filter((line) => /\S/u.test(line));
+}
+
 function ErrorMessage({ error, retry, retryLabel = "Retry" }) {
   return error ? <div role="alert" className={styles.error}>{error} {retry && <button type="button" onClick={retry}>{retryLabel}</button>}</div> : null;
 }
@@ -313,6 +317,7 @@ export function RecipeDetail() {
     finally { lock.current = false; setBusy(false); }
   }
   const recipe = loaded.data?.recipe;
+  const steps = recipe ? instructionLines(recipe.instructions) : [];
   return <section className={styles.panel}>
     <h2>Recipe Detail</h2>
     {loaded.loading ? <p role="status">Loading Recipe...</p> : loaded.error
@@ -334,7 +339,10 @@ export function RecipeDetail() {
           {recipe.ingredient_sections.map((section, index) => <section key={index}>
             <h3 className={styles.preserved}>{section.name}</h3><div className={styles.preserved}>{section.text}</div>
           </section>)}
-          <h3>Instructions</h3><div className={styles.preserved}>{recipe.instructions}</div>
+          <h3>Instructions</h3>
+          {steps.length ? <ol className={styles.instructions}>
+            {steps.map((step, index) => <li key={index} className={styles.preserved}>{step}</li>)}
+          </ol> : <p>No instructions provided.</p>}
           {confirm && <DeleteConfirmation count={1} pending={busy} error={error} onCancel={() => setConfirm(false)} onDelete={() => mutate(true)} />}
         </>}
   </section>;
