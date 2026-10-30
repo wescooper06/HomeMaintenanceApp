@@ -8,7 +8,7 @@ const vm = require("node:vm");
 const root = path.join(__dirname, "..");
 const serviceSource = fs.readFileSync(path.join(root, "src", "services", "recipeService.js"), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
-const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {recipeMatches,sortRecipes}; })()`);
+const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {newRecipe,recipeMatches,sortRecipes}; })()`);
 const initial = () => ({ id: randomUUID(), title: "", source: "", category_id: null, cuisine_id: null,
   instructions: "", favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }] });
 let compiled;
@@ -39,11 +39,12 @@ function harness(service = {}) {
       }
     },
     useNavigate: () => (to) => navigations.push(to),
+    useParams: () => ({ id: "recipe-1" }),
     useBlocker: (check) => { blocking = check; return blocker; },
     window: { addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: (key) => listeners.delete(key) },
   };
   const components = vm.runInNewContext(`(() => { ${compiled}; return {
-    EditorForm, Favorite, DeleteConfirmation, RecipeLibrary, Classification
+    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification
   }; })()`, context);
   return { ...components, navigations, listeners, blocker, shouldBlock: () => blocking(),
     render(Component, props) {
@@ -179,6 +180,9 @@ test("library loading/error/retry, empty and filtered zero-result states", async
   await flush();
   tree = h.render(h.RecipeLibrary);
   assert.match(text(tree), /No Recipes yet/);
+  assert(nodes(tree).some((n) => n.type === "link" && n.props.to === "/meals/recipes/new"
+    && text(n) === "Add Recipe"));
+  assert.doesNotMatch(text(tree), /No Recipes match the current criteria/);
   recipes = [{ ...initial(), title: "Soup" }];
   const h2 = harness({ list: async () => recipes,
     categories: { list: async () => [] }, cuisines: { list: async () => [] } });
@@ -187,7 +191,124 @@ test("library loading/error/retry, empty and filtered zero-result states", async
   change(labeledInput(tree, "Search Recipes"), "no match");
   tree = h2.render(h2.RecipeLibrary);
   assert.match(text(tree), /No Recipes match the current criteria/);
+  assert.doesNotMatch(text(tree), /No Recipes yet/);
   button(tree, "Clear search and filters").props.onClick();
   tree = h2.render(h2.RecipeLibrary);
   assert.doesNotMatch(text(tree), /No Recipes match/);
+  assert.match(text(tree), /Soup/);
+});
+
+test("data-backed Meals pages render accessible load errors and recover through Retry", async () => {
+  const recipe = { ...initial(), title: "Recovered Recipe" };
+  const cases = [
+    {
+      name: "Recipe Library",
+      Component: "RecipeLibrary",
+      service: (attempts) => ({
+        list: async () => { if (!attempts.list++) throw new Error("offline"); return [recipe]; },
+        categories: { list: async () => [] },
+        cuisines: { list: async () => [] },
+      }),
+      expected: /Recovered Recipe/,
+    },
+    {
+      name: "Recipe Detail",
+      Component: "RecipeDetail",
+      service: (attempts) => ({
+        get: async () => { if (!attempts.get++) throw new Error("offline"); return recipe; },
+        categories: { list: async () => [] },
+        cuisines: { list: async () => [] },
+      }),
+      expected: /Recovered Recipe/,
+    },
+    {
+      name: "Recipe Editor",
+      Component: "RecipeEditor",
+      service: (attempts) => ({
+        categories: { list: async () => { if (!attempts.categories++) throw new Error("offline"); return []; } },
+        cuisines: { list: async () => [] },
+      }),
+      recovered(tree) {
+        const editor = nodes(tree).find((n) => n.type.name === "EditorForm");
+        return editor?.props.initial.title === "";
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    const attempts = { list: 0, get: 0, categories: 0 };
+    const h = harness(scenario.service(attempts));
+    const Component = h[scenario.Component];
+    let tree = h.render(Component, {});
+    await flush();
+    tree = h.render(Component, {});
+    const error = nodes(tree).find((n) => n.type.name === "ErrorMessage");
+    assert(error, `${scenario.name} should render an error: ${text(tree)}; attempts=${JSON.stringify(attempts)}`);
+    assert.match(error.props.error, /offline/);
+    const renderedError = h.ErrorMessage(error.props);
+    assert(nodes(renderedError).some((n) => n.props.role === "alert"));
+    const retry = button(renderedError, "Retry");
+    assert(retry, `${scenario.name} should render a Retry action`);
+
+    tree = h.render(Component, {});
+    assert.match(nodes(tree).find((n) => n.type.name === "ErrorMessage").props.error, /offline/);
+    retry.props.onClick();
+    tree = h.render(Component, {});
+    await flush();
+    tree = h.render(Component, {});
+    assert.doesNotMatch(text(tree), /offline/);
+    if (scenario.recovered) {
+      assert(scenario.recovered(tree), `${scenario.name} should render recovered content`);
+    } else {
+      assert.match(text(tree), scenario.expected, `${scenario.name} should render recovered content`);
+    }
+  }
+});
+
+test("persisted Recipe Favorite mutation failure preserves state and can be retried", async () => {
+  const recipe = { ...initial(), title: "Persisted Recipe", favorite: false };
+  let attempts = 0;
+  const h = harness({
+    list: async () => [recipe],
+    categories: { list: async () => [] },
+    cuisines: { list: async () => [] },
+    favorite: async (id, value) => {
+      assert.equal(id, recipe.id);
+      attempts++;
+      if (attempts === 1) throw new Error("offline");
+      return { ...recipe, favorite: value };
+    },
+  });
+  let tree = h.render(h.RecipeLibrary);
+  await flush();
+  tree = h.render(h.RecipeLibrary);
+  let favoriteElement = nodes(tree).find((n) => n.type.name === "Favorite");
+  assert(favoriteElement, `Favorite component missing: ${text(tree)}`);
+  let favorite = h.Favorite(favoriteElement.props);
+  assert.equal(favorite.props["aria-pressed"], false);
+
+  favorite.props.onClick({ stopPropagation() {} });
+  await flush();
+  tree = h.render(h.RecipeLibrary);
+  assert.equal(h.navigations.length, 0);
+  assert.equal(attempts, 1);
+  favoriteElement = nodes(tree).find((n) => n.type.name === "Favorite");
+  favorite = h.Favorite(favoriteElement.props);
+  assert.equal(favorite.props["aria-pressed"], false);
+  const error = nodes(tree).find((n) => n.type.name === "ErrorMessage");
+  assert(error);
+  const renderedError = h.ErrorMessage(error.props);
+  assert.match(text(renderedError), /not confirmed/i);
+  assert.match(text(renderedError), /retry/i);
+
+  favorite.props.onClick({ stopPropagation() {} });
+  await flush();
+  tree = h.render(h.RecipeLibrary);
+  favoriteElement = nodes(tree).find((n) => n.type.name === "Favorite");
+  favorite = h.Favorite(favoriteElement.props);
+  assert.equal(attempts, 2);
+  assert.equal(favorite.props["aria-pressed"], true);
+  assert.match(text(favorite), /Unfavorite/);
+  assert.equal(nodes(tree).some((n) => n.props.role === "alert"), false);
+  assert.equal(h.navigations.length, 0);
 });
