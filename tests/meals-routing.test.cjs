@@ -11,12 +11,14 @@ const React = requireTrips("react");
 const { renderToStaticMarkup } = requireTrips("react-dom/server");
 const { MemoryRouter, Routes, Route, Navigate, NavLink, Link, useLocation, useParams, useNavigate } = requireTrips("react-router-dom");
 const load = (file, names, context = {}) => vm.runInNewContext(`(() => {
-  ${fs.readFileSync(path.join(root, file), "utf8").replace(/^export /gm, "")}
+  ${fs.readFileSync(path.join(root, file), "utf8").replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "")}
   return { ${names.join(",")} };
 })()`, context);
 const { resolveLifeManagerRoute, lifeManagerBasename } = load("src\\router\\lifeManagerRoutes.js",
   ["resolveLifeManagerRoute", "lifeManagerBasename"]);
 const { restoreMealsDeepLink } = load("src\\router\\mealsDeepLink.js", ["restoreMealsDeepLink"], { URL });
+const { newRecipeFilters } = load("src\\services\\recipeService.js",
+  ["newRecipeFilters"], { getSupabaseClient() {} });
 const { navigationLinks, standaloneNavigationHref } = load("src\\components\\layout\\navigationRoutes.js",
   ["navigationLinks", "standaloneNavigationHref"]);
 let MealsPage, Navigation, LifeRoutes, OwnerBoundary, compileComponent;
@@ -32,7 +34,7 @@ test.before(async () => {
     });
     return vm.runInNewContext(`(() => { ${code}; return ${name}; })()`, {
       React, Routes, Route, Navigate, NavLink, Link, useLocation, useParams, useNavigate,
-      useState: React.useState, useRef: React.useRef, useEffect: React.useEffect, styles: { active: "active" },
+      useState: React.useState, useRef: React.useRef, useEffect: React.useEffect, newRecipeFilters, styles: { active: "active" },
       lazy: () => () => null, ...extra,
     });
   }
@@ -51,6 +53,45 @@ test.before(async () => {
     useState: (initial) => React.useState(initial?.status === "checking" ? { status, error: "" } : initial),
     useEffect: React.useEffect, createOwnerAuthController: () => ({}), getSupabaseClient: () => ({}),
   });
+});
+
+test("Meals parent owns only criteria across subroutes and a fresh parent starts at defaults", async () => {
+  async function parent() {
+    let criteria;
+    let pathname = "/meals/recipes";
+    const Page = await compileComponent("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", {
+      RecipeLibrary: () => null, RecipeEditor: () => null, RecipeDetail: () => null,
+      useLocation: () => ({ pathname, search: "" }),
+      useState(initial) {
+        criteria ??= initial();
+        return [criteria, (update) => { criteria = typeof update === "function" ? update(criteria) : update; }];
+      },
+    });
+    function descendants(node) {
+      return !React.isValidElement(node) ? [] : [node, ...React.Children.toArray(node.props.children).flatMap(descendants)];
+    }
+    return {
+      library(pathnameNext = "/meals/recipes") {
+        pathname = pathnameNext;
+        const route = descendants(Page()).find((node) => node.props.path === "/meals/recipes");
+        return route.props.element.props;
+      },
+    };
+  }
+  const mounted = await parent();
+  const initial = mounted.library();
+  assert.deepEqual(initial.filters, newRecipeFilters());
+  const criteria = { search: "Soup", categoryIds: ["c1", "c2"], cuisineIds: ["u1", "u2"], favorites: true };
+  initial.setFilters(criteria);
+  for (const pathname of ["/meals/recipes/recipe-id", "/meals/recipes/recipe-id/edit",
+    "/meals/recipes/recipe-id", "/meals/shopping", "/meals/recipes"]) {
+    assert.equal(mounted.library(pathname).filters, criteria);
+  }
+  const fresh = await parent();
+  assert.deepEqual(fresh.library("/meals/recipes/direct-id").filters, newRecipeFilters());
+  assert.deepEqual(fresh.library().filters, newRecipeFilters());
+  const source = fs.readFileSync(path.join(root, "src\\pages\\Meals\\MealsPage.jsx"), "utf8");
+  assert.doesNotMatch(source, /localStorage|sessionStorage|useSearchParams/);
 });
 
 test("data router mounts only inside owner boundary, retains basename and survives StrictMode initializer replay", async () => {

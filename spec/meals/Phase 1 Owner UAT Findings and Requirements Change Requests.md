@@ -966,3 +966,122 @@ to record this result. No deployment, staging, commit, or push was performed.
   No workbook, requirements Word document, database, migration, RLS, policy,
   grant, Auth configuration, or generated release asset changed. Other CRs
   were not implemented. No staging, commit, push, or deployment performed.
+
+## Recipe Core R1 - Wave 2 - CR-2 failed owner UAT
+
+- **Owner result recorded:** 2026-10-30, following technical run
+  `RC-R1-TECH-002` and Pages release
+  `67eea0dd01a432113abba90bd98362496ec024d1`.
+- **Overall owner result: FAIL. CR-2 is not accepted.**
+1. Normal multiline Instructions: FAIL.
+   Owner observation: "Pasting Instructions from a website did not display
+   numbered Instructions." "Manually entering Instructions also did not
+   display numbering."
+2. Blank-line handling: NOT TESTED.
+3. Existing numbered/numeric text: NOT TESTED.
+4. Mobile display + Edit round-trip: NOT TESTED.
+- **Disposition:** Corrective implementation required after diagnosis of the
+  actual failing owner path, followed by technical validation and owner retest.
+  The earlier technical evidence does not establish owner acceptance.
+  Historical Phase 1 acceptance and CR-5 acceptance remain unchanged.
+
+### CR-2 failure diagnosis and refresh confirmation
+
+- The owner supplied a screenshot of Recipe Detail without visible numbering.
+  After a diagnostic hard refresh, the owner reported:
+  "Numbering appears after Ctrl+Shift+R".
+- The served entry, main JavaScript/CSS, and Meals JavaScript/CSS match release
+  `67eea0dd01a432113abba90bd98362496ec024d1` byte-for-byte. The evidence
+  identifies stale browser-page state, resolved by refresh without a data or
+  deployment change; the exact prior browser cache mechanism was not captured.
+  No evidenced parsing, persistence, routing, or list-style defect warrants a
+  speculative application change.
+- A full production-build fixture with isolated synthetic transport exercised
+  manual multiline entry and Edit/Save/Detail, multiline text insertion,
+  blank-line filtering, preserved numeric prefixes, and raw Edit round-trip.
+  Desktop and narrow-mobile screenshots visibly showed sequential 1-3 markers.
+  Automated full-page screenshot comparisons with markers enabled versus
+  suppressed detected painted marker differences at both widths, beyond DOM
+  or computed-style assertions. Computed styling was decimal/outside,
+  list-item display, 32px indentation, visible overflow, and no horizontal
+  document overflow. Browser-tool scaling yielded actual CSS viewports of
+  1014px and 297px for requested 1280px and 375px sizes.
+- Revalidation: focused tests 25 passed, 0 failed; full suite 350 passed,
+  0 failed, 1 optional environment-dependent skip; lint passed. The full
+  suite's production-build/static-host test and the browser fixture compiled
+  the main application in memory. No generated release assets were changed.
+- No application/CSS/test change or replacement deployment was needed to
+  resolve the reported symptom. The historical FAIL remains recorded; refresh
+  confirmation is diagnostic evidence, not acceptance. CR-2 remains pending
+  the same four owner retest checks. No production Recipe data, workbook,
+  database, migration, RLS, policy, grant, or Auth configuration was changed.
+
+## Recipe Core R1 - CR-2 owner retest acceptance
+
+CR-2 OWNER RETEST
+
+1. Normal multiline Instructions: PASS
+2. Blank-line handling: PASS
+3. Existing numbered/numeric text: PASS
+4. Mobile display + Edit round-trip: PASS
+
+Overall: PASS
+
+Notes:
+
+Initial owner UAT reported missing numbering on a previously open browser page.
+After Ctrl+Shift+R, numbering appeared without any application or deployment
+change. The deployed assets matched the authorized CR-2 release. Retest then
+passed all four owner checks.
+
+**Final CR-2 disposition: Accepted and complete.**
+
+Recorded 2026-10-30. The original failed observation and refresh diagnosis above
+remain historical evidence. Phase 1 acceptance and the Acceptance Workbook are
+unchanged. This closure accompanies the next CR-3/CR-8 source/evidence commit,
+not a separate documentation-only commit.
+
+## Recipe Core R1 - CR-3 + CR-8 multi-select Library criteria
+
+- **Technical validation:** 2026-10-30. Owner UAT pending; neither CR-3 nor
+  CR-8 is accepted by this technical record.
+- **Scope:** Category/Cuisine checkbox disclosures follow the existing
+  Workbench interaction pattern, with selected names/counts in each summary,
+  native keyboard behavior, and 44px touch targets. Empty selections are
+  unrestricted. Values within each classification use OR; Category, Cuisine,
+  unchanged literal title/ingredient search, and Favorites combine with AND.
+  Clear search and filters resets every criterion. No Unassigned option or
+  Recipe data-model change was added.
+- **State:** One criteria object owned by the mounted Meals parent. In-app
+  Back to Recipes, browser Back, Detail/Edit Save or Cancel, and Meals
+  sub-page navigation preserve criteria. Refresh, a fresh/direct-detail
+  entry, logout, and parent unmount start at defaults. No localStorage,
+  sessionStorage, query parameters, or other criteria store was introduced.
+  Library remount reloads current Recipes/lookups; bulk selections, dialogs,
+  mutations, and errors are not retained. Successful lookup loads prune
+  unavailable selected IDs without modifying Recipe data.
+- **Focused validation:** Recipe interaction, service, and Meals routing
+  tests: 35 passed, 0 failed. Coverage includes OR/AND behavior, independent
+  deselection, clear-all, true-empty versus zero-match recovery, fresh-parent
+  defaults, missing lookup reconciliation, fresh data, and transient reset.
+  Existing CR-2 numbered Instructions/raw Edit preservation and CR-5
+  reference-refusal/retry/fallback tests remain passing.
+- **Broader validation:** Full configured suite 354 passed, 0 failed,
+  1 optional environment-dependent PostgreSQL skip. Lint passed.
+  Production main-app build/static deep-link tests passed in memory.
+  Diff whitespace check passed.
+- **Full-app isolated browser checks:** At actual 1280px desktop and 375px
+  mobile widths, keyboard-operated disclosures/checkboxes, combined filters,
+  independent deselection, zero-match/clear-all, in-app Back, browser Back,
+  Edit Save/Cancel, Meals sub-pages, refresh, direct static deep links, and
+  logout/reset passed. Mobile labels/summaries meet 44px targets with no
+  horizontal document overflow. A changed Recipe reloaded with its new title;
+  a deleted Recipe did not return; removed lookup selections were pruned.
+  Only isolated synthetic transport/data was used, not production owner data.
+- **Boundaries:** Acceptance Workbook, historical Phase 1 acceptance, formal
+  requirements DOCX, database/migrations, Supabase/RLS/policies/grants/Auth,
+  and Activity Planner are unchanged. Only CR-3 and CR-8 were implemented;
+  CR-2 acceptance and its failed-UAT/refresh history are preserved above.
+- **Owner UAT:** Pending the five approved checks: multi-select filtering;
+  combined filters; clear/zero-match; Detail navigation preservation; mobile
+  plus Edit navigation. No additional owner scenarios are required.
