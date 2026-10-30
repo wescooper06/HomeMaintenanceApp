@@ -45,7 +45,7 @@ function harness(service = {}) {
     window: { addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: (key) => listeners.delete(key) },
   };
   const components = vm.runInNewContext(`(() => { ${compiled}; return {
-    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification
+    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification, instructionLines
   }; })()`, context);
   return { ...components, navigations, listeners, blocker, shouldBlock: () => blocking(),
     render(Component, props) {
@@ -67,6 +67,73 @@ function labeledInput(tree, label) {
 }
 const change = (node, value) => node.props.onChange({ target: { value } });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+const instructionCases = [
+  { raw: "", expected: [] },
+  { raw: " \t\r\n\u00a0\r \n", expected: [] },
+  { raw: "Mix.", expected: ["Mix."] },
+  { raw: "\n  Mix. \r\n\r\n\tBake.\t\r \rCool.\n\n", expected: ["  Mix. ", "\tBake.\t", "Cool."] },
+  { raw: "Mix\nMix", expected: ["Mix", "Mix"] },
+  { raw: "1. Mix\n2. Bake\n3. Cool", expected: ["1. Mix", "2. Bake", "3. Cool"] },
+  { raw: "2 eggs\n350 F for 20 minutes\n1/2 cup\n3) Serve", expected: ["2 eggs", "350 F for 20 minutes", "1/2 cup", "3) Serve"] },
+  { raw: "<script>alert(1)</script>\n<img src=x onerror=alert(1)>",
+    expected: ["<script>alert(1)</script>", "<img src=x onerror=alert(1)>"] },
+];
+
+test("Instructions display lines ignore blanks, preserve content and numeric prefixes, and support LF/CRLF/CR", () => {
+  const h = harness();
+  for (const { raw, expected } of instructionCases) {
+    assert.deepEqual(Array.from(h.instructionLines(raw)), expected);
+  }
+});
+
+test("Recipe Detail renders semantic numbered Instructions or the explicit empty state without changing the Recipe", async () => {
+  for (const { raw, expected } of instructionCases) {
+    const recipe = { ...initial(), title: "Instructions Recipe", instructions: raw };
+    const before = structuredClone(recipe);
+    const h = harness({ get: async () => recipe,
+      categories: { list: async () => [] }, cuisines: { list: async () => [] } });
+    h.render(h.RecipeDetail);
+    await flush();
+    const tree = h.render(h.RecipeDetail);
+    const list = nodes(tree).find((node) => node.type === "ol");
+    const heading = nodes(tree).find((node) => node.type === "h3" && text(node) === "Instructions");
+    assert(heading);
+    assert.equal(nodes(tree).filter((node) => node.type === "ol").length, expected.length ? 1 : 0);
+    if (expected.length) {
+      assert.deepEqual(list.children.map((node) => node.type), expected.map(() => "li"));
+      assert.deepEqual(list.children.map(text), expected);
+      assert(list.children.every((node) => typeof node.children[0] === "string"));
+      assert(list.children.every((node) => !node.props.dangerouslySetInnerHTML));
+      assert(nodes(tree).indexOf(list) > nodes(tree).indexOf(heading));
+      assert.doesNotMatch(text(tree), /No instructions provided/);
+    } else {
+      assert(nodes(tree).some((node) => node.type === "p" && text(node) === "No instructions provided."));
+    }
+    assert.deepEqual(recipe, before);
+  }
+});
+
+test("Edit Recipe keeps raw Instructions including blank lines, whitespace and numeric prefixes through Save", async () => {
+  const raw = "\r\n  1. Mix. \r\n\r\n2. Bake at 350 F.\r3) Cool.\n\n";
+  let submitted;
+  const h = harness({ update: async (id, draft) => {
+    assert.equal(id, props.initial.id);
+    submitted = structuredClone(draft);
+    return draft;
+  } });
+  const props = { initial: { ...initial(), title: "Existing Recipe", instructions: raw },
+    categories: [], cuisines: [], edit: true };
+  let tree = h.render(h.EditorForm, props);
+  const instructions = labeledInput(tree, "Instructions");
+  assert.equal(instructions.type, "textarea");
+  assert.equal(instructions.props.value, raw);
+  change(labeledInput(tree, "Title"), "Changed title");
+  tree = h.render(h.EditorForm, props);
+  await nodes(tree).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
+  assert.equal(submitted.instructions, raw);
+  assert.equal(props.initial.instructions, raw);
+});
 
 function classificationEditor(kind, methods) {
   const label = kind === "categories" ? "Category" : "Cuisine";
