@@ -1156,3 +1156,323 @@ source/evidence commit, not a separate documentation-only commit.
 - **Owner UAT pending:** Four approved checks only: normal multiline paste;
   paste into existing text; typing/existing-data preservation; mobile plus
   Save/Edit round-trip.
+
+## Recipe Core R1 - CR-1 owner acceptance
+
+CR-1 OWNER UAT
+
+1. Normal multiline paste: PASS
+2. Paste into existing text: PASS
+3. Typing and existing-data preservation: PASS
+4. Mobile + Save/Edit round-trip: PASS
+
+Overall: PASS
+
+Notes: None
+
+Final CR-1 disposition: **Accepted and complete.**
+
+Source commit: `3cfb3931fac49197a019d42f0d242a5fd9a1c833`.
+Pages release commit: `44deb0666df1e4f881d7a554c5ec0ffc70be78b6`.
+Recorded 2026-10-30. This supersedes the pending owner-UAT disposition above,
+preserving all prior technical evidence. No separate CR-1 documentation-only
+commit is authorized or created.
+
+## Recipe Core R1 - CR-7 Source page-title investigation
+
+**Status: Investigation complete; not implemented, deployed, or accepted.**
+Recorded 2026-10-30. Only this findings register is changed. CR-4 remains
+paused at its separate real-PostgreSQL validation gate.
+
+### Current implementation and trust boundaries
+
+- Source is `public.meals_recipes.source`, a non-null text column defaulting
+  to the empty string. `recipeService.recipeValues` copies it verbatim.
+  The Source editor directly updates the draft; no title or normalized URL
+  is stored. Existing Source remains unchanged through unrelated saves.
+- Recipe Detail's `Source` component calls `recipeSourceUrl`: `new URL`
+  accepts HTTP/HTTPS and returns its normalized href. The visible label is
+  the original Source text. Thus storage is unchanged, although the browser
+  link representation can be normalized. Links open in a new tab with
+  `noopener noreferrer`; non-URL Source is React plain text.
+- This is a safe-link protocol check, NOT an outbound-fetch safety check.
+  It does not exclude private destinations, credentials or unusual ports.
+  No Recipe title lookup currently occurs.
+- The entire `src/utils/resolveLinkTitle.js` was reviewed. Its caller is
+  Trips `ViewTripModal`, through `TripDetailsPanel`, not Recipe Core.
+  A separate same-named implementation exists in `plannerService.js`;
+  it is not the shared utility and is also unsuitable for blind reuse.
+  Neither unrelated implementation is changed by this investigation.
+
+### Existing title utility mechanism classification
+
+| Mechanism | Classification | CR-7 conclusion |
+|---|---|---|
+| Original-URL fallback and plain-text React label | A - acceptable concept | Preserve original destination; never render returned HTML. |
+| In-memory positive cache | A - acceptable concept, implementation needs limits | Existing unbounded module Map has no TTL or logout scoping. |
+| YouTube-specific canonicalization/oEmbed | B - unsuitable for arbitrary Sources; C - opt-in/provider review | Provider integration is not general HTML title retrieval. Never canonicalize the displayed Source destination. |
+| noembed and r.jina.ai proxy | C - owner privacy decision required | Disclose destination URLs to extra parties; not recommended for this wave. |
+| JSONP script injection | D - replace/do not reuse | Executes third-party script in the application context. |
+| Direct arbitrary browser fetch | B - unsuitable | CORS, opaque responses and mixed-content restrictions prevent reliable reads. |
+| URL safety and request limiting implementation | D - replace for any server resolver | Hostname/query regexes are not SSRF controls; no DNS/connect-address or redirect enforcement, streamed byte cap or overall deadline. |
+
+The utility rejects several obvious local/credential-like URLs but does not
+resolve DNS, constrain ports or validate redirect destinations. Individual
+fetch attempts use 8-second timeouts; sequential fallbacks have no overall
+deadline. JSONP has its own 6-second timer. The caller ignores late results on
+unmount but does not pass its abort signal into the resolver. Returned title
+text is parsed/decoded, and the original URL is returned with the title.
+These browser assumptions must not be copied into an authenticated server
+fetcher. No production Recipe Source was passed to any resolver.
+
+### Browser-only feasibility evidence
+
+Controlled browser probes ran from the live application's HTTPS origin,
+using public test URLs only, credentials omitted and no referrer:
+
+- Normal fetch of `https://example.com/` failed with an explicit browser CORS
+  error (no Access-Control-Allow-Origin).
+- The same URL with `no-cors` returned an opaque response: status 0 and
+  unreadable/empty body. It cannot supply a title.
+- `https://httpbingo.org/html` returned readable CORS-enabled HTML, status
+  200, but no title. A same-origin public application index returned the
+  title "Life Manager"; neither proves arbitrary cross-origin access.
+- A public redirect to example.com failed at the destination's CORS check.
+  Manual redirect mode yielded an unreadable opaqueredirect response.
+  A redirect to the CORS-enabled public HTML page succeeded without a title.
+- A delayed public request aborted with TimeoutError using a 700ms deadline.
+- `http://example.com/` was blocked as mixed content from the HTTPS app.
+- Inert local HTML parsing decoded entities in
+  `Soup &amp; Bread &#8212; Test`; a missing title returned no result.
+
+**Reject browser-only arbitrary title retrieval.** No CORS bypass, JSONP,
+private Recipe URL, authenticated Recipe request or production data mutation
+was used. These are networking/parsing probes, not a CR-7 production prototype.
+
+### Backend capability and SSRF gate
+
+The repository is a Vite static application published to GitHub Pages.
+Its browser Supabase client, owner-auth controller and SQL/RPC patterns do
+not constitute a server-side HTML-fetch service. No local `supabase/functions`,
+Supabase CLI configuration, Edge invocation or established Edge deployment
+pattern was found. Remote function inventory was not queried; this finding
+does not assert that the remote project has no functions.
+
+CR-7 would introduce a new backend deployment surface. Official Supabase
+documentation describes authenticated Edge Functions, worker limits and
+outbound port restrictions, but does not establish a private-network egress
+boundary for this proposed feature. General Deno DNS/custom HTTP client APIs
+do not prove that the hosted runtime supports vetted DNS-to-socket pinning
+with correct original-host TLS SNI and certificate verification.
+
+Actual hosted-runtime enforceability is therefore **unverified**, not assumed
+safe or assumed absent. DNS prechecks followed by ordinary fetch can
+re-resolve and permit rebinding. A hostname regex or allowlist alone is not
+sufficient. Do not approve arbitrary server-side URL fetching at this gate.
+
+A future fetcher must demonstrably reject loopback, private, link-local,
+metadata, unspecified, multicast and other non-public IPv4/IPv6 destinations,
+including IPv4-mapped IPv6, CGNAT and mixed allowed/restricted DNS answers.
+It must validate DNS chains and enforce the approved connection address,
+not merely inspect the initial hostname. Apply equivalent checks to every
+redirect if redirects are ever enabled.
+
+### Recommendation, privacy and caching
+
+Keep the current raw clickable Source as the default. The least intrusive
+useful optional enhancement is an owner-triggered **Resolve page title**
+action, not automatic requests on Detail open or Source Save. Consider only
+explicitly reviewed public hosts with demonstrably safe egress. If the hosted
+runtime cannot establish that boundary, retain no title lookup, or separately
+review a provider-specific integration. Do not introduce a third-party proxy.
+
+Render Source immediately. A small adjacent status can say "Resolving title";
+do not block Detail or hide the link. On success replace only its visible
+label with a bounded, wrapping plain-text title. On failure retain the raw
+clickable Source and show "Title unavailable" with an explicit retry after
+cooldown. No-title/non-URL input does not become an error blocking the Recipe.
+Cancel work on unmount and ignore stale results after Source/Recipe changes.
+Never use an endpoint-returned URL as the link destination.
+
+Lookup discloses the requested URL (including its path/query) and resolver
+network metadata to the destination and potentially infrastructure logs.
+Authentication goes only to the application's endpoint. Never forward browser
+cookies, bearer/session tokens, authorization headers or referrers to the
+destination. Do not log full Source URLs or credential-bearing values.
+HTTPS-only lookup is recommended; an HTTP Source remains clickable but is
+not fetched or silently upgraded. This narrower lookup policy needs approval.
+
+Prefer authenticated-page-lifetime memory caching only: at most 50 successful
+titles, 15-minute TTL, clear on logout/unmount; a 30-second failed-attempt
+cooldown allows explicit retry. No browser persistent storage, Recipe title
+column, database cache or server cache. Cache hits need not trigger new
+destination requests. This is intentionally not a durable title guarantee.
+Per-isolate server memory cannot provide a reliable global rate limit.
+Propose 10 owner lookups/minute with one in flight; an enforceable shared or
+platform rate-limit mechanism must be verified before endpoint approval.
+Do not silently substitute a best-effort Map or introduce a database schema.
+
+### Proposed future contract and limits - not implemented
+
+- Proposed `POST /functions/v1/recipe-source-title`, body `{ "url": "..." }`.
+  One URL per request. Verify the user JWT AND exact designated-owner identity,
+  using the established owner identity contract. Auth alone is not owner
+  authorization. No service-role credentials or database writes are needed.
+- `200 { "status": "resolved", "title": "..." }`, or
+  `200 { "status": "unavailable", "reason": "..." }`. Reasons:
+  `not_allowed`, `no_title`, `timeout`, `too_large`, `not_html`, `upstream`.
+  Unavailability is explicit, never a success-shaped fabricated title.
+- Malformed request: 400; absent/invalid authentication: 401; non-owner: 403;
+  enforced rate limit: 429 with Retry-After; unavailable safety configuration:
+  503. All client outcomes retain the existing Source and usable Detail.
+- Lookup URLs: HTTPS on 443 only, maximum 2048 UTF-8 bytes; reject userinfo,
+  IP literals, local/special hostnames, other ports/schemes, credential/signed
+  query values and unreviewed host/path combinations. Use exact reviewed
+  hosts, not implicit arbitrary subdomains. Reject proxy/redirect endpoint
+  paths; sensitive path values still require owner caution. Remove fragments
+  from the fetch target only; never rewrite persisted Source or link href.
+- **Redirect limit: zero.** Treat every 3xx as unavailable without following
+  it. Supporting any redirects later requires a separate reviewed policy
+  with the same host/DNS/connect-address checks at every hop.
+- Total server deadline 5 seconds, including DNS, connect, headers and body;
+  client endpoint deadline 6 seconds with cancellation. Bound request JSON to
+  4 KiB, decompressed HTML to 512 KiB while streaming, response to 2 KiB,
+  and title to 300 Unicode code points. A Content-Length header alone is not
+  sufficient; abort oversized, slow or compressed expansion responses.
+- Accept `text/html` with absent/UTF-8 charset only for the first version;
+  reject other declared charsets/content types. Parse bounded HTML using a
+  non-executing parser, decode entities once, extract title as plain text,
+  normalize title whitespace/control characters and bound its length.
+  No JavaScript, subresource loading, JSONP or raw HTML insertion.
+
+### Likely future files and verification
+
+Existing files likely to change after approval:
+`src/pages/Meals/RecipeCore.jsx`, `src/pages/Meals/MealsPage.module.css`,
+`tests/meals-recipe-interaction.test.cjs`, and this register.
+Proposed new files: `src/services/recipeSourceTitleService.js`,
+`tests/meals-recipe-source-title.test.cjs`,
+`supabase/functions/recipe-source-title/index.ts`, its focused test file, and
+`supabase/config.toml` only if required by the approved deployment tooling.
+The existing Trips/Planner resolver is not a proposed dependency or change.
+
+Future automated cases:
+
+1. Approved HTTPS Source resolves a title.
+2. HTTP remains clickable but lookup is refused under the approved policy.
+3. Missing/blank title retains raw clickable fallback.
+4. DNS/connect/body timeout aborts and falls back.
+5. Public redirect is refused without a second request.
+6. Redirect to private/restricted destination makes no destination request.
+7. Localhost/private IPv4, alternate numeric forms, restricted DNS answers
+   and rebinding attempts are blocked at the connection boundary.
+8. Restricted IPv6, mapped IPv4 and mixed A/AAAA answers are blocked.
+9. Userinfo, credential-bearing/signed URLs and unusual ports are refused.
+10. Oversized/chunked/compressed responses abort within the streamed cap.
+11. Non-HTML/unsupported charset falls back.
+12. Malicious title markup/entities render only as bounded inert text.
+13. Original Source storage and link destination survive lookup unchanged.
+14. Non-URL Source stays plain text without a request.
+15. Unavailable/network/auth/rate-limit responses never break Detail;
+    stale results, cancellation, retry, cache expiry/logout and accessible
+    desktop/mobile wrapping behave predictably.
+16. CR-1/2/3/5/8 focused regressions remain passing.
+
+Also test exact-owner authorization, no credential/header forwarding, no
+sensitive URL logs, enforced shared rate limiting and zero subresource/script
+requests. Hosted-runtime egress tests are a release gate, not replaceable by
+mocked DNS alone.
+
+### Evidence references and disposition
+
+- [Browser fetch modes and opaque responses](https://developer.mozilla.org/en-US/docs/Web/API/Request/mode)
+- [Supabase Edge authentication](https://supabase.com/docs/guides/functions/auth)
+- [Supabase Edge architecture](https://supabase.com/docs/guides/functions/architecture)
+- [Supabase Edge limits](https://supabase.com/docs/guides/functions/limits)
+- [Deno runtime network permissions](https://docs.deno.com/runtime/fundamentals/security/)
+- [Deno DNS API](https://docs.deno.com/api/deno/network/#Deno.resolveDns)
+- [Deno HTTP client options](https://docs.deno.com/api/deno/fetch/#Deno.CreateHttpClientOptions)
+
+No endpoint, production prototype, infrastructure installation, secret,
+database/migration, RLS/policy/grant/Auth change or deployment was made.
+The Acceptance Workbook and Phase 1 acceptance remain untouched.
+No staging, commit or push is authorized. The unrelated
+`supabase/review/owner-auth-broker-cleanup.sql` remains excluded.
+Owner decision remains: keep current Source labels, or authorize a separately
+scoped owner-triggered reviewed-host feature and its privacy, HTTPS-only,
+new-backend and enforceable-egress/rate-limit prerequisites.
+
+## Recipe Core R1 - CR-7 owner disposition
+
+Recorded 2026-10-30.
+
+**CR-7: Deferred**
+
+Reason:
+Page-title resolution would require a new network/backend trust boundary and
+security controls disproportionate to the value of this personal-app
+enhancement.
+
+Current behavior retained:
+Recipe Source URLs remain clickable and display the stored Source URL.
+
+Possible future approach:
+Owner-triggered title resolution for a restricted set of reviewed hosts, if a
+safe backend pattern is established later.
+
+This owner disposition supersedes the pending decision above and preserves
+the investigation as history. CR-7 is not implemented or accepted. No
+application, database, workbook or deployment change accompanies this record.
+
+## Recipe Core R1 Refinement Closeout
+
+Recorded 2026-10-30. This is the current disposition summary; earlier
+proposals, pending-UAT statements and failed observations remain historical
+evidence, superseded by the final owner dispositions below. Detailed owner
+UAT records are not repeated.
+
+| Refinement | Final disposition | Retained behavior / boundary |
+|---|---|---|
+| CR-1 | Accepted and complete; owner Overall PASS | Ingredient paste removes blank/whitespace-only pasted lines, preserving typing, existing data, retained line text, order, duplicates and Save/Edit behavior. |
+| CR-2 | Accepted and complete; owner retest Overall PASS | Nonblank Instructions lines display as numbered steps; raw multiline persistence/Edit remains unchanged. Original failure and hard-refresh diagnosis remain historical evidence. |
+| CR-3 | Accepted and complete; owner Overall PASS | Multiple Categories/Cuisines: OR within each group; AND across search, Category, Cuisine and Favorites. |
+| CR-5 | Accepted and complete; owner Overall PASS | Referenced classification deletion is refused with a clear accessible explanation, preserving Recipe draft state. |
+| CR-8 | Accepted and complete; owner Overall PASS | Library criteria survive supported Meals/Detail/Edit navigation, not full refresh/logout. |
+| CR-6 | Deferred / Optional | Listing Recipes referencing a blocked classification is a nice-to-have, not required for current Recipe Core or CR-5 refusal behavior. |
+| CR-7 | Deferred - Investigation Complete, Not Implemented | Browser-only arbitrary titles are unreliable; existing title utility is unsuitable for general Recipe Sources. A new backend/network trust boundary is disproportionate to the enhancement's value. |
+| CR-4 | Paused - Not Implemented | Requires disposable real-PostgreSQL validation capability and separate authorization before resumption. |
+
+### Paused CR-4 validation boundary
+
+Atomic clearing of the current persisted Recipe's association plus
+Category/Cuisine deletion requires real PostgreSQL transaction, rollback,
+locking, race and multi-session concurrency validation. The current environment
+does not provide the required disposable tooling: `initdb`, `pg_ctl`,
+`postgres` and `psql`; `WORKBENCH_TEST_PG_BIN` is unavailable.
+PGlite is not sufficient proof of these concurrency requirements.
+
+No CR-4 application implementation, migration, database change, production
+operation, commit or deployment has been performed. Resume only when suitable
+disposable local PostgreSQL tooling is available and separately authorized.
+Do not weaken the future validation requirement to unblock CR-4.
+
+### Deferred CR-7 and cycle boundaries
+
+The existing CR-7 investigation remains the single investigation record.
+No established repository Edge Function deployment pattern was found;
+SSRF-safe arbitrary outbound retrieval was not demonstrated. Security/privacy
+complexity is disproportionate for this personal-app enhancement.
+Source remains stored unchanged; valid HTTP/HTTPS values remain clickable
+with the stored Source as the visible label, and non-URL values remain plain
+text. A possible future direction is owner-triggered resolution for reviewed
+hosts only after a safe backend pattern and egress controls are established.
+
+- Accepted Phase 1 Recipe Core baseline remains unchanged.
+- Historical Phase 1 Acceptance Workbook remains unchanged.
+- No database change is part of this closeout.
+- No deployment is required for this closeout.
+- Historical security-ledger reconciliation remains separate technical
+  governance work and does not reopen the accepted owner functional baseline.
+- Only this findings register is authorized for the closeout commit and push
+  to dev; source, tests, workbook, migrations, generated Pages assets and the
+  excluded cleanup SQL are not part of this change.
