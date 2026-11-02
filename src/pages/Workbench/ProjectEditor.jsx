@@ -42,13 +42,47 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
 
   useEffect(() => {
     const previous = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     closeButton.current?.focus();
-    return () => { previous?.focus(); };
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      previous?.focus();
+    };
   }, []);
 
   function close() {
     if (creating) navigate("/", { replace: true, state: { projectCreated: false } });
     else if (!busy && onClose) onClose();
+  }
+
+  function handleDialogKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusable = [...event.currentTarget.querySelectorAll(
+      'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+    )].filter((node) => !node.hidden && node.getAttribute("aria-hidden") !== "true" && node.getClientRects().length);
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = event.currentTarget.ownerDocument.activeElement;
+    const inside = event.currentTarget.contains(active);
+    if (event.shiftKey && (!inside || active === first)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (!inside || active === last)) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function change(key, value) {
@@ -128,22 +162,23 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
   }
 
   return (
-    <div className={creating ? styles.screen : styles.modal}
+    <div className={`${creating ? styles.screen : styles.modal} lm-overlay`}
+      onKeyDown={handleDialogKeyDown}
       onClick={(event) => { if (creating && event.target === event.currentTarget) close(); }}>
-      <div className={styles.modalCard} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className={`${styles.modalCard} lm-overlay-panel lm-bottom-sheet`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className={styles.modalHeader}>
           <h1 id={titleId}>{creating ? "Create Project" : deleteOnly ? "Delete Project" : `Edit Project Details (ID: ${project.id || "-"})`}</h1>
-          <button ref={closeButton} type="button" aria-label="Close" onClick={close}
+          <button ref={closeButton} className="lm-icon-button" type="button" aria-label="Close" onClick={close}
             disabled={busy || saving}>X</button>
         </div>
-        {(error || saveError) && <p role="alert">{error || saveError}</p>}
+        {(error || saveError) && <p className="lm-feedback lm-feedback--error" role="alert">{error || saveError}</p>}
         {confirmingDelete ? (
           <div role="alertdialog" aria-label="Confirm project deletion">
             <p>Permanently delete &quot;{project.title}&quot; (UUID: {project.id})?</p>
             <p>Modern Planner tasks, weekly records, and linked modern Parking records owned by this project will also be permanently deleted. This cannot be undone.</p>
             <button type="button" disabled={busy || saving}
               onClick={() => { if (deleteOnly) close(); else setConfirmingDelete(false); }}>Cancel</button>
-            <button type="button" className={styles.danger} disabled={busy || saving}
+            <button type="button" className={`${styles.danger} lm-button lm-button--danger`} disabled={busy || saving}
               onClick={() => void confirmDelete()}>Delete Project</button>
           </div>
         ) : <form onSubmit={(event) => void submit(event)}>
@@ -158,8 +193,8 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
               <button type="button" className={styles.danger} disabled={busy || saving}
                 onClick={() => setConfirmingDelete(true)}>Delete Project</button>
             )}
-            <button type="button" onClick={close} disabled={busy || saving}>Cancel</button>
-            <button className={styles.primary} type="submit" disabled={busy || saving}>
+            <button className="lm-button lm-button--secondary" type="button" onClick={close} disabled={busy || saving}>Cancel</button>
+            <button className={`${styles.primary} lm-button lm-button--primary`} type="submit" disabled={busy || saving}>
               {busy || saving ? "Saving..." : creating ? "Create Project" : "Save Changes"}
             </button>
           </div>

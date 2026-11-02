@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { loadDashboard } from "../../services/dashboardService.js";
 
 import styles from "./DashboardPage.module.css";
@@ -37,19 +38,17 @@ export default function DashboardPage() {
 
   return (
     <section className={styles.screen} aria-busy={!summary && !error}>
-      <header className={styles.header}>
-        <h1>Dashboard</h1>
-        <p className={styles.muted}>Overview of projects, curated tasks, and weekly plan progress.</p>
-      </header>
+      <PageHeader title="Dashboard"
+        subtitle="Overview of projects, curated tasks, and weekly plan progress." />
 
-      {error && <p role="alert">{error}</p>}
-      {!summary && !error && <p role="status">Loading dashboard...</p>}
+      {error && <p className="lm-feedback lm-feedback--error" role="alert">{error}</p>}
+      {!summary && !error && <p className="lm-loading-state" role="status">Loading dashboard...</p>}
 
       <section className={styles.grid} aria-label="Summary cards">
         <article className={styles.stat}>
           <p className={styles.statTitle}>Open Projects</p>
           <h2>{summary?.openProjects ?? "\u2014"}</h2>
-          <button type="button" className={styles.linkButton} onClick={viewProjects}>View Projects</button>
+          <button type="button" className={`${styles.linkButton} lm-button lm-button--secondary`} onClick={viewProjects}>View Projects</button>
         </article>
 
         <article className={styles.stat}>
@@ -60,7 +59,7 @@ export default function DashboardPage() {
         <article className={styles.stat}>
           <p className={styles.statTitle}>Tasks Scheduled This Week</p>
           <h2>{summary?.scheduledCount ?? "\u2014"}</h2>
-          <button type="button" className={styles.linkButton} onClick={viewWeeklyPlanner}>View Weekly Planner</button>
+          <button type="button" className={`${styles.linkButton} lm-button lm-button--secondary`} onClick={viewWeeklyPlanner}>View Weekly Planner</button>
         </article>
       </section>
 

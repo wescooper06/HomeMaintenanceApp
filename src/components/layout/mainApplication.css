@@ -1,11 +1,13 @@
+@import "./lifeManagerFoundation.css";
+
 html[data-vite-page="main"] {
-  --bg: #f6f8fb;
-  --surface: #ffffff;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --primary: #0f766e;
-  --border: #dbe3ec;
-  font: 16px "Segoe UI", Tahoma, sans-serif;
+  --bg: var(--lm-color-canvas);
+  --surface: var(--lm-color-surface);
+  --text: var(--lm-color-text);
+  --muted: var(--lm-color-text-secondary);
+  --primary: var(--lm-color-primary);
+  --border: var(--lm-color-border);
+  font: var(--lm-font-body)/var(--lm-line-body) var(--lm-font-family);
   letter-spacing: normal;
   color-scheme: light;
   font-synthesis: auto;
@@ -20,12 +22,18 @@ html[data-vite-page="main"] * {
 
 html[data-vite-page="main"] body {
   margin: 0;
-  font-family: "Segoe UI", Tahoma, sans-serif;
-  background: radial-gradient(circle at top right, #e8f8f6 0%, var(--bg) 50%);
+  font-family: var(--lm-font-family);
+  background: var(--lm-color-canvas);
   color: var(--text);
 }
 
 html[data-vite-page="main"] #root {
   min-height: 100vh;
-  padding: 1rem;
+  padding: var(--lm-space-4);
+}
+
+@media (max-width: 600px) {
+  html[data-vite-page="main"] #root {
+    padding: var(--lm-space-2);
+  }
 }

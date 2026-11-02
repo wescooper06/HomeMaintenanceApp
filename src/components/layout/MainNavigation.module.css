@@ -1,43 +1,64 @@
 .frame {
   box-sizing: border-box;
   width: 100%;
-  padding: 16px 16px 0;
+  padding: 0;
 }
 
 .hm-nav {
   box-sizing: border-box;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-start;
   align-items: stretch;
   width: 100%;
   min-width: 0;
-  gap: 8px;
-  margin-top: 12px;
-  font: 400 16px "Segoe UI", Tahoma, sans-serif;
-  line-height: normal;
+  gap: var(--lm-space-1, 4px);
+  overflow-x: auto;
+  padding: var(--lm-space-2, 8px) var(--lm-space-4, 16px);
+  background: var(--lm-color-navigation, #17324d);
+  font: 400 var(--lm-font-body, 1rem)/1.2 var(--lm-font-family, "Segoe UI", Tahoma, sans-serif);
   letter-spacing: normal;
   text-align: left;
-  color-scheme: light;
+  color-scheme: dark;
   font-synthesis: auto;
   text-rendering: auto;
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
+  scrollbar-width: thin;
 }
 
 .hm-nav a {
+  display: inline-flex;
+  min-height: var(--lm-control-desktop, 40px);
+  flex: 0 0 auto;
+  align-items: center;
   text-decoration: none;
   box-sizing: border-box;
-  color: #0f766e;
-  border: 1px solid #0f766e;
-  border-radius: 999px;
-  padding: 5.6px 12px;
-  font: 400 14.4px "Segoe UI", Tahoma, sans-serif;
-  line-height: normal;
-  letter-spacing: normal;
+  color: var(--lm-color-navigation-muted, #d0d5dd);
+  border: 1px solid transparent;
+  border-radius: var(--lm-radius-control, 6px);
+  padding: 0 var(--lm-space-3, 12px);
+  font: 600 var(--lm-font-secondary, 0.875rem)/1.2 var(--lm-font-family, "Segoe UI", Tahoma, sans-serif);
+}
+
+.hm-nav a:hover {
+  color: var(--lm-color-navigation-text, #f2f4f7);
+  background: var(--lm-color-navigation-hover, #244765);
 }
 
 .hm-nav a.active {
-  background: #0f766e;
-  color: #ffffff;
+  border-color: var(--lm-color-primary, #0f766e);
+  background: var(--lm-color-primary, #0f766e);
+  color: var(--lm-color-text-on-primary, #ffffff);
+}
+
+@media (max-width: 600px) {
+  .hm-nav {
+    padding-inline: var(--lm-space-2, 8px);
+  }
+
+  .hm-nav a {
+    min-height: var(--lm-control-mobile, 44px);
+    padding-inline: var(--lm-space-3, 12px);
+  }
 }
