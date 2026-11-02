@@ -2,6 +2,7 @@ import { ArrowLeft, ListOrdered } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import { assignTripToMonth, getTrips } from "../../services/tripsService.js";
 import { getTimeline, propagateTimelineYear } from "../../services/tripsTimelineService.js";
@@ -146,13 +147,11 @@ export default function TimelineView() {
 
   return (
     <main className="timeline-page">
-      <header className="timeline-page-header">
-        <div><p className="trip-eyebrow">Travel calendar</p><h1>Timeline</h1></div>
-        <div className="timeline-header-actions">
+      <PageHeader className="timeline-page-header" title="Timeline" eyebrow="Travel calendar"
+        actions={<div className="timeline-header-actions">
           <Link to="/prioritize" aria-disabled={moving || propagating} tabIndex={moving || propagating ? -1 : 0} onClick={(event) => { if (moving || propagating) event.preventDefault(); }}><ListOrdered size={16} aria-hidden="true" />Prioritize Trips</Link>
           <button type="button" disabled={moving || propagating} onClick={() => navigate(TRIPS_HOME_ROUTE)}><ArrowLeft size={16} aria-hidden="true" />Back to Trips</button>
-        </div>
-      </header>
+        </div>} />
       {loading && <p role="status">Loading timeline...</p>}
       {error && <div className="timeline-error" role="alert"><p>{error}</p>{!loaded && !loading && <button type="button" onClick={retryLoad}>Retry loading</button>}</div>}
       <span className="timeline-sr-only" aria-live="polite" aria-atomic="true">{collapseAnnouncement}</span>

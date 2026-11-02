@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import {
   getTrips,
@@ -69,7 +70,7 @@ export default function TripDetails() {
 
   return (
     <div className="page">
-      <h1>{trip.destination}</h1>
+      <PageHeader title={trip.destination} />
 
       <div className="card">
         <p>{trip.startDate} → {trip.endDate}</p>

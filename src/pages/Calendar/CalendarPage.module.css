@@ -2,8 +2,15 @@
   margin: 0;
 }
 
-.calendar-screen [data-main-nav] {
-  margin-bottom: 0.35rem;
+.calendar-screen {
+  margin-top: var(--lm-space-2);
+  padding: 15px 23px 1rem;
+}
+
+.calendar-controls {
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .calendar-status {
@@ -30,6 +37,13 @@
   display: inline-flex;
   gap: 0.45rem;
   align-items: center;
+}
+
+@media (max-width: 600px) {
+  .calendar-screen {
+    margin-top: 0;
+    padding: 7px 7px 1rem;
+  }
 }
 
 .calendar-controls button {

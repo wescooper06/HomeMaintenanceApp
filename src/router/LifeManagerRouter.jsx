@@ -22,7 +22,9 @@ export function LifeManagerRoutes() {
   if (route === "project-create") {
     return (
       <Suspense fallback={<p role="status">Loading project editor...</p>}>
-        <MainNavigation active="workbench" />
+        <div className={navigationStyles.frame}>
+          <MainNavigation active="workbench" />
+        </div>
         <ProjectEditor mode="create" />
       </Suspense>
     );

@@ -3,19 +3,15 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 100vh;
-  padding: 16px 20px;
+  height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px));
+  padding: 24px;
   background: #faf9f8;
   font-family: "Segoe UI", system-ui, sans-serif;
   color: #323130;
 }
 
-.toolbar {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
+.pageHeader {
+  margin-bottom: 12px;
 }
 
 .title {
@@ -103,6 +99,6 @@
 
 @media (max-width: 600px) {
   .page {
-    padding: 12px;
+    padding: 8px;
   }
 }

@@ -7,16 +7,18 @@
 .hm-nav {
   box-sizing: border-box;
   display: flex;
+  height: var(--lm-navigation-height, 56px);
+  flex: 0 0 var(--lm-navigation-height, 56px);
   flex-wrap: nowrap;
   justify-content: flex-start;
-  align-items: stretch;
+  align-items: center;
   width: 100%;
   min-width: 0;
   gap: var(--lm-space-1, 4px);
   overflow-x: auto;
   padding: var(--lm-space-2, 8px) var(--lm-space-4, 16px);
   background: var(--lm-color-navigation, #17324d);
-  font: 400 var(--lm-font-body, 1rem)/1.2 var(--lm-font-family, "Segoe UI", Tahoma, sans-serif);
+  font: 400 16px/1.2 var(--lm-font-family, "Segoe UI", Tahoma, sans-serif);
   letter-spacing: normal;
   text-align: left;
   color-scheme: dark;
@@ -38,7 +40,7 @@
   border: 1px solid transparent;
   border-radius: var(--lm-radius-control, 6px);
   padding: 0 var(--lm-space-3, 12px);
-  font: 600 var(--lm-font-secondary, 0.875rem)/1.2 var(--lm-font-family, "Segoe UI", Tahoma, sans-serif);
+  font: 600 14px/1.2 var(--lm-font-family, "Segoe UI", Tahoma, sans-serif);
 }
 
 .hm-nav a:hover {

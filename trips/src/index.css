@@ -232,7 +232,7 @@ body {
   box-sizing: border-box;
   width: 100%;
   max-width: none;
-  padding: 24px;
+  padding: 23px;
   margin: 0;
   color: #19353d;
   background: #fff;
@@ -241,6 +241,11 @@ body {
   text-align: left;
   letter-spacing: 0;
   color-scheme: light;
+}
+
+.new-trip-page {
+  box-sizing: border-box;
+  padding: 24px;
 }
 
 .trips-backlog-header,
@@ -253,9 +258,9 @@ body {
   gap: 16px;
 }
 
-.trips-backlog-header { border-bottom: 1px solid #c7d9da; padding-bottom: 16px; margin-bottom: 16px; }
-.trips-backlog h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: 0; color: #19353d; }
-.trips-backlog-header p, .trip-card-summary, .trip-card-notes, .trips-empty { font-size: 13px; color: #5e7880; }
+.trips-backlog-header { border-bottom: 1px solid #c7d9da; padding-bottom: 16px; margin-bottom: 24px; }
+.trips-backlog h1:not(.lm-page-title) { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: 0; color: #19353d; }
+.trips-backlog-header p:not(.lm-page-subtitle), .trip-card-summary, .trip-card-notes, .trips-empty { font-size: 13px; color: #5e7880; }
 .trips-backlog-header button { color: #d94d3d; background: transparent; border: 0; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; }
 .trips-header-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
 .trips-backlog-header:has(.trips-header-actions) { flex-wrap: wrap; }
@@ -310,6 +315,11 @@ body {
 .trip-filter-inputs input, .trip-filter-inputs select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid #c7d9da; border-radius: 4px; background: #fff; color: #19353d; font: inherit; font-size: 14px; font-weight: 400; }
 .trips-filter-toolbar :is(input, select, button):focus-visible { outline: 2px solid #00847e; outline-offset: 3px; }
 @media (max-width: 640px) { .trip-filter-inputs { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) {
+  html[data-vite-page="trips"] #root {
+    padding: var(--lm-root-padding, 8px);
+  }
+}
 
 .view-trip-card {
   box-sizing: border-box;
@@ -370,9 +380,10 @@ body {
 .capture-error { margin: 0 0 10px; }
 
 @media (max-width: 480px) {
-  .trips-backlog { margin: 0; padding: 16px; }
+  .new-trip-page { padding: 8px; }
+  .trips-backlog { margin: 0; padding: 7px; }
   .trips-backlog-header { gap: 8px; }
-  .trips-backlog h1 { font-size: 18px; }
+  .trips-backlog h1:not(.lm-page-title) { font-size: 18px; }
   .capture-trip { padding: 12px; }
   .capture-card { padding: 16px; }
   .trip-status { padding: 4px 8px; }
@@ -385,9 +396,9 @@ body {
 
 .trip-priority-badge { display: inline-flex; align-items: center; color: #374151; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .trip-modal-badges { display: grid; gap: 8px; justify-items: end; }
-.prioritize-page { box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: none; height: 100dvh; min-height: 0; margin: 0; padding: 16px; overflow: hidden; background: #f4f6f5; color: #19353d; color-scheme: light; text-align: left; letter-spacing: 0; }
-.prioritize-header { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; gap: 16px; margin: 0; }
-.prioritize-header h1 { margin: 6px 0 0; font-size: 28px; font-weight: 700; color: #19353d; letter-spacing: 0; }
+.prioritize-page { box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: none; height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px)); min-height: 0; margin: 0; padding: 24px; overflow: hidden; background: #f4f6f5; color: #19353d; color-scheme: light; text-align: left; letter-spacing: 0; }
+.prioritize-header { flex-shrink: 0; margin-bottom: 12px; }
+.prioritize-header h1:not(.lm-page-title) { margin: 6px 0 0; font-size: 28px; font-weight: 700; color: #19353d; letter-spacing: 0; }
 .prioritize-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: #5e7880; }
 .prioritize-header button, .prioritize-header a, .priority-error button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; border: 1px solid #b8cdca; border-radius: 4px; background: #fff; color: #19353d; font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
 .prioritize-header button:disabled, .prioritize-header a[aria-disabled="true"] { opacity: 0.5; cursor: wait; }
@@ -411,12 +422,13 @@ body {
 .priority-error { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 16px; margin: 0; padding: 12px; border: 1px solid #e4b8b1; background: #fff4f1; color: #ad3425; font-size: 14px; }
 .prioritize-page :is(button, a):focus-visible { outline: 2px solid #00847e; outline-offset: 3px; }
 @media (max-width: 900px) { .prioritize-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 480px) { .prioritize-page { padding: 16px; } .prioritize-header { align-items: flex-start; flex-direction: column; } .prioritize-header h1 { font-size: 24px; } }
+@media (max-width: 480px) { .prioritize-page { padding: 8px; } .prioritize-header { align-items: flex-start; flex-direction: column; } .prioritize-header h1:not(.lm-page-title) { font-size: 24px; } }
 
 html[data-vite-page="trips"] #root {
   width: 100%;
   max-width: none;
   margin: 0;
+  padding: var(--lm-root-padding, 16px);
   text-align: center;
   min-height: 100svh;
   display: flex;
@@ -424,14 +436,14 @@ html[data-vite-page="trips"] #root {
   box-sizing: border-box;
 }
 
-html[data-vite-page="trips"] h1,
+html[data-vite-page="trips"] h1:not(.lm-page-title),
 html[data-vite-page="trips"] h2 {
   font-family: var(--heading);
   font-weight: 500;
   color: var(--text-h);
 }
 
-html[data-vite-page="trips"] h1 {
+html[data-vite-page="trips"] h1:not(.lm-page-title) {
   font-size: 56px;
   letter-spacing: -1.68px;
   margin: 32px 0;

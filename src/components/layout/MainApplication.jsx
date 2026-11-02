@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 
 import MainNavigation from "./MainNavigation.jsx";
+import styles from "./MainNavigation.module.css";
 
 const pages = {
   planner: lazy(() => import("../../pages/Planner/PlannerPage.jsx")),
@@ -13,15 +14,14 @@ const pages = {
 
 export default function MainApplication({ route }) {
   const Page = pages[route];
-  const navigation = <MainNavigation active={route} />;
   return (
-    <Suspense fallback={<p role="status">Loading {route}...</p>}>
-      {route === "planner" ? <Page navigation={navigation} /> : (
-        <>
-          {navigation}
-          <Page />
-        </>
-      )}
-    </Suspense>
+    <>
+      <div className={styles.frame}>
+        <MainNavigation active={route} />
+      </div>
+      <Suspense fallback={<p role="status">Loading {route}...</p>}>
+        <Page />
+      </Suspense>
+    </>
   );
 }

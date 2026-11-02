@@ -10,14 +10,39 @@ import styles from "./WorkbenchPage.module.css";
 const EMPTY_OPTIONS = { source: [], category: [], projectState: [] };
 const INITIAL_FILTERS = { search: "", source: [], category: [], projectState: [], projectSort: "order" };
 
-function MultiSelect({ label, allLabel, options, selected, onChange }) {
+function MultiSelect({ label, allLabel, options, selected, onChange, open, onToggle, setOpenFilter }) {
+  const details = useRef(null);
+  const summaryElement = useRef(null);
   const summary = selected.length === options.length ? allLabel
     : selected.length <= 2 ? selected.join(", ") : `${selected.length} selected`;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function dismissOutside(event) {
+      if (!details.current?.contains(event.target)) setOpenFilter(null);
+    }
+    function dismissEscape(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpenFilter(null);
+      summaryElement.current?.focus();
+    }
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("keydown", dismissEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("keydown", dismissEscape);
+    };
+  }, [open, setOpenFilter]);
+
   return (
     <div className={styles.filterField}>
       <span>{label}</span>
-      <details className={styles.multiSelect}>
-        <summary>{summary || allLabel}</summary>
+      <details ref={details} className={styles.multiSelect} open={open}>
+        <summary ref={summaryElement} aria-expanded={open}
+          onClick={(event) => { event.preventDefault(); onToggle(); }}>
+          {summary || allLabel}
+        </summary>
         <div className={styles.multiSelectOptions} role="group" aria-label={`Filter projects by ${label.toLowerCase()}`}>
           {options.map((value) => (
             <label key={value}>
@@ -37,6 +62,7 @@ export default function WorkbenchPage() {
   const navigate = useNavigate();
   const [data, setData] = useState({ projects: [], tasks: [] });
   const [filters, setFilters] = useState(INITIAL_FILTERS);
+  const [openFilter, setOpenFilter] = useState(null);
   const [options, setOptions] = useState(EMPTY_OPTIONS);
   const known = useRef(EMPTY_OPTIONS);
   const mounted = useRef(false);
@@ -157,6 +183,10 @@ export default function WorkbenchPage() {
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
+  function toggleFilter(key) {
+    setOpenFilter((current) => current === key ? null : key);
+  }
+
   async function deleteProject(project) {
     if (operation.current) throw new Error("Another Workbench action is in progress.");
     operation.current = true;
@@ -211,7 +241,9 @@ export default function WorkbenchPage() {
           <div className={styles.filterBar}>
             <label>Search<input type="search" placeholder="Search projects" aria-label="Search projects" value={filters.search} onChange={(event) => changeFilter("search", event.target.value)} /></label>
             {[["source", "Source", "All sources"], ["category", "Category", "All categories"], ["projectState", "State", "All states"]].map(([key, label, allLabel]) => (
-              <MultiSelect key={key} label={label} allLabel={allLabel} options={options[key]} selected={filters[key]} onChange={(value) => changeFilter(key, value)} />
+              <MultiSelect key={key} label={label} allLabel={allLabel} options={options[key]} selected={filters[key]}
+                onChange={(value) => changeFilter(key, value)} open={openFilter === key} onToggle={() => toggleFilter(key)}
+                setOpenFilter={setOpenFilter} />
             ))}
             <label>Sort By<select aria-label="Sort projects" value={filters.projectSort} onChange={(event) => changeFilter("projectSort", event.target.value)}>
               <option value="order">Order</option><option value="priority">Priority</option><option value="category">Category</option>

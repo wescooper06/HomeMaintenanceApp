@@ -8,12 +8,11 @@ import { usePlanner } from "./components/usePlanner.js";
 import WeeklyGrid from "./components/WeeklyGrid.jsx";
 import styles from "./PlannerPage.module.css";
 
-function PlannerScreen({ navigation }) {
+function PlannerScreen() {
   const { snapshot } = usePlanner();
   return (
     <DragDropLayer>
-      <section className={`${styles["planner-screen"]} ${styles["hm-card"]}`} aria-busy={snapshot.backupBusy || snapshot.reminderBusy || snapshot.restoreBusy}>
-        <div data-main-nav>{navigation}</div>
+      <section className={`${styles.plannerScreen} hm-card`} aria-busy={snapshot.backupBusy || snapshot.reminderBusy || snapshot.restoreBusy}>
         <PlannerHeader />
         <div inert={snapshot.backupBusy || snapshot.backupReloadRequired || Boolean(snapshot.restoreProposal)}>
           <PlannerSidebar />
@@ -25,10 +24,10 @@ function PlannerScreen({ navigation }) {
   );
 }
 
-export default function PlannerPage({ navigation = null }) {
+export default function PlannerPage() {
   return (
     <PlannerProvider>
-      <PlannerScreen navigation={navigation} />
+      <PlannerScreen />
     </PlannerProvider>
   );
 }

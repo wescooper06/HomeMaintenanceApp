@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { newRecipeFilters } from "../../services/recipeService.js";
 
 import styles from "./MealsPage.module.css";
@@ -26,10 +27,7 @@ export default function MealsPage() {
   }
   return (
     <main className={styles.meals}>
-      <header>
-        <h1>Meals</h1>
-        <p>Recipes and Shopping</p>
-      </header>
+      <PageHeader title="Meals" subtitle="Recipes and Shopping" />
       <nav className={styles.navigation} aria-label="Meals navigation">
         <NavLink to="/meals/recipes" className={({ isActive }) => isActive ? styles.active : undefined}>
           Recipes

@@ -27,13 +27,7 @@ html[data-vite-page="main"] body {
   color: var(--text);
 }
 
-html[data-vite-page="main"] #root {
+html[data-vite-page] #root {
   min-height: 100vh;
-  padding: var(--lm-space-4);
-}
-
-@media (max-width: 600px) {
-  html[data-vite-page="main"] #root {
-    padding: var(--lm-space-2);
-  }
+  padding: var(--lm-root-padding);
 }
