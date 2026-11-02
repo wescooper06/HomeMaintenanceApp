@@ -243,10 +243,11 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
     target(event, key) { event.preventDefault(); event.stopPropagation(); targets.push(key); },
     end: () => { ended += 1; }, leave() {},
   };
+  const MealRow = () => {};
   const DaySlot = vm.runInNewContext(`(() => { ${code}; return DaySlot; })()`, {
     element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity) }),
     usePlanner: () => ({ actions: { dropOnSlot: (...args) => dropOnSlot(...args) } }),
-    usePlannerDrag: () => drag, WeeklyTaskCard: () => {}, MealRow: () => {}, styles: new Proxy({}, { get: (_, key) => key }),
+    usePlannerDrag: () => drag, WeeklyTaskCard: () => {}, MealRow, styles: new Proxy({}, { get: (_, key) => key }),
     console: { warn: (...args) => warnings.push(args) },
   });
   const props = { day: "mon", date: "2026-10-19", slot: "morning", label: "Morning", tasks: [{ id: "A" }] };
@@ -254,8 +255,11 @@ test("weekly drop targets detect before/after/end and isolate checklist drags", 
     clientY, currentTarget: { getBoundingClientRect: () => ({ top: 100, height: 100 }) },
     preventDefault() {}, stopPropagation() {},
   });
-  const taskList = (node) => node.children.find((child) => child?.props?.className === "slot-task-list");
+  const taskList = (node) => [node, ...node.children.flatMap((child) => child && typeof child === "object" ? [child, ...child.children.flat(Infinity)] : [])]
+    .find((child) => child?.props?.className === "slot-task-list");
   let tree = DaySlot(props);
+  assert.equal(tree.children.find((child) => child?.type === "section" && child.props.className === "slot-task-region").props["aria-label"], "Morning tasks");
+  assert(tree.children.some((child) => child?.type === MealRow));
   let card = taskList(tree).children[0];
   card.props.onDragOver(event(110));
   assert.equal(targets.at(-1), "slot:2026-10-19:morning:before:A");

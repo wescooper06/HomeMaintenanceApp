@@ -21,7 +21,7 @@ test.before(async () => {
 });
 const nodes = (t) => !t || typeof t !== "object" ? [] : [t, ...t.children.flatMap(nodes)];
 const text = (t) => typeof t === "object" ? t.children.map(text).join("") : String(t);
-const button = (t, label) => nodes(t).find((n) => n.type === "button" && text(n) === label);
+const button = (t, label) => nodes(t).find((n) => n.type === "button" && (text(n) === label || n.props["aria-label"] === label));
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 function harness(source, extra = {}) {
   const slots = [], effects = [];
@@ -41,6 +41,7 @@ function harness(source, extra = {}) {
         effects.push(() => { slots[i]?.cleanup?.(); slots[i] = { dependencies, cleanup: effect() }; });
       } },
     toDateKey: () => "2026-10-30",
+    formatDateLabel: () => "Oct 30",
     validMealDate: (v) => /^\d{4}-\d{2}-\d{2}$/.test(v),
     mealPeriods: { morning: "breakfast", afternoon: "lunch", evening: "dinner" },
     ...extra,
@@ -98,25 +99,82 @@ test("WP-FUNC-006/007/008/011/012, WP-UI-004/VAL-001: direct choice, title-only 
   await nodes(t).find((n) => n.type === "form").props.onSubmit({ preventDefault() {} });
   assert.equal(added[0].display_text, "  Custom meal  "); assert.equal(added[0].recipe_id, null);
 });
-test("WP-UI-001/002/003, WP-FUNC-001/002/003/004/010, PM-FUNC-001 through 007: meal rows/actions separate from tasks", async () => {
+test("Planner meal rows compactly group multiple meals and expose labeled add, edit, recipe and remove actions", async () => {
+  const recipeId = randomUUID();
   let state = { entries: [{ id: "entry", meal_date: "2026-10-30", meal_type: "dinner", recipe_id: null, display_text: "Meal" }],
-    recipes: [], loaded: true, error: "", setState(fn) { state = { ...state, ...fn(state) }; }, setMessage() {}, setAdding() {} };
+    recipes: [{ id: recipeId, title: "Recipe" }], loaded: true, error: "",
+    setState(fn) { state = { ...state, ...fn(state) }; }, setMessage() {}, setAdding() {} };
   const calls = [];
-  const h = harness(rowsCode, { names: "MealRow,MealOccurrence,MealPlannerProvider", mealState: state,
+  const h = harness(rowsCode, { names: "MealRow,MealOccurrence,MealPlannerProvider,MealTextEditDialog", mealState: state,
     createRecipeService: () => ({}), createMealPlannerService: () => ({
       edit: async (e, value) => { calls.push(["edit", value]); return { ...e, display_text: value }; },
       remove: async () => { calls.push(["remove"]); },
     }) });
   let t = h.render(h.MealRow, { date: "2026-10-30", slot: "morning" });
-  assert(text(t).includes("Breakfast")); assert(text(t).includes("No meals planned")); assert(button(t, "Add meal"));
-  const props = { entry: state.entries[0], title: "Meal" };
-  t = h.render(h.MealOccurrence, props); button(t, "Meal").props.onClick(); t = h.render(h.MealOccurrence, props);
-  button(t, "Edit meal").props.onClick(); t = h.render(h.MealOccurrence, props);
-  nodes(t).find((n) => n.type === "textarea").props.onChange({ target: { value: "Edited" } });
-  t = h.render(h.MealOccurrence, props); await button(t, "Save meal text").props.onClick();
+  assert(text(t).includes("Breakfast")); assert(text(t).includes("No meals planned"));
+  assert.equal(button(t, "Add breakfast for Oct 30").props["aria-label"], "Add breakfast for Oct 30");
+  assert.equal(t.props["aria-label"], "Breakfast 2026-10-30");
+  state.entries = [
+    { id: "entry", meal_date: "2026-10-30", meal_type: "breakfast", recipe_id: null, display_text: "Free-text meal" },
+    { id: "recipe-entry", meal_date: "2026-10-30", meal_type: "breakfast", recipe_id: recipeId, display_text: "" },
+  ];
+  t = h.render(h.MealRow, { date: "2026-10-30", slot: "morning" });
+  assert.equal(nodes(t).filter((node) => node.type === "ul").length, 1, "all meals share one semantic meal region");
+  assert.equal(nodes(t).filter((node) => node.type === h.MealOccurrence).length, 2);
+  const recipeNode = nodes(t).find((node) => node.type === h.MealOccurrence && node.props.entry.id === "recipe-entry");
+  assert.equal(recipeNode.props.title, "Recipe");
+  const recipeEntry = state.entries[1];
+  const props = { entry: state.entries[0], title: "Free-text meal" };
+  t = h.render(h.MealOccurrence, props);
+  assert.equal(button(t, "Edit Free-text meal").children[0], "\u270e");
+  assert.equal(button(t, "Remove Free-text meal").children[0], "\u00d7");
+  assert.equal(nodes(t).some((node) => node.type === "link"), false);
+  button(t, "Edit Free-text meal").props.onClick();
+  t = h.render(h.MealOccurrence, props);
+  const editNode = nodes(t).find((node) => node.type === h.MealTextEditDialog);
+  assert(editNode);
+  let closed = 0, saved = [];
+  const dialogHarness = harness(rowsCode, { names: "MealTextEditDialog", mealState: state,
+    createRecipeService: () => ({}), createMealPlannerService: () => ({
+      edit: async (entry, value) => { calls.push(["edit", value]); return { ...entry, display_text: value }; },
+      remove: async () => {},
+    }) });
+  const dialogProps = { ...editNode.props, onClose: () => { closed++; }, onSaved: (entry) => saved.push(entry) };
+  let dialog = dialogHarness.render(dialogHarness.MealTextEditDialog, dialogProps);
+  assert.equal(dialog.type, "dialog");
+  assert.equal(dialog.props["aria-labelledby"], "edit-meal-title-entry");
+  nodes(dialog).find((node) => node.type === "textarea").props.onChange({ target: { value: "Edited" } });
+  dialog = dialogHarness.render(dialogHarness.MealTextEditDialog, dialogProps);
+  await nodes(dialog).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
   assert.equal(calls[0][1], "Edited");
-  t = h.render(h.MealOccurrence, props); await button(t, "Remove meal").props.onClick();
+  assert.equal(saved[0].display_text, "Edited");
+  assert.equal(closed, 1, "successful edit closes the modal");
+  await button(t, "Remove Free-text meal").props.onClick();
   assert.equal(calls[1][0], "remove");
+  const recipeOccurrence = h.render(h.MealOccurrence, { entry: recipeEntry, title: "Recipe" });
+  assert(nodes(recipeOccurrence).some((node) => node.type === "link" && node.props.to === `/meals/recipes/${recipeId}`));
+  assert.equal(button(recipeOccurrence, "Edit Recipe"), undefined);
+  assert(button(recipeOccurrence, "Remove Recipe"), "Recipe occurrence remains removable without deleting the Recipe");
+});
+test("Planner meal edit keeps failed persistence open with the entered text and lets Escape cancel", async () => {
+  const failed = new Error("Edit meal was not confirmed.");
+  let closed = 0, persisted = 0;
+  const h = harness(rowsCode, { names: "MealTextEditDialog", createRecipeService: () => ({}), createMealPlannerService: () => ({
+    edit: async () => { persisted++; throw failed; },
+  }) });
+  const props = { entry: { id: "entry", display_text: "Original" }, title: "Dinner",
+    onSave: () => { persisted++; throw failed; }, onClose: () => { closed++; }, onSaved() {} };
+  let dialog = h.render(h.MealTextEditDialog, props);
+  nodes(dialog).find((node) => node.type === "textarea").props.onChange({ target: { value: "Attempted change" } });
+  dialog = h.render(h.MealTextEditDialog, props);
+  await nodes(dialog).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
+  dialog = h.render(h.MealTextEditDialog, props);
+  assert.equal(persisted, 1);
+  assert.equal(closed, 0, "failed persistence does not close the edit dialog");
+  assert.equal(nodes(dialog).find((node) => node.type === "textarea").props.value, "Attempted change");
+  assert(nodes(dialog).some((node) => node.props.role === "alert"));
+  dialog.props.onKeyDown({ key: "Escape", preventDefault() {}, stopPropagation() {} });
+  assert.equal(closed, 1);
 });
 test("PLAN-FUNC-011: View in Planner date waits for initialization and uses existing week navigation once", () => {
   const jumps = [], controller = { getSnapshot: () => ({ loading: false, planner: {} }),

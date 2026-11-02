@@ -286,6 +286,14 @@
   }
 }
 
+.planner-mobile-add {
+  display: none;
+}
+
+.planner-mobile-panels {
+  min-width: 0;
+}
+
 :global(#curated-warning) {
   background-color: #fff3cd;
   color: #856404;
@@ -798,19 +806,19 @@
 
 :global(#weekly-scroll-container) {
   width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
 }
 
 .weekly-week-block {
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
 }
 
 .planner-week-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(160px, 1fr));
-  gap: 0.75rem;
-  width: max(100%, 1260px);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.5rem;
+  width: 100%;
   padding-bottom: 0.3rem;
   align-items: start;
 }
@@ -819,10 +827,19 @@
   min-width: 0;
 }
 
+.weekly-day-strip {
+  display: none;
+}
+
 .weekly-day-column {
   min-width: 0;
   display: grid;
+  align-content: start;
   gap: 0.45rem;
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-card);
+  background: var(--lm-color-surface);
+  padding: 0.45rem;
 }
 
 .weekly-day-label {
@@ -984,15 +1001,18 @@
 }
 
 .day-slot {
+  display: grid;
+  align-content: start;
+  gap: 0.4rem;
   border: 1px solid #dbe3ec;
   border-radius: 10px;
   background: #ffffff;
   padding: 0.5rem;
-  min-height: 140px;
+  min-width: 0;
 }
 
 .day-slot-label {
-  margin: 0 0 0.4rem;
+  margin: 0;
   font-size: 0.92rem;
   color: #1d4f91;
   background: #e8f1ff;
@@ -1000,6 +1020,21 @@
   border-radius: 8px;
   padding: 0.28rem 0.5rem;
   font-weight: 700;
+}
+
+.slot-task-region {
+  min-width: 0;
+  border-top: 1px solid var(--lm-color-border);
+  padding-top: 0.4rem;
+}
+
+.slot-task-region-label {
+  margin: 0 0 0.35rem;
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-metadata);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .weekly-insertion-target {
@@ -1764,6 +1799,156 @@
 
   .pool-task-controls {
     flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 700px) {
+  .planner-mobile-add {
+    display: block;
+    margin-bottom: var(--lm-space-2);
+  }
+
+  .planner-mobile-add button {
+    min-width: 6rem;
+    min-height: var(--lm-control-mobile);
+    border: 1px solid var(--lm-color-primary);
+    border-radius: var(--lm-radius-control);
+    background: var(--lm-color-primary);
+    color: var(--lm-color-text-on-primary);
+    padding: 0.5rem 0.85rem;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .planner-mobile-add button:focus-visible {
+    outline: 2px solid var(--lm-color-focus);
+    outline-offset: 2px;
+  }
+
+  .planner-mobile-panels:not(.is-mobile-open) {
+    display: none;
+  }
+
+  .planner-top-panels {
+    overflow: visible;
+  }
+
+  :global(#curated-left),
+  :global(#curated-middle),
+  :global(#adhoc-right),
+  :global(#repeatable-right),
+  :global(#parking-lot-column),
+  :global(#mini-calendar-column) {
+    min-width: 0;
+  }
+
+  .weekly-week-nav {
+    gap: 0.3rem;
+    padding: 0.35rem;
+  }
+
+  .weekly-week-nav button {
+    width: var(--lm-control-mobile);
+    height: var(--lm-control-mobile);
+  }
+
+  .weekly-week-nav .weekly-week-today {
+    min-width: var(--lm-control-mobile);
+    height: var(--lm-control-mobile);
+    padding: 0 0.45rem;
+  }
+
+  .weekly-week-nav h2 {
+    font-size: var(--lm-font-secondary);
+  }
+
+  .weekly-day-strip {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(44px, 1fr));
+    gap: 0;
+    overflow-x: auto;
+    margin-bottom: var(--lm-space-2);
+  }
+
+  .weekly-day-strip button {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: 0.15rem;
+    min-width: 44px;
+    min-height: var(--lm-control-mobile);
+    border: 1px solid var(--lm-color-border);
+    border-radius: var(--lm-radius-control);
+    background: var(--lm-color-surface);
+    color: var(--lm-color-text-secondary);
+    padding: 0.2rem 0;
+    font: inherit;
+    font-size: var(--lm-font-metadata);
+    cursor: pointer;
+  }
+
+  .weekly-day-strip button.is-selected {
+    border-color: var(--lm-color-primary);
+    background: var(--lm-color-primary);
+    color: var(--lm-color-text-on-primary);
+    font-weight: 700;
+  }
+
+  .weekly-day-strip button:focus-visible {
+    outline: 2px solid var(--lm-color-focus);
+    outline-offset: 2px;
+  }
+
+  .weekly-week-block {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .planner-week-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .weekly-day-column {
+    display: none;
+    padding: 0.5rem;
+  }
+
+  .weekly-day-column.is-mobile-selected {
+    display: grid;
+  }
+
+  .weekly-day-label {
+    justify-content: flex-start;
+    min-height: var(--lm-control-mobile);
+    font-size: 1.05rem;
+  }
+
+  .day-slot {
+    padding: 0.55rem;
+  }
+
+  .slot-task-header-actions > button,
+  .slot-task-header-actions > input[type="checkbox"],
+  .slot-task .move-task-icon,
+  .slot-task-handle {
+    box-sizing: border-box;
+    min-width: var(--lm-control-mobile);
+    min-height: var(--lm-control-mobile);
+  }
+
+  .slot-task .slot-task-reminder-button,
+  .slot-task .slot-task-checklist-button,
+  .slot-task .slot-task-series-button,
+  .slot-task .move-task-icon {
+    width: var(--lm-control-mobile);
+    height: var(--lm-control-mobile);
+  }
+
+  .slot-task-header-actions > input[type="checkbox"] {
+    width: var(--lm-control-mobile);
+    height: var(--lm-control-mobile);
+    margin: 0;
   }
 }
 

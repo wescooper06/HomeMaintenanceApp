@@ -6,15 +6,53 @@
 .dialog input[type=radio] { flex-shrink: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .dialog button, .row button, .row a { min-height: 44px; padding: .5rem; box-sizing: border-box; font: inherit; }
-.row { border-top: 1px solid #aaa6; padding: .35rem; min-width: 0; }
-.row h5 { margin: .25rem 0; font-size: .9rem; }
-.row ul { list-style: none; padding: 0; margin: 0; }
-.row li { margin: .35rem 0; min-width: 0; }
-.text, .row button, .row p { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
-.row a { display: inline-flex; align-items: center; }
-.row > button { width: 100%; }
-.error { color: #a21919; }
+.row {
+  min-width: 0;
+  border: 1px solid var(--lm-color-meals);
+  border-left-width: 3px;
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-meals-subtle);
+  color: var(--lm-color-text);
+  padding: .3rem .45rem;
+}
+.rowHeader { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }
+.row h5 { margin: .1rem 0; color: var(--lm-color-meals); font-size: .84rem; }
+.row ul { display: grid; gap: .15rem; list-style: none; padding: 0; margin: .15rem 0 0; }
+.occurrence { display: flex; align-items: center; gap: .25rem; min-width: 0; }
+.occurrence > .text, .recipeLink { flex: 1 1 auto; min-width: 0; }
+.text, .row p { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.recipeLink { display: block; color: var(--lm-color-meals); font-weight: 600; overflow-wrap: anywhere; }
+.occurrenceActions { display: flex; flex: 0 0 auto; align-items: center; gap: .1rem; }
+.row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 2rem;
+  min-height: 2rem;
+  border: 1px solid transparent;
+  border-radius: var(--lm-radius-control);
+  background: transparent;
+  color: var(--lm-color-meals);
+  padding: .15rem;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+.row .addButton { min-width: 2.25rem; min-height: 2.25rem; font-size: 1.15rem; font-weight: 700; }
+.row button:hover:not(:disabled) { border-color: var(--lm-color-meals); background: #ffedd5; }
+.row button:focus-visible, .recipeLink:focus-visible { outline: 2px solid var(--lm-color-focus); outline-offset: 2px; }
+.row button:disabled { cursor: not-allowed; opacity: .55; }
+.row p { margin: .15rem 0 0; color: var(--lm-color-text-secondary); font-size: var(--lm-font-metadata); }
+.dialog h2 { margin-top: 0; }
+.dialog textarea { display: block; margin: .35rem 0 .75rem; }
+.dialog [role="alert"] { color: var(--lm-color-error); }
+.error { color: var(--lm-color-error); }
 .status { padding: .5rem; overflow-wrap: anywhere; }
 @media (max-width: 40rem) {
   .dialog { position: fixed; inset: auto 0 0; margin: 0; width: 100%; max-height: 90dvh; border-radius: .75rem .75rem 0 0; }
+}
+@media (max-width: 700px) {
+  .row button { min-width: var(--lm-control-mobile); min-height: var(--lm-control-mobile); }
+  .row .addButton { min-width: var(--lm-control-mobile); min-height: var(--lm-control-mobile); }
 }
