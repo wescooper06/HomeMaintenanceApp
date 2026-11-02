@@ -101,16 +101,23 @@ function ItemActionDialog({ item, categories, mode, pending, error, retry, onMod
 export function ShoppingGroup({ name, items, children }) {
   const [collapsed, setCollapsed] = useState(false);
   const allChecked = items.length > 0 && items.every((item) => item.checked);
+  const wasComplete = useRef(allChecked);
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 40rem)");
-    function sync() { setCollapsed(media.matches && allChecked); }
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
+    if (wasComplete.current === allChecked) return;
+    wasComplete.current = allChecked;
+    setCollapsed(allChecked);
   }, [allChecked]);
-  return <section className={styles.group} aria-label={name}>
-    <h2><button type="button" aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}>
-      {name} ({items.length}) <span aria-hidden="true">{collapsed ? "+" : "\u2212"}</span>
+  const remaining = items.filter((item) => !item.checked).length;
+  return <section className={`${styles.group} ${allChecked ? styles.groupComplete : ""}`} aria-label={name}>
+    <h2 className={styles.categoryHeading}><button className={styles.categoryToggle} type="button"
+      aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}>
+      <span className={styles.categoryHeadingText}>
+        <span className={styles.categoryName}>{name}</span>
+        <span className={styles.categoryProgress}>
+          {allChecked ? `Complete · ${items.length} items` : `${remaining} remaining · ${items.length} items`}
+        </span>
+      </span>
+      <span className={styles.categoryDisclosure}>{collapsed ? "Show items" : "Hide items"}</span>
     </button></h2>
     <div hidden={collapsed}>{children}</div>
   </section>;
@@ -296,7 +303,8 @@ export default function ShoppingPage() {
         {[...categories, { id: null, name: "Uncategorized" }].map((category) => {
           const items = orderShoppingItems(data.items.filter((item) => item.category_id === category.id));
           return items.length > 0 && <ShoppingGroup key={category.id ?? "unassigned"} name={category.name} items={items}>
-            <ul className={styles.items}>{items.map((item) => <li key={item.id} className={item.checked ? styles.checked : undefined}>
+            <ul className={styles.items}>{items.map((item) => <li key={item.id}
+              className={`${styles.itemRow} ${item.checked ? styles.checked : ""}`}>
               <label className={styles.check}>
                 <input className="lm-checkbox" type="checkbox" checked={item.checked} disabled={pending}
                   aria-label={`Purchased ${item.text}`} onChange={(event) => {
@@ -305,10 +313,11 @@ export default function ShoppingPage() {
                   }} />
                 <span className={styles.itemText}>{item.text}</span>
               </label>
-              <button type="button" className={`${styles.itemActionButton} lm-icon-button`} disabled={pending}
+              <button type="button" className={`${styles.itemActionButton} lm-button lm-button--quiet`}
+                disabled={pending}
                 aria-haspopup="dialog" aria-label={`Actions for ${item.text}`} onClick={() => {
                   setError(""); setRetry(null); setItemAction({ item, mode: "menu" });
-                }}><span aria-hidden="true">\u22ef</span></button>
+                }}>Item Actions</button>
             </li>)}</ul>
           </ShoppingGroup>;
         })}

@@ -107,7 +107,24 @@
 }
 
 .recipeTable th:first-child {
-  width: 56px;
+  width: 64px;
+}
+
+.favorite[aria-pressed="true"] {
+  color: #825b00;
+  background: #fff1bd;
+}
+
+.favoriteCompact {
+  box-sizing: border-box;
+  width: var(--lm-control-mobile);
+  min-width: var(--lm-control-mobile);
+  min-height: var(--lm-control-mobile);
+}
+
+.favoriteCompact > span[aria-hidden="true"] {
+  font-size: 1.5rem;
+  line-height: 1;
 }
 
 .recipeTable th:nth-child(2) {
@@ -376,9 +393,36 @@
   gap: var(--lm-space-2);
 }
 
-.detailMetadata,
 .source {
   color: var(--lm-color-text-secondary);
+}
+
+.detailMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lm-space-2);
+  margin: 0 0 var(--lm-space-4);
+}
+
+.metadataItem {
+  min-width: min(10rem, 100%);
+  border-left: 3px solid var(--lm-color-meals);
+  padding: var(--lm-space-1) var(--lm-space-3);
+  background: var(--lm-color-meals-subtle);
+}
+
+.metadataItem dt {
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-label);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metadataItem dd {
+  margin: 0;
+  color: var(--lm-color-text);
+  font-weight: 600;
 }
 
 .source {

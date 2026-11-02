@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
 
 import PageHeader from "../../components/layout/PageHeader.jsx";
-import { createRecipeService, newRecipe, newRecipeFilters, recipeMatches, recipeSourceUrl, sortRecipes } from "../../services/recipeService.js";
+import { createRecipeService, newRecipe, newRecipeFilters, recipeMatches, recipeSourceUrl, sortRecipeClassifications, sortRecipes } from "../../services/recipeService.js";
 
 import MealEntryDialog from "./MealEntryDialog.jsx";
 import styles from "./MealsPage.module.css";
@@ -43,7 +43,7 @@ function useRecipeLoad(load, dependencies) {
 
 function Favorite({ recipe, onChange, pending, compact = false }) {
   const action = recipe.favorite ? "Unfavorite" : "Favorite";
-  return <button type="button" className={compact ? "lm-icon-button" : "lm-button lm-button--secondary"}
+  return <button type="button" className={`${compact ? "lm-icon-button" : "lm-button lm-button--secondary"} ${styles.favorite} ${compact ? styles.favoriteCompact : ""}`}
     disabled={pending} aria-label={`${action} ${recipe.title}`}
     aria-pressed={recipe.favorite} onClick={(event) => { event.stopPropagation(); onChange(recipe); }}>
     <span aria-hidden="true">{recipe.favorite ? "\u2605" : "\u2606"}</span>
@@ -100,7 +100,8 @@ function RecipeFilterDialog({ categories, cuisines, filters, setFilters, onCance
       <button type="button" className="lm-button lm-button--quiet" onClick={onCancel}>Close</button>
     </div>
     <div className={styles.filterGroups}>
-      {[["categoryIds", "Category", categories], ["cuisineIds", "Cuisine", cuisines]].map(([key, label, values]) =>
+      {[["categoryIds", "Category", sortRecipeClassifications(categories)],
+        ["cuisineIds", "Cuisine", sortRecipeClassifications(cuisines)]].map(([key, label, values]) =>
         <fieldset className={styles.filterGroup} key={key}>
           <legend>{label}</legend>
           <div className={styles.filterOptions} role="group" aria-label={`Filter Recipes by ${label}`}>
@@ -264,6 +265,7 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
   const selected = values.find((item) => item.id === value);
+  const sortedValues = sortRecipeClassifications(values);
   const createValue = `create-${kind}`;
   async function act(operation) {
     if (lock.current) return;
@@ -271,7 +273,7 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
     try {
       if (operation === "create") {
         const created = await service[kind].create(name);
-        onChange([...values, created]); onSelect(created.id);
+        onChange(sortRecipeClassifications([...values, created])); onSelect(created.id);
         setCreating(false);
       } else if (operation === "rename") {
         const updated = await service[kind].rename(value, name);
@@ -304,7 +306,7 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
           }
         }}>
         <option value="">None</option>
-        {values.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+        {sortedValues.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
         <option value={createValue}>Create new {label.toLowerCase()}...</option>
       </select>
     </label>
@@ -510,10 +512,16 @@ export function RecipeDetail() {
     {loaded.loading ? <p role="status">Loading Recipe...</p> : loaded.error
       ? <ErrorMessage error={loaded.error} retry={loaded.retry} /> : !recipe
         ? <p>Recipe not found. <Link to="/meals/recipes">Return to Recipes</Link></p> : <>
-          <p className={styles.detailMetadata}>
-            {[loaded.data.categories.find((v) => v.id === recipe.category_id)?.name,
-              loaded.data.cuisines.find((v) => v.id === recipe.cuisine_id)?.name].filter(Boolean).join(" / ")}
-          </p>
+          <dl className={styles.detailMetadata}>
+            <div className={styles.metadataItem}>
+              <dt>Category</dt>
+              <dd>{loaded.data.categories.find((v) => v.id === recipe.category_id)?.name || "Not set"}</dd>
+            </div>
+            <div className={styles.metadataItem}>
+              <dt>Cuisine</dt>
+              <dd>{loaded.data.cuisines.find((v) => v.id === recipe.cuisine_id)?.name || "Not set"}</dd>
+            </div>
+          </dl>
           {recipe.source && <p className={styles.source}>Source: <Source source={recipe.source} /></p>}
           <ErrorMessage error={error} />
           {shoppingMessage && <p role="status">{shoppingMessage} <Link to="/meals/shopping">View Shopping List</Link></p>}

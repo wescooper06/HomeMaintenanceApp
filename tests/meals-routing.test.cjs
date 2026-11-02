@@ -187,7 +187,7 @@ test("RESP-002: mobile Meals layouts constrain Recipe and Shopping content witho
   assert.match(recipeStyles, /\.mobileList li\s*>\s*div\s*\{[^}]*min-width:\s*0/);
   assert.match(recipeStyles, /\.classificationRow\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(recipeStyles, /\.editor textarea,\s*\.editor input:not\(\[type="checkbox"\]\),\s*\.editor select\s*\{[^}]*max-width:\s*100%/);
-  assert.match(shoppingStyles, /\.items li\s*\{[^}]*min-width:\s*0/);
+  assert.match(shoppingStyles, /\.itemRow\s*\{[^}]*min-width:\s*0/);
   assert.match(shoppingStyles, /\.itemText\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere/);
   assert.match(shoppingStyles, /\.itemActionButton\s*\{[^}]*flex:\s*0 0 auto/);
   assert.match(shoppingStyles, /\.check\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);

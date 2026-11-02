@@ -112,6 +112,27 @@ test("manual auto category is visible, double submission blocked, failed add ret
   assert.match(text(tree), /Shopping item added/);
 });
 
+test("Category headings are distinct from item rows and Item Actions is visibly labeled", async () => {
+  const a = item("eggs");
+  const h = harness({ load: async () => ({ items: [a], categories: [category] }) });
+  h.render(); await flush();
+  const tree = h.render();
+  const group = all(tree).find((node) => node.type === h.ShoppingGroup);
+  const groupHarness = harness({});
+  const categoryTree = groupHarness.render(groupHarness.ShoppingGroup, group.props);
+  const toggle = all(categoryTree).find((node) => node.type === "button");
+  assert.match(text(toggle), /Cheese & Dairy1 remaining · 1 itemsHide items/);
+  assert.equal(toggle.props["aria-expanded"], true);
+  const actions = button(tree, "Actions for eggs");
+  assert.equal(text(actions), "Item Actions");
+  assert.equal(actions.props["aria-haspopup"], "dialog");
+
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Meals", "ShoppingPage.module.css"), "utf8");
+  assert.match(css, /\.categoryToggle\s*\{[^}]*border-left:\s*4px solid var\(--lm-color-meals\)[^}]*background:\s*var\(--lm-color-meals-subtle\)/);
+  assert.match(css, /\.groupComplete\s+\.categoryToggle\s*\{[^}]*border-left-color:\s*var\(--lm-color-success\)/);
+  assert.match(css, /\.itemActionButton\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);
+});
+
 test("item actions stay out of rows and Edit, Move and Remove use the item action sheet", async () => {
   const a = item("eggs");
   const calls = [];
@@ -192,19 +213,60 @@ test("Clear Checked removes only checked rows without confirmation; Clear List c
   assert.match(text(tree), /Your Shopping List is empty/);
 });
 
-test("mobile fully-checked group collapses, can be expanded; desktop stays open", () => {
+test("completed Categories collapse on transition, stay open after manual reopen, and expand when unchecked", () => {
   for (const mobile of [false, true]) {
+    const alreadyComplete = harness({}, mobile);
+    const completeProps = { name: "Category", items: [item("done", true)], children: "rows" };
+    const initialCompleteTree = alreadyComplete.render(alreadyComplete.ShoppingGroup, completeProps);
+    assert.equal(all(initialCompleteTree).find((node) => node.type === "div").props.hidden, false,
+      "a pre-completed Category does not collapse without a completion transition");
+
     const h = harness({}, mobile);
-    const props = { name: "Category", items: [item("done", true)], children: "rows" };
-    h.render(h.ShoppingGroup, props);
-    let tree = h.render(h.ShoppingGroup, props);
-    assert.equal(all(tree).find((node) => node.type === "div").props.hidden, mobile);
-    if (mobile) {
-      all(tree).find((node) => node.type === "button").props.onClick();
-      tree = h.render(h.ShoppingGroup, props);
-      assert.equal(all(tree).find((node) => node.type === "div").props.hidden, false);
-    }
+    const items = [item("first"), item("second")];
+    const props = { name: "Category", items, children: "rows" };
+    const render = () => h.render(h.ShoppingGroup, props);
+    let tree = render();
+    assert.equal(all(tree).find((node) => node.type === "div").props.hidden, false);
+    items[0] = { ...items[0], checked: true };
+    render();
+    tree = render();
+    assert.equal(all(tree).find((node) => node.type === "div").props.hidden, false);
+    items[1] = { ...items[1], checked: true };
+    render();
+    tree = render();
+    const content = () => all(tree).find((node) => node.type === "div").props.hidden;
+    assert.equal(content(), true);
+    const toggle = () => all(tree).find((node) => node.type === "button");
+    toggle().props.onClick();
+    tree = render();
+    assert.equal(content(), false);
+    tree = render();
+    assert.equal(content(), false, "an expanded completed Category stays expanded");
+    toggle().props.onClick();
+    tree = render();
+    assert.equal(content(), true);
+    items[0] = { ...items[0], checked: false };
+    render();
+    tree = render();
+    assert.equal(content(), false, "unchecking an item expands the Category");
   }
+});
+
+test("failed completion persistence leaves the Shopping row unchecked and the Category expanded", async () => {
+  const a = item("eggs");
+  const h = harness({ load: async () => ({ items: [a], categories: [category] }),
+    check: async () => { throw { code: "NETWORK" }; } });
+  h.render(); await flush();
+  let tree = h.render();
+  input(tree, "Purchased eggs").props.onChange({ target: { checked: true } });
+  await flush();
+  tree = h.render();
+  assert.equal(input(tree, "Purchased eggs").props.checked, false);
+  const group = all(tree).find((node) => node.type === h.ShoppingGroup);
+  const groupHarness = harness({});
+  const categoryTree = groupHarness.render(groupHarness.ShoppingGroup, group.props);
+  assert.equal(all(categoryTree).find((node) => node.type === "div").props.hidden, false);
+  assert(all(tree).some((node) => node.props.role === "alert"));
 });
 
 test("Customize tab preserves category management and failed category creation is retryable", async () => {

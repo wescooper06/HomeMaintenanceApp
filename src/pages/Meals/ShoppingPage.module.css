@@ -81,28 +81,74 @@
 
 .group {
   min-width: 0;
+  margin-top: var(--lm-space-4);
 }
 
-.group h2 {
+.categoryHeading {
   margin: 0;
-  border-top: 1px solid var(--lm-color-border);
+  border: 0;
   font-size: var(--lm-font-secondary);
   line-height: var(--lm-line-body);
 }
 
-.group h2 button {
-  display: flex;
+.categoryToggle {
+  display: grid;
   width: 100%;
-  min-height: var(--lm-control-mobile);
+  min-height: 56px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  border: 0;
-  padding: 0 var(--lm-space-2);
-  background: transparent;
+  gap: var(--lm-space-3);
+  border: 1px solid var(--lm-color-border-strong);
+  border-left: 4px solid var(--lm-color-meals);
+  border-radius: var(--lm-radius-card);
+  padding: var(--lm-space-2) var(--lm-space-3);
+  background: var(--lm-color-meals-subtle);
   color: var(--lm-color-text);
-  font: 700 var(--lm-font-secondary)/var(--lm-line-body) var(--lm-font-family);
+  font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.categoryToggle:hover {
+  border-color: var(--lm-color-meals);
+}
+
+.categoryToggle:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
+.categoryHeadingText {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.categoryName {
+  overflow-wrap: anywhere;
+  font-size: var(--lm-font-secondary);
+  font-weight: 700;
+}
+
+.categoryProgress {
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-label);
+  font-weight: 500;
+}
+
+.groupComplete .categoryToggle {
+  border-left-color: var(--lm-color-success);
+}
+
+.groupComplete .categoryProgress {
+  color: var(--lm-color-success);
+}
+
+.categoryDisclosure {
+  color: var(--lm-color-meals);
+  font-size: var(--lm-font-label);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .items {
@@ -111,13 +157,14 @@
   padding: 0;
 }
 
-.items li {
+.itemRow {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: var(--lm-space-2);
-  border-top: 1px solid var(--lm-color-border);
+  border-bottom: 1px solid var(--lm-color-border);
   padding: var(--lm-space-1) var(--lm-space-2);
+  background: var(--lm-color-surface);
 }
 
 .check {
@@ -147,6 +194,9 @@
 
 .itemActionButton {
   flex: 0 0 auto;
+  min-height: var(--lm-control-mobile);
+  padding: 0 var(--lm-space-2);
+  white-space: nowrap;
 }
 
 .confirm,
