@@ -191,21 +191,17 @@ test("rendered modern navigation omits Life Manager but retains every configured
     }
   });
 
-  test("canonical navigation owns page-independent typography, dimensions and wrapping", () => {
+  test("canonical navigation uses the shared palette and horizontally scrolls without wrapping", () => {
     const layout = path.join(__dirname, "..", "src", "components", "layout");
     const css = fs.readFileSync(path.join(layout, "MainNavigation.module.css"), "utf8");
-    assert.match(css, /font:\s*400 14\.4px "Segoe UI", Tahoma, sans-serif/);
-    assert.match(css, /padding:\s*5\.6px 12px/);
-    assert.match(css, /gap:\s*8px/);
-    assert.match(css, /margin-top:\s*12px/);
-    assert.match(css, /line-height:\s*normal/);
-    assert.match(css, /letter-spacing:\s*normal/);
-    assert.match(css, /flex-wrap:\s*wrap/);
+    assert.match(css, /flex-wrap:\s*nowrap/);
+    assert.match(css, /overflow-x:\s*auto/);
+    assert.match(css, /--lm-color-navigation,\s*#17324d/);
+    assert.match(css, /--lm-color-primary,\s*#0f766e/);
+    assert.match(css, /min-height:\s*var\(--lm-control-mobile,\s*44px\)/);
     assert.match(css, /justify-content:\s*flex-start/);
-    assert.match(css, /border:\s*1px solid #0f766e/);
-    assert.match(css, /border-radius:\s*999px/);
-    assert.match(css, /\.frame\s*\{[^}]*width:\s*100%;[^}]*padding:\s*16px 16px 0/);
-    assert.doesNotMatch(css, /\d(?:rem|em)\b|@media|data-vite-page|var\(--primary/);
+    assert.match(css, /\.frame\s*\{[^}]*width:\s*100%;[^}]*padding:\s*0/);
+    assert.match(css, /@media \(max-width:\s*600px\)/);
     for (const name of ["MainNavigation", "StandaloneNavigation"]) {
       const component = fs.readFileSync(path.join(layout, `${name}.jsx`), "utf8");
       assert.match(component, /import styles from "\.\/MainNavigation\.module\.css"/);
@@ -216,6 +212,19 @@ test("rendered modern navigation omits Life Manager but retains every configured
     const standalone = fs.readFileSync(path.join(layout, "StandaloneNavigation.jsx"), "utf8");
     assert.match(standalone, /<div className=\{styles\.frame\}/);
     assert.match(standalone, /href=\{standaloneNavigationHref/);
+    assert.match(fs.readFileSync(path.join(layout, "mainApplication.css"), "utf8"),
+      /@import "\.\/lifeManagerFoundation\.css"/);
+    assert.match(fs.readFileSync(path.join(__dirname, "..", "src", "activity-planner", "index.css"), "utf8"),
+      /@import "\.\.\/components\/layout\/lifeManagerFoundation\.css"/);
+    const foundation = fs.readFileSync(path.join(layout, "lifeManagerFoundation.css"), "utf8");
+    for (const color of ["#17324d", "#0f766e", "#1f2933", "#667085", "#98a2b3",
+      "#f7f8fa", "#b42318", "#9a3412"]) {
+      assert(foundation.includes(color), `missing approved foundation color ${color}`);
+    }
+    assert.match(foundation, /:focus-visible/);
+    assert.match(foundation, /prefers-reduced-motion/);
+    assert.match(foundation, /--lm-control-mobile:\s*44px/);
+    assert.match(fs.readFileSync(path.join(layout, "PageHeader.jsx"), "utf8"), /className="lm-page-header"/);
     for (const file of [
       path.join(__dirname, "..", "trips", "src", "index.css"),
       path.join(__dirname, "..", "src", "pages", "Trips", "TimelineView.css"),

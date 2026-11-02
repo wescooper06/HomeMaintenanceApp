@@ -26,8 +26,8 @@ export default function OwnerAuthBoundary({ children }) {
   if (session.status === "checking") return <p role="status">Checking owner session...</p>;
   if (session.status === "owner") {
     return <>
-      <div aria-label="Owner session">
-        <button type="button" onClick={() => { void controller.signOut(); }}>Sign out</button>
+      <div className="lm-owner-controls" aria-label="Owner session">
+        <button className="lm-button lm-button--secondary" type="button" onClick={() => { void controller.signOut(); }}>Sign out</button>
       </div>
       {children}
     </>;

@@ -308,7 +308,8 @@ test("Workbench card delete is adjacent/red, opens the shared confirmation witho
     element: (type, attributes, ...children) => ({ type, props: attributes || {},
       children: children.flat(Infinity).filter(Boolean) }),
     useNavigate: () => (...args) => navigation.push(args), service,
-    styles: { action: "action", danger: "danger", projectDelete: "projectDelete" }, ProjectEditor: Editor,
+    styles: { action: "action", danger: "danger", projectDelete: "projectDelete" },
+    PageHeader: () => null, ProjectEditor: Editor,
     useState(initial) {
       const i = cursor++;
       if (!(i in states)) states[i] = initial;
@@ -336,7 +337,7 @@ test("Workbench card delete is adjacent/red, opens the shared confirmation witho
   assert.deepEqual(actions.children.map((node) => node.children[0]),
     ["Edit Details", "Add to Task Manager", "Delete Project"]);
   const cardDelete = actions.children[2];
-  assert.equal(cardDelete.props.className, "action danger projectDelete");
+  assert.equal(cardDelete.props.className, "action danger projectDelete lm-button lm-button--danger");
   let prevented = 0, stopped = 0;
   const event = { preventDefault() { prevented += 1; }, stopPropagation() { stopped += 1; } };
   cardDelete.props.onClick(event);
@@ -428,6 +429,39 @@ test("project deletion eligibility requires a non-nil persisted UUID and an exac
     assert.equal(canDeleteProject(project), false);
   }
   const css = fs.readFileSync(path.join(root, "src", "pages", "Workbench", "WorkbenchPage.module.css"), "utf8");
-  assert.match(css, /\.action\.projectDelete\s*\{[^}]*background:\s*#b91c1c;[^}]*color:\s*#fff;/);
+  assert.match(css, /\.action\.projectDelete\s*\{[^}]*border:\s*2px solid var\(--lm-color-danger\);[^}]*background:\s*var\(--lm-color-danger\);[^}]*color:\s*var\(--lm-color-text-on-primary\);/);
   assert.match(css, /\.actions\s*\{[^}]*flex-wrap:\s*wrap;/);
+});
+
+test("project editor traps Tab, supports Escape, and retains accessible modal semantics", async () => {
+  let closed = 0;
+  const project = { id: "11111111-1111-4111-8111-111111111111", source: "home", title: "Fixture" };
+  const ui = await editorFixture(null, { mode: "edit", project, onClose: () => { closed += 1; } });
+  const overlay = ui.find((node) => typeof node.props.onKeyDown === "function");
+  const dialog = ui.find((node) => node.props.role === "dialog");
+  assert.match(dialog.props.className, /lm-overlay-panel/);
+  assert.equal(dialog.props["aria-modal"], "true");
+
+  let focusTarget;
+  const first = { hidden: false, getAttribute: () => null, getClientRects: () => [1], focus: () => { focusTarget = "first"; } };
+  const last = { hidden: false, getAttribute: () => null, getClientRects: () => [1], focus: () => { focusTarget = "last"; } };
+  const active = { current: first };
+  const currentTarget = {
+    querySelectorAll: () => [first, last],
+    ownerDocument: { get activeElement() { return active.current; } },
+    contains: (node) => node === first || node === last,
+  };
+  let prevented = false;
+  overlay.props.onKeyDown({ key: "Tab", shiftKey: true, currentTarget, preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(focusTarget, "last");
+
+  active.current = last;
+  prevented = false;
+  overlay.props.onKeyDown({ key: "Tab", shiftKey: false, currentTarget, preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(focusTarget, "first");
+
+  overlay.props.onKeyDown({ key: "Escape", currentTarget, preventDefault() {} });
+  assert.equal(closed, 1);
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import * as service from "../../services/workbenchService.js";
 
 import ProjectEditor from "./ProjectEditor.jsx";
@@ -193,15 +194,10 @@ export default function WorkbenchPage() {
 
   return (
     <section className={styles.screen} aria-busy={disabled}>
-      <header className={styles.header}>
-        <div>
-          <p className={styles.kicker}>Operations view</p>
-          <h1>Workbench</h1>
-          <p className={styles.muted}>Review projects, curate tasks, and stage the next move.</p>
-        </div>
-        <div className={styles.status} role="status">{error ? "Workbench needs attention." : status}</div>
-      </header>
-      {error && <p role="alert">{error}</p>}
+      <PageHeader title="Workbench" eyebrow="Operations view"
+        subtitle="Review projects, curate tasks, and stage the next move."
+        actions={<div className={styles.status} role="status">{error ? "Workbench needs attention." : status}</div>} />
+      {error && <p className="lm-feedback lm-feedback--error" role="alert">{error}</p>}
       <div className={styles.container}>
         <section className={styles.panel} aria-labelledby="workbench-projects-title">
           <div className={styles.panelHeader}>
@@ -209,7 +205,7 @@ export default function WorkbenchPage() {
               <h2 id="workbench-projects-title">Projects</h2>
               <span className={styles.count}>{projects.length} of {data.projects.length}</span>
             </div>
-            <button type="button" className={styles.primary} disabled={disabled}
+            <button type="button" className={`${styles.primary} lm-button lm-button--primary`} disabled={disabled}
               onClick={() => navigate("/projects/new")}>Add Project</button>
           </div>
           <div className={styles.filterBar}>
@@ -238,10 +234,10 @@ export default function WorkbenchPage() {
                     <span>Category: {project.category || "-"}</span><span>State: {project.state || "-"}</span><span>Priority: {service.clean(project.priority, "-")}</span>
                   </div>
                   <div className={styles.actions}>
-                    <button type="button" className={styles.action} disabled={disabled} onClick={() => projectAction(project, "edit")}>Edit Details</button>
-                    <button type="button" className={styles.action} disabled={disabled} onClick={() => projectAction(project, "add-task")}>Add to Task Manager</button>
+                    <button type="button" className={`${styles.action} lm-button lm-button--secondary`} disabled={disabled} onClick={() => projectAction(project, "edit")}>Edit Details</button>
+                    <button type="button" className={`${styles.action} lm-button lm-button--secondary`} disabled={disabled} onClick={() => projectAction(project, "add-task")}>Add to Task Manager</button>
                     {service.canDeleteProject(project) && (
-                      <button type="button" className={`${styles.action} ${styles.danger} ${styles.projectDelete}`} disabled={disabled}
+                      <button type="button" className={`${styles.action} ${styles.danger} ${styles.projectDelete} lm-button lm-button--danger`} disabled={disabled}
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
@@ -252,7 +248,7 @@ export default function WorkbenchPage() {
                   </div>
                 </article>
               );
-            }) : <div className={styles.card}>No projects match.</div>}
+            }) : <div className={`${styles.card} lm-empty-state`}>No projects match.</div>}
           </div>
         </section>
         <section className={styles.panel} aria-labelledby="workbench-tasks-title">
@@ -261,7 +257,7 @@ export default function WorkbenchPage() {
               <h2 id="workbench-tasks-title">Task Manager</h2>
               <span className={styles.count}>{groups[0].tasks.length} project-based and {groups[1].tasks.length} repeatable tasks</span>
             </div>
-            <button type="button" className={styles.quiet} onClick={() => setTaskSort((current) => current === "asc" ? "desc" : "asc")}>Order: {taskSort === "asc" ? "Ascending" : "Descending"}</button>
+            <button type="button" className={`${styles.quiet} lm-button lm-button--secondary`} onClick={() => setTaskSort((current) => current === "asc" ? "desc" : "asc")}>Order: {taskSort === "asc" ? "Ascending" : "Descending"}</button>
           </div>
           <div className={styles.list} aria-live="polite">
             {loading ? Array.from({ length: 3 }, (_, index) => <div key={index} className={styles.skeleton} />) : groups.map((group) => (
@@ -278,10 +274,10 @@ export default function WorkbenchPage() {
                         <span>Source: {task.source}</span><span>Category: {task.category}</span><span>State: {task.state}</span><span>Priority: {task.priority}</span><span>Metadata: {task.metadataJson ? "available" : "-"}</span>
                       </div>
                       <div className={styles.actions}>
-                        <button type="button" className={styles.action} disabled={disabled || index === 0} onClick={() => taskAction(task, "up")}>Move up</button>
-                        <button type="button" className={styles.action} disabled={disabled || index === group.tasks.length - 1} onClick={() => taskAction(task, "down")}>Move down</button>
-                        <button type="button" className={styles.action} disabled={disabled} onClick={() => taskAction(task, "send-weekly")}>Send to Weekly Planner</button>
-                        <button type="button" className={`${styles.action} ${styles.danger}`} disabled={disabled} onClick={() => taskAction(task, "remove")}>Remove from Task Manager</button>
+                        <button type="button" className={`${styles.action} lm-button lm-button--secondary`} disabled={disabled || index === 0} onClick={() => taskAction(task, "up")}>Move up</button>
+                        <button type="button" className={`${styles.action} lm-button lm-button--secondary`} disabled={disabled || index === group.tasks.length - 1} onClick={() => taskAction(task, "down")}>Move down</button>
+                        <button type="button" className={`${styles.action} lm-button lm-button--secondary`} disabled={disabled} onClick={() => taskAction(task, "send-weekly")}>Send to Weekly Planner</button>
+                        <button type="button" className={`${styles.action} ${styles.danger} lm-button lm-button--danger`} disabled={disabled} onClick={() => taskAction(task, "remove")}>Remove from Task Manager</button>
                       </div>
                     </article>
                   )) : <div className={styles.card}>{group.empty}</div>}
