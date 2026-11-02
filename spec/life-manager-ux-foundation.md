@@ -4,7 +4,7 @@
 
 The approved visual direction is [Life_Manager_UX_Proposal_v2.pptx](https://1drv.ms/p/c/75085d2d82ac01f9/IQDitWOQIIHCRpi5wnhzOhifAYz1CPGBwTgnn2Davlnxqto?e=c94uJT). The supporting owner context is [Life_Manager_UI_UX_Review_Workbook.pptx](https://1drv.ms/p/c/75085d2d82ac01f9/IQCWi7945ULFSL2RS3DnYIqyAUETHSNeCrJwdO5gGnDA-WY?e=Mhmx6c). Proposal v1 is superseded.
 
-The v2 deck guides shared appearance; this implementation foundation does not turn its page mockups into authorization for page-specific redesigns. The representative application of the shared foundation is limited to global navigation, the shared page header, Dashboard summary surfaces, Workbench lists/actions, and the existing Workbench Project Editor overlay.
+The v2 deck guides shared appearance; this implementation foundation does not turn its page mockups into authorization for page-specific redesigns. It standardizes the navigation shell and shared page-header hierarchy across Life Manager destinations; representative surface and workflow styling remains limited to Dashboard, Workbench, and the existing Workbench Project Editor overlay.
 
 Preserve all route, account, task, project, Recipe, Shopping, Planner, Meals, Trips, and persistence behavior. This work does not change database/Auth configuration, the Acceptance Workbook, production data, or SQL guards. Full Planner, Recipe, Shopping, Project, Trips, and Dashboard redesigns and the deferred cross-page UX pass remain out of scope.
 
@@ -52,6 +52,8 @@ Correct usage: use a token or shared primitive for a common control, surface, or
 
 - Keep all destinations, labels, selected routes, and account controls intact.
 - Navigation stays on one line and scrolls horizontally on narrow screens rather than wrapping into an ambiguous second row.
+- Keep navigation position, height, alignment, and account controls independent of route content. Use the same `PageHeader` hierarchy and page-content inset across modules and Trips subpages; let each page retain only the subtitle and actions it needs.
+- Workbench filter checklists remain open during interaction inside the checklist, close on outside pointer/tap or Escape, and preserve selected values when closed and reopened. Opening one checklist closes the previously open checklist without reflowing page content.
 - Show keyboard focus with a high-contrast visible outline. Honor reduced-motion preferences.
 - Keep disabled states distinct and non-interactive.
 - Use at least 44px touch targets on mobile for controls, including modal actions and multi-select options.

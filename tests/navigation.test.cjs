@@ -183,8 +183,8 @@ test("rendered modern navigation omits Life Manager but retains every configured
     }
     const application = fs.readFileSync(path.join(__dirname, "..", "src", "components", "layout", "MainApplication.jsx"), "utf8");
     assert.match(application, /import MainNavigation from "\.\/MainNavigation\.jsx"/);
-    assert.match(application, /const navigation = <MainNavigation active=\{route\}/);
-    assert.match(application, /route === "planner" \? <Page navigation=\{navigation\}/);
+    assert.match(application, /<div className=\{styles\.frame\}>[\s\S]*<MainNavigation active=\{route\} \/>/);
+    assert.doesNotMatch(application, /navigation=\{navigation\}/);
     for (const name of ["TripsApplication", "TripsHome", "PrioritizeTrips", "TimelineView"]) {
       const pageSource = fs.readFileSync(path.join(__dirname, "..", "src", "pages", "Trips", `${name}.jsx`), "utf8");
       assert.doesNotMatch(pageSource, /<nav\b|MainNavigation|StandaloneNavigation|NavBar/);
@@ -224,7 +224,7 @@ test("rendered modern navigation omits Life Manager but retains every configured
     assert.match(foundation, /:focus-visible/);
     assert.match(foundation, /prefers-reduced-motion/);
     assert.match(foundation, /--lm-control-mobile:\s*44px/);
-    assert.match(fs.readFileSync(path.join(layout, "PageHeader.jsx"), "utf8"), /className="lm-page-header"/);
+    assert.match(fs.readFileSync(path.join(layout, "PageHeader.jsx"), "utf8"), /className=\{`lm-page-header \$\{className\}`\.trim\(\)\}/);
     for (const file of [
       path.join(__dirname, "..", "trips", "src", "index.css"),
       path.join(__dirname, "..", "src", "pages", "Trips", "TimelineView.css"),

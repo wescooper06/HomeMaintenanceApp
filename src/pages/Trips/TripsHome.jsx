@@ -2,6 +2,7 @@ import { CalendarDays, ListOrdered } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { deleteTrip, getTrips } from "../../services/tripsService.js";
 import { tripPriority } from "../../utils/priorityUtils.js";
 
@@ -258,14 +259,13 @@ export default function TripsHome() {
 
   return (
     <main ref={backlog} className="trips-backlog trips-editor-home">
-      <header className="trips-backlog-header">
-        <div><h1>Travel Backlog</h1><p aria-live="polite">{visibleTrips.length} of {trips.length} {trips.length === 1 ? "idea" : "ideas"}</p></div>
-        <div className="trips-header-actions">
+      <PageHeader className="trips-backlog-header lm-page-header--bordered" title="Travel Backlog"
+        subtitle={<span aria-live="polite">{visibleTrips.length} of {trips.length} {trips.length === 1 ? "idea" : "ideas"}</span>}
+        actions={<div className="trips-header-actions">
           <button type="button" disabled={deletingTripId !== null || editorBusy} onClick={() => setShowCaptureModal(true)}>+ New Trip</button>
           <Link to="/prioritize" aria-disabled={deletingTripId !== null || editorBusy} tabIndex={deletingTripId !== null || editorBusy ? -1 : 0} onClick={(event) => { if (deletingTripId !== null || editorBusy) event.preventDefault(); }}><ListOrdered size={16} aria-hidden="true" />Prioritize Trips</Link>
           <Link to="/timeline" aria-disabled={deletingTripId !== null || editorBusy} tabIndex={deletingTripId !== null || editorBusy ? -1 : 0} onClick={(event) => { if (deletingTripId !== null || editorBusy) event.preventDefault(); }}><CalendarDays size={16} aria-hidden="true" />Timeline</Link>
-        </div>
-      </header>
+        </div>} />
       <section className="trips-filter-toolbar" aria-label="Trip filters">
         <div className="trip-status-filters" role="group" aria-label="Filter by status">
           {STATUSES.map((status) => <button key={status} type="button" className="trip-filter-chip" data-status={status} aria-pressed={activeStatuses.includes(status)} onClick={() => toggleStatus(status)}>{status}</button>)}

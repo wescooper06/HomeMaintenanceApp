@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { useActivityData, regenerateWeeklyGrid } from "../../services/activityPlannerService.js";
 import { createRuleId, selectionToRuleDraft } from "../../utils/plannerUtils.js";
 
@@ -127,16 +128,12 @@ export default function DailyActivityPlanner() {
 
   return (
     <main className={styles.page}>
-      <header className={styles.toolbar}>
-        <div>
-          <h1 className={styles.title}>Daily Activity Planner</h1>
-          <p className={styles.subtitle}>Drag across the grid to create a rule. Click a block to edit it.</p>
-        </div>
-        <div className={styles.toolbarActions}>
+      <PageHeader className={styles.pageHeader} title="Daily Activity Planner"
+        subtitle="Drag across the grid to create a rule. Click a block to edit it."
+        actions={<div className={styles.toolbarActions}>
           {busy && <span className={styles.status} role="status">{saving ? "Saving…" : "Loading…"}</span>}
           <button type="button" className={styles.refreshButton} onClick={handleRefresh} disabled={busy}>Refresh</button>
-        </div>
-      </header>
+        </div>} />
 
       {activityTypes.length > 0 && (
         <ul className={styles.legend} aria-label="Activity types">

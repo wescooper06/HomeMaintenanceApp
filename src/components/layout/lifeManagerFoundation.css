@@ -1,4 +1,6 @@
 :root {
+  --lm-root-padding: 16px;
+  --lm-navigation-height: 56px;
   --lm-color-navigation: #17324d;
   --lm-color-navigation-hover: #244765;
   --lm-color-navigation-muted: #d0d5dd;
@@ -48,7 +50,7 @@
   --lm-radius-pill: 999px;
   --lm-shadow-overlay: 0 16px 40px rgb(16 24 40 / 18%);
   --lm-font-family: "Segoe UI", Tahoma, sans-serif;
-  --lm-font-page-title: 1.75rem;
+  --lm-font-page-title: 28px;
   --lm-font-section-title: 1.125rem;
   --lm-font-card-title: 1rem;
   --lm-font-body: 1rem;
@@ -63,13 +65,18 @@
   --lm-control-icon: 44px;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 .lm-page-header {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--lm-space-4);
   min-width: 0;
-  margin-bottom: var(--lm-space-6);
+  margin: 0 0 var(--lm-space-6);
+  text-align: left;
 }
 
 .lm-page-heading {
@@ -103,7 +110,7 @@
 .lm-page-eyebrow {
   margin: 0 0 var(--lm-space-1);
   color: var(--lm-color-text-secondary);
-  font-size: var(--lm-font-metadata);
+  font-size: 12px;
   font-weight: 700;
   line-height: var(--lm-line-body);
   letter-spacing: 0.06em;
@@ -117,13 +124,14 @@
   font-size: var(--lm-font-page-title);
   font-weight: 700;
   line-height: var(--lm-line-heading);
+  letter-spacing: normal;
   overflow-wrap: anywhere;
 }
 
 .lm-page-subtitle {
   margin: var(--lm-space-2) 0 0;
   color: var(--lm-color-text-secondary);
-  font-size: var(--lm-font-secondary);
+  font-size: 14px;
   line-height: var(--lm-line-body);
 }
 
@@ -133,6 +141,20 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--lm-space-2);
+}
+
+.lm-page-header--bordered {
+  border-bottom: 1px solid var(--lm-color-border);
+  padding-bottom: var(--lm-space-4);
+}
+
+.lm-page-header--modal {
+  margin: 0;
+  flex: 1;
+}
+
+.lm-page-header--modal .lm-page-title {
+  font-size: var(--lm-font-section-title);
 }
 
 .lm-button {
@@ -439,12 +461,17 @@
 }
 
 @media (max-width: 600px) {
+  :root {
+    --lm-root-padding: 8px;
+    --lm-navigation-height: 60px;
+  }
+
   .lm-owner-controls .lm-button {
     min-height: var(--lm-control-mobile);
   }
 
   .lm-page-header {
-    align-items: stretch;
+    align-items: flex-start;
     flex-direction: column;
     gap: var(--lm-space-3);
     margin-bottom: var(--lm-space-4);

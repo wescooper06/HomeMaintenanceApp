@@ -1,3 +1,4 @@
+import PageHeader from "../../../components/layout/PageHeader.jsx";
 import styles from "../CalendarPage.module.css";
 
 import useCalendarState from "./useCalendarState.js";
@@ -5,10 +6,7 @@ import useCalendarState from "./useCalendarState.js";
 export default function CalendarHeader() {
   const { snapshot, actions } = useCalendarState();
   return (
-    <header className={styles["calendar-header"]}>
-      <div>
-        <h1>Calendar</h1>
-      </div>
+    <PageHeader title="Calendar" actions={
       <div className={styles["calendar-controls"]} aria-label="Calendar month navigation">
         <span id="calendarStatus" className={styles["calendar-status"]} role="status" aria-live="polite">{snapshot.status}</span>
         {snapshot.plannerError && <span role="alert">{snapshot.plannerError}</span>}
@@ -19,6 +17,6 @@ export default function CalendarHeader() {
         <button id="calendarToday" type="button" onClick={() => void actions.navigate("today")}>Today</button>
         <button id="calendarNextMonth" type="button" aria-label="Next month" onClick={() => void actions.navigate(1)}>{"\u25b6"}</button>
       </div>
-    </header>
+    } />
   );
 }

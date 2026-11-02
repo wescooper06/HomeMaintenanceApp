@@ -14,11 +14,9 @@ export default function CalendarPage() {
           background: "var(--surface)",
           border: "1px solid var(--border)",
           borderRadius: "14px",
-          padding: "1rem",
           boxShadow: "0 8px 20px rgba(15, 23, 42, 0.05)",
         }}
       >
-        <div data-main-nav />
         <CalendarHeader />
         <CalendarGrid />
         <CalendarEventDialog />

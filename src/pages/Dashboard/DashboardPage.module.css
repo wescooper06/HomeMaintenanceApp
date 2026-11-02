@@ -12,7 +12,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
   gap: var(--lm-space-4);
-  margin-top: var(--lm-space-4);
+  margin-top: 0;
 }
 
 .stat {

@@ -5,6 +5,7 @@ import { ArrowLeft, CalendarDays, GripVertical } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import { getTrips, updateTrip } from "../../services/tripsService.js";
 import { prioritizedTrips, tripPriority } from "../../utils/priorityUtils.js";
@@ -195,14 +196,12 @@ export default function PrioritizeTrips() {
 
   return (
     <main ref={page} className="prioritize-page">
-      <header className="prioritize-header">
-        <div><p className="trip-eyebrow">Travel priorities</p><h1>Prioritize Trips</h1></div>
-        <div className="prioritize-header-actions">
+      <PageHeader className="prioritize-header" title="Prioritize Trips" eyebrow="Travel priorities"
+        actions={<div className="prioritize-header-actions">
           <span role="status">{syncStatus === "loading" ? "Loading..." : syncStatus === "pending" ? "Changes pending" : syncStatus === "saving" ? "Saving..." : syncStatus === "ready" ? "Synced" : "Sync failed"}</span>
           <Link to="/timeline" aria-disabled={syncStatus !== "ready"} tabIndex={syncStatus === "ready" ? 0 : -1} onClick={(event) => { if (syncStatus !== "ready") event.preventDefault(); }}><CalendarDays size={16} aria-hidden="true" />Timeline</Link>
           <button type="button" disabled={syncStatus !== "ready"} onClick={() => navigate(TRIPS_HOME_ROUTE)}><ArrowLeft size={16} aria-hidden="true" />Back to Trips</button>
-        </div>
-      </header>
+        </div>} />
       {error && <div className="priority-error" role="alert"><p>{error}</p><button type="button" onClick={retry}>Retry</button></div>}
       <div className="prioritize-layout">
         <section className="priority-list" aria-label="Ranked trips">

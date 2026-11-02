@@ -1,6 +1,6 @@
-export default function PageHeader({ title, subtitle, eyebrow, breadcrumbs, backAction, actions }) {
+export default function PageHeader({ id, title, subtitle, eyebrow, breadcrumbs, backAction, actions, className = "" }) {
   return (
-    <header className="lm-page-header">
+    <header id={id} className={`lm-page-header ${className}`.trim()}>
       <div className="lm-page-heading">
         {(breadcrumbs || backAction) && (
           <div className="lm-page-context">

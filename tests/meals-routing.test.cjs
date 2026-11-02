@@ -22,6 +22,11 @@ const { newRecipeFilters } = load("src\\services\\recipeService.js",
 const { navigationLinks, standaloneNavigationHref } = load("src\\components\\layout\\navigationRoutes.js",
   ["navigationLinks", "standaloneNavigationHref"]);
 let MealsPage, Navigation, LifeRoutes, OwnerBoundary, compileComponent;
+const PageHeader = ({ id, title, subtitle, className = "" }) => React.createElement("header", {
+  id, className: `lm-page-header ${className}`.trim(),
+}, React.createElement("div", { className: "lm-page-heading" },
+React.createElement("h1", { className: "lm-page-title" }, title),
+subtitle && React.createElement("p", { className: "lm-page-subtitle" }, subtitle)));
 test.before(async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
   async function compile(relative, name, extra = {}) {
@@ -34,7 +39,8 @@ test.before(async () => {
     });
     return vm.runInNewContext(`(() => { ${code}; return ${name}; })()`, {
       React, Routes, Route, Navigate, NavLink, Link, useLocation, useParams, useNavigate,
-      useState: React.useState, useRef: React.useRef, useEffect: React.useEffect, newRecipeFilters, styles: { active: "active" },
+      useState: React.useState, useRef: React.useRef, useEffect: React.useEffect, newRecipeFilters, PageHeader,
+      styles: { active: "active" },
       lazy: () => () => null, ...extra,
     });
   }

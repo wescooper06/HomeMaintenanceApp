@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import { createTrip } from "../../services/tripsService.js";
 
@@ -44,8 +45,8 @@ export default function NewTrip() {
   }
 
   return (
-    <div className="page">
-      <h1>Create New Trip</h1>
+    <main className="new-trip-page">
+      <PageHeader title="Create New Trip" />
 
       <div className="card">
         <form onSubmit={handleSubmit} aria-busy={saving}>
@@ -111,6 +112,6 @@ export default function NewTrip() {
       <button disabled={saving} className="button-secondary" onClick={() => navigate(TRIPS_HOME_ROUTE)}>
         Cancel
       </button>
-    </div>
+    </main>
   );
 }

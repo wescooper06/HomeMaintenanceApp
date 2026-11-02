@@ -1,7 +1,7 @@
-.timeline-page { box-sizing: border-box; width: 100%; max-width: none; margin: 0; min-height: 100svh; padding: 24px; color: #19353d; background: #f4f6f5; color-scheme: light; text-align: left; letter-spacing: 0; }
-.timeline-page-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.timeline-page { box-sizing: border-box; width: 100%; max-width: none; margin: 0; min-height: calc(100svh - 88px); padding: 24px; color: #19353d; background: #f4f6f5; color-scheme: light; text-align: left; letter-spacing: 0; }
+.timeline-page-header { margin-bottom: 24px; }
 .timeline-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.timeline-page h1 { color: #19353d; font-size: 28px; font-weight: 700; letter-spacing: 0; margin: 6px 0 0; }
+.timeline-page h1:not(.lm-page-title) { color: #19353d; font-size: 28px; font-weight: 700; letter-spacing: 0; margin: 6px 0 0; }
 .timeline-page button { cursor: pointer; }
 .timeline-page-header button, .timeline-page-header a, .timeline-year-form button, .timeline-error button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; min-height: 36px; border: 1px solid #b8cdca; border-radius: 4px; background: #fff; color: #19353d; font: inherit; font-size: 13px; text-decoration: none; }
 .timeline-page-header a[aria-disabled="true"] { opacity: 0.5; cursor: wait; }
@@ -43,6 +43,6 @@
 .timeline-editor-backdrop { position: fixed; z-index: 100; inset: 0; display: flex; justify-content: flex-end; background: rgb(25 53 61 / 36%); }
 .timeline-editor-drawer { box-sizing: border-box; width: min(560px, 62vw); height: 100%; min-width: 0; padding: 16px; overflow: hidden; background: #f4f6f5; box-shadow: -8px 0 28px rgb(25 53 61 / 18%); }
 .timeline-editor-drawer .trip-editor-panel { height: 100%; }
-@media (max-width: 480px) { .timeline-page { padding: 16px; } .timeline-page-header { flex-wrap: wrap; } }
+@media (max-width: 480px) { .timeline-page { padding: 8px; } .timeline-page-header { flex-wrap: wrap; } }
 @media (max-width: 600px) { .timeline-months { gap: 2px; } .timeline-month { padding: 6px 1px; } .month-abbrev { font-size: 0.7rem; } .month-notes { font-size: 0.55rem; } }
 @media (max-width: 600px) { .timeline-editor-drawer { width: 100%; padding: 8px; } }

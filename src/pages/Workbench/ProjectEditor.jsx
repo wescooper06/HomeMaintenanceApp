@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import * as service from "../../services/workbenchService.js";
 import { EDIT_OPTIONS, getEditFields } from "../../services/workbenchService.js";
 
@@ -167,7 +168,8 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
       onClick={(event) => { if (creating && event.target === event.currentTarget) close(); }}>
       <div className={`${styles.modalCard} lm-overlay-panel lm-bottom-sheet`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className={styles.modalHeader}>
-          <h1 id={titleId}>{creating ? "Create Project" : deleteOnly ? "Delete Project" : `Edit Project Details (ID: ${project.id || "-"})`}</h1>
+          <PageHeader title={creating ? "Create Project" : deleteOnly ? "Delete Project" : `Edit Project Details (ID: ${project.id || "-"})`}
+              id={titleId} className="lm-page-header--modal" />
           <button ref={closeButton} className="lm-icon-button" type="button" aria-label="Close" onClick={close}
             disabled={busy || saving}>X</button>
         </div>

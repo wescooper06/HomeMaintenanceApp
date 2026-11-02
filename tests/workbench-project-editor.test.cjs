@@ -40,6 +40,10 @@ async function editorFixture(request, props = { mode: "create" }) {
   });
   const component = vm.runInNewContext(`(() => { ${code}; return ProjectEditor; })()`, {
     element: (type, attributes, ...children) => ({ type, props: attributes || {}, children: children.flat(Infinity).filter(Boolean) }),
+    PageHeader: ({ id, title, className = "" }) => ({
+      type: "header", props: { id, className: `lm-page-header ${className}`.trim() },
+      children: [{ type: "h1", props: { className: "lm-page-title" }, children: [title] }],
+    }),
     useNavigate: () => (...args) => navigation.push(args),
     useState(initial) {
       const index = cursor++;

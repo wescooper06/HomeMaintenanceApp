@@ -5,6 +5,11 @@
   weather-modal-actions: weather-modal-actions;
 }
 
+.plannerScreen {
+  margin-top: 0;
+  padding: var(--lm-space-6);
+}
+
 .material-symbols-rounded {
   direction: ltr;
   display: inline-block;
@@ -30,7 +35,7 @@
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
 }
 
-.planner-screen h1 {
+.plannerScreen h1 {
   margin: 0;
 }
 
@@ -217,6 +222,13 @@
   align-items: flex-start;
 }
 
+.planner-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--lm-space-2);
+}
+
 .planner-status {
   border: 1px solid #dbe3ec;
   background: #f7fbff;
@@ -227,7 +239,10 @@
 }
 
 .planner-top-panels {
-  margin-top: 1rem;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 0;
+  overflow-x: auto;
 }
 
 :global(#planner-top-columns) {
@@ -263,6 +278,12 @@
 .planner-calendar-column {
   flex: 0 0 clamp(230px, 18vw, 270px);
   min-width: 230px;
+}
+
+@media (max-width: 600px) {
+  .plannerScreen {
+    padding: var(--lm-space-2);
+  }
 }
 
 :global(#curated-warning) {
