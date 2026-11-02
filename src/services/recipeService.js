@@ -171,6 +171,10 @@ export function sortRecipes(recipes, key, direction, categories, cuisines) {
     || a.id.localeCompare(b.id));
 }
 
+export function sortRecipeClassifications(values) {
+  return [...values].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+
 export function recipeSourceUrl(source) {
   try {
     const url = new URL(source);

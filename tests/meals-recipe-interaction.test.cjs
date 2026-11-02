@@ -8,7 +8,9 @@ const vm = require("node:vm");
 const root = path.join(__dirname, "..");
 const serviceSource = fs.readFileSync(path.join(root, "src", "services", "recipeService.js"), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
-const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {newRecipe,newRecipeFilters,recipeMatches,recipeSourceUrl,sortRecipes}; })()`);
+const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {
+  newRecipe,newRecipeFilters,recipeMatches,recipeSourceUrl,sortRecipeClassifications,sortRecipes
+}; })()`);
 const initial = () => ({ id: randomUUID(), title: "", source: "", category_id: null, cuisine_id: null,
   instructions: "", favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }] });
 let compiled;
@@ -505,16 +507,23 @@ test("default Ingredients, add/remove section, empty ingredients and edit model"
   assert.equal(nodes(tree).filter((n) => n.type === "textarea").length, 1);
 });
 
-test("favorite stops propagation and never invokes navigation; single/bulk confirmation callbacks are explicit", () => {
+test("favorite off/on state is accessible and independent of Recipe row navigation", async () => {
   const h = harness();
   const recipe = { ...initial(), title: "Favorite me" };
   const toggles = [];
-  const tree = h.Favorite({ recipe, onChange: (value) => toggles.push(value.id), pending: false });
+  let tree = h.Favorite({ recipe, onChange: (value) => toggles.push(value.id), pending: false, compact: true });
+  assert.equal(tree.props["aria-label"], "Favorite Favorite me");
+  assert.equal(tree.props["aria-pressed"], false);
+  assert.equal(text(tree), "\u2606Favorite");
   let stopped = false;
   tree.props.onClick({ stopPropagation() { stopped = true; } });
   assert(stopped);
   assert.deepEqual(toggles, [recipe.id]);
   assert.deepEqual(h.navigations, []);
+  tree = h.Favorite({ recipe: { ...recipe, favorite: true }, onChange() {}, pending: false, compact: true });
+  assert.equal(tree.props["aria-label"], "Unfavorite Favorite me");
+  assert.equal(tree.props["aria-pressed"], true);
+  assert.match(text(tree), /^\u2605/);
   for (const count of [1, 3]) {
     let deleted = 0, cancelled = 0;
     const dialog = h.DeleteConfirmation({ count, pending: false, onCancel() { cancelled++; }, onDelete() { deleted++; } });
@@ -524,6 +533,13 @@ test("favorite stops propagation and never invokes navigation; single/bulk confi
     button(dialog, "Confirm delete").props.onClick();
     assert.equal(deleted, 1);
   }
+});
+
+test("Favorite styling emphasizes the yellow/gold selected star without enlarging its row", () => {
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Meals", "MealsPage.module.css"), "utf8");
+  assert.match(css, /\.favorite\[aria-pressed="true"\]\s*\{[^}]*color:\s*#825b00[^}]*background:\s*#fff1bd/);
+  assert.match(css, /\.favoriteCompact\s*\{[^}]*width:\s*var\(--lm-control-mobile\)[^}]*min-height:\s*var\(--lm-control-mobile\)/);
+  assert.match(css, /\.favoriteCompact\s*>\s*span\[aria-hidden="true"\]\s*\{[^}]*font-size:\s*1\.5rem/);
 });
 
 test("Recipe Library keeps one compact source-free row with selection and title navigation", async () => {
@@ -567,23 +583,55 @@ test("Recipe Detail renders URL host labels, plain-text sources, and no fabricat
   assert(!nodes(absent).some((node) => node.type.name === "Source"));
 });
 
+test("Recipe Detail exposes Category and Cuisine as labeled metadata with safe missing states", async () => {
+  for (const [categoryId, cuisineId, expected] of [
+    ["category-1", "cuisine-1", ["Dinner", "Italian"]],
+    [null, null, ["Not set", "Not set"]],
+  ]) {
+    const recipe = { ...initial(), title: "Recipe metadata fixture", category_id: categoryId, cuisine_id: cuisineId };
+    const h = harness({ get: async () => recipe,
+      categories: { list: async () => [{ id: "category-1", name: "Dinner" }] },
+      cuisines: { list: async () => [{ id: "cuisine-1", name: "Italian" }] } });
+    h.render(h.RecipeDetail); await flush();
+    const tree = h.render(h.RecipeDetail);
+    const metadata = nodes(tree).find((node) => node.type === "dl");
+    assert(metadata);
+    assert.deepEqual(nodes(metadata).filter((node) => node.type === "dt").map(text), ["Category", "Cuisine"]);
+    assert.deepEqual(nodes(metadata).filter((node) => node.type === "dd").map(text), expected);
+    assert(!nodes(metadata).some((node) => node.type === "h2" && text(node) === "Ingredients"));
+  }
+});
+
 test("Recipe Editor can create Category and Cuisine values from compact controls", async () => {
   for (const [kind, label] of [["categories", "Category"], ["cuisines", "Cuisine"]]) {
-    let values = [{ id: "existing", name: "Existing" }];
-    let selected = "existing";
+    let values = [
+      { id: "instant", name: "Instant Pot" },
+      { id: "soup", name: "Soup" },
+      { id: "air-fryer", name: "Air Fryer" },
+      { id: "cuisinart", name: "Cuisinart" },
+    ];
+    let selected = "instant";
     const h = harness({ [kind]: { create: async (name) => ({ id: "created", name }) } });
     const props = { kind, label, values, value: selected,
       onChange(next) { values = next; }, onSelect(next) { selected = next; }, onBusy() {} };
     let tree = h.render(h.Classification, props);
+    const optionNames = () => nodes(tree).find((node) => node.type === "select")
+      .children.filter((node) => node.type === "option" && node.props.value !== "")
+      .map(text);
+    assert.deepEqual(optionNames().slice(0, -1), ["Air Fryer", "Cuisinart", "Instant Pot", "Soup"]);
+    assert.equal(nodes(tree).find((node) => node.type === "select").props.value, "instant");
     labeledInput(tree, `Select ${label}`).props.onChange({ target: { value: `create-${kind}` } });
     tree = h.render(h.Classification, { ...props, values, value: selected });
-    change(labeledInput(tree, `New ${label.toLowerCase()} name`), `New ${label}`);
+    change(labeledInput(tree, `New ${label.toLowerCase()} name`), "Baking");
     tree = h.render(h.Classification, { ...props, values, value: selected });
     button(tree, `Create ${label}`).props.onClick();
     await flush();
     tree = h.render(h.Classification, { ...props, values, value: selected });
-    assert.deepEqual(Array.from(values, (value) => value.name), ["Existing", `New ${label}`]);
+    assert.deepEqual(Array.from(values, (value) => value.name),
+      ["Air Fryer", "Baking", "Cuisinart", "Instant Pot", "Soup"]);
     assert.equal(selected, "created");
+    assert.deepEqual(optionNames(), ["Air Fryer", "Baking", "Cuisinart", "Instant Pot", "Soup",
+      `Create new ${label.toLowerCase()}...`]);
     assert(!nodes(tree).some((node) => node.type === "input" && text(node) === "New"));
   }
 });
@@ -623,7 +671,7 @@ test("library loading/error/retry, empty and filtered zero-result states", async
   assert.match(text(tree), /Soup/);
 });
 
-test("Library filter overlay supports multi-select, reset, apply, Escape and preserved filter state", async () => {
+test("Library filter overlay sorts choices and supports multi-select, reset, apply, Escape and preserved filter state", async () => {
   const categories = [{ id: "c1", name: "Dinner" }, { id: "c2", name: "Lunch" }, { id: "c3", name: "Breakfast" }];
   const cuisines = [{ id: "u1", name: "French" }, { id: "u2", name: "Italian" }, { id: "u3", name: "Greek" }];
   const recipes = [
@@ -646,6 +694,13 @@ test("Library filter overlay supports multi-select, reset, apply, Escape and pre
   assert.equal(filterElement().props.filters.search, "");
   const dialogHarness = harness();
   function dialogTree() { return dialogHarness.render(dialogHarness.RecipeFilterDialog, filterElement().props); }
+  const optionNames = (dialog, label) => {
+    const group = nodes(dialog).find((node) => node.props.role === "group"
+      && node.props["aria-label"] === `Filter Recipes by ${label}`);
+    return nodes(group).filter((node) => node.type === "label").map(text);
+  };
+  assert.deepEqual(optionNames(dialogTree(), "Category"), ["Breakfast", "Dinner", "Lunch"]);
+  assert.deepEqual(optionNames(dialogTree(), "Cuisine"), ["French", "Greek", "Italian"]);
   function select(label, name, checked) {
     const dialog = dialogTree();
     assert.equal(dialog.type, "dialog");
@@ -836,5 +891,15 @@ test("persisted Recipe Favorite mutation failure preserves state and can be retr
   assert.equal(favorite.props["aria-pressed"], true);
   assert.match(text(favorite), /Unfavorite/);
   assert.equal(nodes(tree).some((n) => n.props.role === "alert"), false);
+  assert.equal(h.navigations.length, 0);
+
+  favorite.props.onClick({ stopPropagation() {} });
+  await flush();
+  tree = h.render(h.RecipeLibrary);
+  favoriteElement = nodes(tree).find((n) => n.type.name === "Favorite");
+  favorite = h.Favorite(favoriteElement.props);
+  assert.equal(attempts, 3);
+  assert.equal(favorite.props["aria-pressed"], false);
+  assert.match(text(favorite), /Favorite/);
   assert.equal(h.navigations.length, 0);
 });

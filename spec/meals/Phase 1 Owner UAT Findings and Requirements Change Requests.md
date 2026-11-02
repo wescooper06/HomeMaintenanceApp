@@ -2324,3 +2324,42 @@ Mobile + Recipe-link behavior. No owner migration/security/failure-injection
 retest. Drag/drop/touch rescheduling remains the separate post-Wave-1
 requirements/schema-review enhancement above. No next wave, Recipe Import,
 CR-4/6/7 or UX redesign.
+
+## Meals UX owner UAT — repair required
+
+Owner-reported UAT disposition, 2026-11-02, for the Meals UX release:
+
+1. **Recipe Library: PASS WITH REFINEMENTS**
+   - Enlarge and emphasize the Favorite star; show enabled Favorite in yellow/gold.
+   - Sort Category and Cuisine filter choices alphabetically.
+   - Insert newly created Category/Cuisine values into alphabetical order.
+2. **Recipe Detail: PASS WITH REFINEMENTS**
+   - Clearly label Category and Cuisine as Recipe metadata, visually distinct
+     from Ingredient content.
+3. **Recipe Editor: PASS WITH REFINEMENTS**
+   - Sort Category and Cuisine choices alphabetically, including newly created
+     custom values, while preserving selection.
+4. **Shopping desktop: FAIL**
+   - Replace the ambiguous `⋯` row action with a clear Item Actions control.
+   - Visually distinguish Category headers from food rows.
+   - Collapse a Category only after its final incomplete item is successfully
+     checked; keep the header visible and allow reopening to review checked items.
+5. **Meals mobile: FAIL**
+   - Apply the same Shopping action, hierarchy and completed-Category behavior.
+   - Preserve touch usability and avoid page-level horizontal scrolling.
+
+**Overall: FAIL.** Remaining Meals UX issues are the refinements and repairs
+above. The Meals UX remains open pending owner re-test; it is not accepted or
+complete. Deferred: General Recipe URL Import, meal drag/drop rescheduling,
+Workbench filter Select All / Clear All, and Remaining-app UX. No workbook,
+Requirements Specification, database, Auth/security configuration, or
+production data is changed by recording this disposition.
+
+## Meals UX repair implementation
+
+Technical validation passed; owner re-test remains pending. This repair is
+independently reversible;
+the accepted Foundation, Planner work, and core Meals Library/Detail/Editor UX
+remain in scope only as preservation boundaries. No database or Auth/security
+changes are authorized. Do not mark Meals UX accepted until the owner passes
+the focused re-test.
