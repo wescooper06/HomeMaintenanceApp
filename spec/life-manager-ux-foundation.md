@@ -6,7 +6,7 @@ The approved visual direction is [Life_Manager_UX_Proposal_v2.pptx](https://1drv
 
 The v2 deck guides shared appearance; this implementation foundation does not turn its page mockups into authorization for page-specific redesigns. It standardizes the navigation shell and shared page-header hierarchy across Life Manager destinations; representative surface and workflow styling remains limited to Dashboard, Workbench, and the existing Workbench Project Editor overlay.
 
-Preserve all route, account, task, project, Recipe, Shopping, Planner, Meals, Trips, and persistence behavior. This work does not change database/Auth configuration, the Acceptance Workbook, production data, or SQL guards. Full Planner, Recipe, Shopping, Project, Trips, and Dashboard redesigns and the deferred cross-page UX pass remain out of scope.
+Preserve all route, account, task, project, Recipe, Shopping, Planner, Meals, Trips, and persistence behavior. This foundation does not change database/Auth configuration, the Acceptance Workbook, production data, or SQL guards. The separately authorized Planner UX wave is documented in [planner-ux-wave.md](./planner-ux-wave.md); the Meals page and other redesign waves remain separate work.
 
 ## Shared design tokens
 
@@ -56,6 +56,7 @@ Correct usage: use a token or shared primitive for a common control, surface, or
 - Workbench filter checklists remain open during interaction inside the checklist, close on outside pointer/tap or Escape, and preserve selected values when closed and reopened. Opening one checklist closes the previously open checklist without reflowing page content.
 - Show keyboard focus with a high-contrast visible outline. Honor reduced-motion preferences.
 - Keep disabled states distinct and non-interactive.
+- The Planner uses the separate desktop/mobile compositions in [planner-ux-wave.md](./planner-ux-wave.md); this does not authorize changes to other modules.
 - Use at least 44px touch targets on mobile for controls, including modal actions and multi-select options.
 - Keep the existing Project Editor focus-on-open and focus-restoration behavior; constrain Tab navigation to the dialog; Escape closes it; prevent background scrolling while it is open.
 - Preserve the existing create-overlay backdrop dismissal and the edit-overlay behavior. Do not change project save/delete workflows.
