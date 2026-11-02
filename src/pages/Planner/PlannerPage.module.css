@@ -286,12 +286,8 @@
   }
 }
 
-.planner-mobile-add {
+.planner-mobile-controls {
   display: none;
-}
-
-.planner-mobile-panels {
-  min-width: 0;
 }
 
 :global(#curated-warning) {
@@ -1026,15 +1022,6 @@
   min-width: 0;
   border-top: 1px solid var(--lm-color-border);
   padding-top: 0.4rem;
-}
-
-.slot-task-region-label {
-  margin: 0 0 0.35rem;
-  color: var(--lm-color-text-secondary);
-  font-size: var(--lm-font-metadata);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .weekly-insertion-target {
@@ -1803,35 +1790,48 @@
 }
 
 @media (max-width: 700px) {
-  .planner-mobile-add {
-    display: block;
+  .planner-mobile-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--lm-space-2);
     margin-bottom: var(--lm-space-2);
   }
 
-  .planner-mobile-add button {
-    min-width: 6rem;
+  .planner-mobile-controls button {
     min-height: var(--lm-control-mobile);
     border: 1px solid var(--lm-color-primary);
     border-radius: var(--lm-radius-control);
     background: var(--lm-color-primary);
     color: var(--lm-color-text-on-primary);
-    padding: 0.5rem 0.85rem;
+    padding: 0.5rem 0.75rem;
     font: inherit;
     font-weight: 700;
     cursor: pointer;
   }
 
-  .planner-mobile-add button:focus-visible {
+  .planner-mobile-controls button:focus-visible {
     outline: 2px solid var(--lm-color-focus);
     outline-offset: 2px;
   }
 
-  .planner-mobile-panels:not(.is-mobile-open) {
-    display: none;
-  }
-
   .planner-top-panels {
     overflow: visible;
+  }
+
+  .planner-top-panels :global(#planner-top-columns) {
+    display: block;
+  }
+
+  .planner-mobile-panel {
+    display: none;
+    min-width: 0;
+  }
+
+  .planner-top-panels[data-mobile-panel="adhoc"] .planner-mobile-panel-adhoc,
+  .planner-top-panels[data-mobile-panel="parking"] .planner-mobile-panel-parking,
+  .planner-top-panels[data-mobile-panel="calendar"] .planner-mobile-panel-calendar {
+    display: block;
+    width: 100%;
   }
 
   :global(#curated-left),
@@ -1928,12 +1928,29 @@
     padding: 0.55rem;
   }
 
+  .slot-task-handle {
+    display: none;
+  }
+
+  .slot-task-header-actions {
+    flex-wrap: nowrap;
+    flex: 0 0 auto;
+    gap: 0.1rem;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .slot-task-header .slot-task-title {
+    flex: 1 1 100%;
+  }
+
   .slot-task-header-actions > button,
   .slot-task-header-actions > input[type="checkbox"],
-  .slot-task .move-task-icon,
-  .slot-task-handle {
+  .slot-task .move-task-icon {
     box-sizing: border-box;
-    min-width: var(--lm-control-mobile);
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
     min-height: var(--lm-control-mobile);
   }
 
@@ -1941,12 +1958,11 @@
   .slot-task .slot-task-checklist-button,
   .slot-task .slot-task-series-button,
   .slot-task .move-task-icon {
-    width: var(--lm-control-mobile);
     height: var(--lm-control-mobile);
   }
 
   .slot-task-header-actions > input[type="checkbox"] {
-    width: var(--lm-control-mobile);
+    width: 40px;
     height: var(--lm-control-mobile);
     margin: 0;
   }

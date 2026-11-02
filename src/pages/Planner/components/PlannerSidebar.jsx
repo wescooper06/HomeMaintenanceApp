@@ -8,12 +8,17 @@ import ProjectCard, { RepeatableCard } from "./ProjectCard.jsx";
 import { usePlanner } from "./usePlanner.js";
 import usePlannerDrag from "./usePlannerDrag.js";
 
-export default function PlannerSidebar() {
+export default function PlannerSidebar({ mobilePanel, onMobilePanelChange }) {
   const { snapshot, actions } = usePlanner();
   const drag = usePlannerDrag();
   const [title, setTitle] = useState("");
   const [day, setDay] = useState("mon");
   const [slot, setSlot] = useState("morning");
+  const mobileControls = [
+    { panel: "adhoc", label: "Ad-Hoc Task", target: "adhoc-right" },
+    { panel: "parking", label: "Task Parking Lot", target: "parking-lot-column" },
+    { panel: "calendar", label: "Calendar", target: "mini-calendar-column" },
+  ];
   const renderProjects = (side) => snapshot.curatedTasks.map((task, index) => ({ task, index }))
     .filter(({ index }) => index % 2 === (side === "left" ? 0 : 1))
     .map(({ task, index }) => <ProjectCard key={task.taskId} task={task} index={0} globalIndex={index} />);
@@ -47,9 +52,19 @@ export default function PlannerSidebar() {
     if (actions.addAdHocTask(title, day, slot)) { setTitle(""); setDay("mon"); setSlot("morning"); }
   };
   return (
-    <section className={styles["planner-top-panels"]} aria-label="Task assignment panels">
-      <div id="planner-top-columns">
-        <section id="curated-left" className={`${styles["planner-pool"]} ${styles["curated-drop-zone"]} ${drag.dropTarget.startsWith("curated:left:") ? styles["drag-over"] : ""}`} aria-label="Projects left column" {...dropHandlers("left")}>
+    <>
+      <nav className={styles["planner-mobile-controls"]} aria-label="Mobile Planner controls">
+        {mobileControls.map(({ panel, label, target }) => {
+          const expanded = mobilePanel === panel;
+          return <button key={panel} type="button" aria-controls={target} aria-expanded={expanded}
+            onClick={() => onMobilePanelChange((current) => current === panel ? null : panel)}>
+            {expanded ? `Close ${label}` : `+ ${label}`}
+          </button>;
+        })}
+      </nav>
+      <section className={styles["planner-top-panels"]} data-mobile-panel={mobilePanel || "closed"} aria-label="Task assignment panels">
+        <div id="planner-top-columns">
+        <section id="curated-left" className={`${styles["planner-pool"]} ${styles["planner-mobile-panel"]} ${styles["planner-mobile-panel-projects"]} ${styles["curated-drop-zone"]} ${drag.dropTarget.startsWith("curated:left:") ? styles["drag-over"] : ""}`} aria-label="Projects left column" {...dropHandlers("left")}>
           <h2>Projects</h2>
           <div id="curated-warning" style={{ display: snapshot.warning ? "block" : "none" }}>{snapshot.warning}</div>
           <div id="plannerTaskPoolLeft" className={styles["planner-task-pool"]} data-curated-column="left" aria-live="polite">
@@ -57,12 +72,12 @@ export default function PlannerSidebar() {
           </div>
         </section>
 
-        <section id="curated-middle" className={`${styles["planner-pool"]} ${styles["curated-drop-zone"]} ${drag.dropTarget.startsWith("curated:middle:") ? styles["drag-over"] : ""}`} aria-label="Projects middle column" {...dropHandlers("middle")}>
+        <section id="curated-middle" className={`${styles["planner-pool"]} ${styles["planner-mobile-panel"]} ${styles["planner-mobile-panel-projects"]} ${styles["curated-drop-zone"]} ${drag.dropTarget.startsWith("curated:middle:") ? styles["drag-over"] : ""}`} aria-label="Projects middle column" {...dropHandlers("middle")}>
           <h2>Projects</h2>
           <div id="plannerTaskPoolMiddle" className={styles["planner-task-pool"]} data-curated-column="middle" aria-live="polite">{renderProjects("middle")}</div>
         </section>
 
-        <section id="adhoc-right" className={styles["planner-adhoc-column"]} aria-label="Add ad-hoc task panel">
+        <section id="adhoc-right" className={`${styles["planner-adhoc-column"]} ${styles["planner-mobile-panel"]} ${styles["planner-mobile-panel-adhoc"]}`} aria-label="Add ad-hoc task panel">
           <h2>Add Ad-Hoc Task</h2>
           <div className={styles["planner-adhoc-panel"]}>
             <div className={styles["adhoc-form"]}>
@@ -91,21 +106,22 @@ export default function PlannerSidebar() {
           </div>
         </section>
 
-        <section id="repeatable-right" className={styles["planner-repeatable-column"]} aria-label="Repeatable tasks panel">
+        <section id="repeatable-right" className={`${styles["planner-repeatable-column"]} ${styles["planner-mobile-panel"]} ${styles["planner-mobile-panel-repeatable"]}`} aria-label="Repeatable tasks panel">
           <h2>Repeatable Tasks</h2>
           <div id="repeatable-tasks-panel" className={styles["repeatable-task-panel"]} aria-live="polite">
             {snapshot.repeatableTasks.length ? snapshot.repeatableTasks.map((task) => <RepeatableCard key={task.projectId} task={task} />)
               : <div className={styles["pool-empty"]}>No repeatable tasks found.</div>}
           </div>
         </section>
-        <section id="parking-lot-column" className={styles["planner-parking-column"]} aria-label="Task parking lot panel">
+        <section id="parking-lot-column" className={`${styles["planner-parking-column"]} ${styles["planner-mobile-panel"]} ${styles["planner-mobile-panel-parking"]}`} aria-label="Task parking lot panel">
           <div id="parking-lot-host">{!snapshot.loading && <ParkingLot />}</div>
         </section>
-        <section id="mini-calendar-column" className={styles["planner-calendar-column"]} aria-label="Mini calendar panel">
+        <section id="mini-calendar-column" className={`${styles["planner-calendar-column"]} ${styles["planner-mobile-panel"]} ${styles["planner-mobile-panel-calendar"]}`} aria-label="Mini calendar panel">
           <h2>Task Calendar</h2>
           <div id="mini-calendar">{!snapshot.loading && <MiniCalendar />}</div>
         </section>
-      </div>
-    </section>
+        </div>
+      </section>
+    </>
   );
 }

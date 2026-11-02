@@ -84,8 +84,22 @@ test("WP-FUNC-006/007/008/011/012, WP-UI-004/VAL-001: direct choice, title-only 
   h.render(h.MealEntryDialog, props); await flush(); let t = h.render(h.MealEntryDialog, props);
   const picker = () => nodes(t).filter((n) => n.type === "label" && nodes(n).some((i) => i.type === "input" && i.props.name === "meal-recipe"));
   assert.deepEqual(picker().map(text), ["Alpha", "\u2605 Zulu"]);
+  const alphaRadio = nodes(picker().find((label) => text(label) === "Alpha"))
+    .find((node) => node.type === "input" && node.props.name === "meal-recipe");
+  alphaRadio.props.onChange();
+  t = h.render(h.MealEntryDialog, props);
   const search = nodes(t).find((n) => n.type === "input" && n.props.type === "search");
-  search.props.onChange({ target: { value: "hiddenmatch" } }); t = h.render(h.MealEntryDialog, props);
+  search.props.onChange({ target: { value: "zUlU" } }); t = h.render(h.MealEntryDialog, props);
+  assert.deepEqual(picker().map(text), ["\u2605 Zulu"], "Recipe titles filter case-insensitively");
+  assert.equal(nodes(t).filter((node) => node.type === "button" && text(node) === "Add to Planner")
+    .every((node) => !node.props.disabled), true, "filtering preserves the selected Recipe");
+  button(t, "Clear Recipe search").props.onClick(); t = h.render(h.MealEntryDialog, props);
+  assert.deepEqual(picker().map(text), ["Alpha", "\u2605 Zulu"], "clear restores all Recipes");
+  assert(nodes(picker().find((label) => text(label) === "Alpha"))
+    .find((node) => node.type === "input" && node.props.name === "meal-recipe").props.checked,
+  "clear preserves the current Recipe selection");
+  const clearedSearch = nodes(t).find((n) => n.type === "input" && n.props.type === "search");
+  clearedSearch.props.onChange({ target: { value: "hiddenmatch" } }); t = h.render(h.MealEntryDialog, props);
   assert.equal(picker().length, 0); assert(text(t).includes("No matching Recipe titles"));
   nodes(t).find((n) => n.type === "label" && text(n) === "Free text").children[0].props.onChange();
   t = h.render(h.MealEntryDialog, props);
@@ -98,6 +112,32 @@ test("WP-FUNC-006/007/008/011/012, WP-UI-004/VAL-001: direct choice, title-only 
   t.props.onKeyDown({ key: "Escape", preventDefault() {}, stopPropagation() {} }); assert.equal(closes, 2);
   await nodes(t).find((n) => n.type === "form").props.onSubmit({ preventDefault() {} });
   assert.equal(added[0].display_text, "  Custom meal  "); assert.equal(added[0].recipe_id, null);
+});
+test("Add Meal presents top and bottom actions on one form with matching validation and Cancel behavior", async () => {
+  const recipe = { id: randomUUID(), title: "Lunch" };
+  let closed = 0;
+  const h = harness(code, { createRecipeService: () => ({ list: async () => [recipe] }),
+    createMealPlannerService: () => ({ create: async () => { throw new Error("Cancel should not save"); } }) });
+  const props = { date: "2026-11-02", meal: "lunch", onClose: () => closed++, onAdded() {} };
+  h.render(h.MealEntryDialog, props); await flush();
+  let tree = h.render(h.MealEntryDialog, props);
+  const form = nodes(tree).find((node) => node.type === "form");
+  const actionSets = nodes(form).filter((node) => node.props["data-action-position"]);
+  assert.deepEqual(actionSets.map((node) => node.props["data-action-position"]), ["top", "bottom"]);
+  let submitButtons = nodes(form).filter((node) => node.type === "button" && node.props.type === "submit");
+  assert.equal(submitButtons.length, 2);
+  assert(submitButtons.every((node) => node.props.disabled), "both submit buttons share the same initial validation");
+  const radio = nodes(tree).find((node) => node.type === "input" && node.props.name === "meal-recipe");
+  radio.props.onChange();
+  tree = h.render(h.MealEntryDialog, props);
+  const sharedForm = nodes(tree).find((node) => node.type === "form");
+  submitButtons = nodes(sharedForm).filter((node) => node.type === "button" && node.props.type === "submit");
+  assert(submitButtons.every((node) => !node.props.disabled), "both submit buttons enable for the same selected Recipe");
+  await Promise.all(actionSets.map(async (actionSet) => {
+    const cancel = nodes(actionSet).find((node) => node.type === "button" && node.children[0] === "Cancel");
+    cancel.props.onClick();
+  }));
+  assert.equal(closed, 2, "Cancel from either position closes the same dialog");
 });
 test("Planner meal rows compactly group multiple meals and expose labeled add, edit, recipe and remove actions", async () => {
   const recipeId = randomUUID();

@@ -23,3 +23,10 @@ The approved direction is [Life_Manager_UX_Proposal_v2.pptx](https://1drv.ms/p/c
 Preserve task types, colors, completion, checklist interactions, task actions, and existing task drag/drop. Remove only the owner-rejected “Use this checklist for future tasks” control. Meal drag/drop rescheduling, Workbench filter Select All / Clear All, Meals page UX, and other module UX waves remain deferred.
 
 No database, persistence-schema, RLS, grant, policy, Auth, or production-data changes are part of this UX wave.
+
+## Owner UAT repair
+
+- Keep the Meal and Task regions distinct without a redundant visible Tasks heading.
+- Add Meal uses one form with matching Cancel and Add to Planner actions at the top and bottom; Recipe titles can be filtered case-insensitively and the selection is retained when the list is filtered.
+- Mobile controls separately reveal Ad-Hoc Task, Task Parking Lot, and Task Calendar. Projects and Repeatable assignment panels remain desktop-only; their scheduled task occurrences stay visible in the selected-day view.
+- Mobile task actions stay on one row, and the task drag handle is hidden only on mobile. Desktop task drag/drop and all persistence behavior remain unchanged.
