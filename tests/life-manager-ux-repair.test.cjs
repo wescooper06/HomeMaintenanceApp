@@ -59,7 +59,6 @@ test("module page headings use the shared header hierarchy and responsive spacin
     ["src", "pages", "Planner", "components", "PlannerHeader.jsx"],
     ["src", "pages", "Calendar", "components", "CalendarHeader.jsx"],
     ["src", "pages", "ActivityPlanner", "DailyActivityPlanner.jsx"],
-    ["src", "pages", "Meals", "MealsPage.jsx"],
     ["src", "pages", "Trips", "TripsHome.jsx"],
     ["src", "pages", "Trips", "TimelineView.jsx"],
     ["src", "pages", "Trips", "PrioritizeTrips.jsx"],
@@ -68,6 +67,8 @@ test("module page headings use the shared header hierarchy and responsive spacin
     ["src", "pages", "Workbench", "ProjectEditor.jsx"],
   ];
   for (const file of headers) assert.match(read(...file), /<PageHeader\b/, file.join("\\"));
+  assert.match(read("src", "pages", "Meals", "RecipeCore.jsx"), /<PageHeader\b/);
+  assert.match(read("src", "pages", "Meals", "ShoppingPage.jsx"), /<PageHeader\b/);
   assert.match(foundation, /\.lm-page-header\s*\{[^}]*align-items:\s*center/);
   assert.match(foundation, /\.lm-page-title\s*\{[^}]*font-size:\s*var\(--lm-font-page-title\)/);
   assert.match(foundation, /--lm-font-page-title:\s*28px/);
@@ -77,7 +78,7 @@ test("module page headings use the shared header hierarchy and responsive spacin
   assert.match(read("src", "pages", "Trips", "NewTrip.jsx"), /<main className="new-trip-page">[\s\S]*<PageHeader/);
   assert.match(read("trips", "src", "index.css"), /\.new-trip-page\s*\{[^}]*padding:\s*24px/);
   assert.match(read("src", "pages", "Meals", "MealsPage.module.css"),
-    /\.meals\s*\{[^}]*max-width:\s*none[^}]*padding:\s*0 24px/);
+    /\.meals\s*\{[^}]*max-width:\s*1440px[^}]*padding:\s*0 24px/);
   assert.match(read("src", "pages", "Calendar", "CalendarPage.module.css"),
     /@media \(max-width:\s*600px\)[\s\S]*\.calendar-screen\s*\{[^}]*margin-top:\s*0[^}]*padding:\s*7px 7px/);
   assert.match(read("src", "pages", "ActivityPlanner", "DailyActivityPlanner.module.css"),

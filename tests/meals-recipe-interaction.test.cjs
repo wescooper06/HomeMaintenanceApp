@@ -8,7 +8,7 @@ const vm = require("node:vm");
 const root = path.join(__dirname, "..");
 const serviceSource = fs.readFileSync(path.join(root, "src", "services", "recipeService.js"), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
-const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {newRecipe,newRecipeFilters,recipeMatches,sortRecipes}; })()`);
+const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {newRecipe,newRecipeFilters,recipeMatches,recipeSourceUrl,sortRecipes}; })()`);
 const initial = () => ({ id: randomUUID(), title: "", source: "", category_id: null, cuisine_id: null,
   instructions: "", favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }] });
 let compiled;
@@ -24,15 +24,22 @@ function harness(service = {}) {
   let index = 0, blocking;
   const blocker = { state: "unblocked", reset() { blocker.state = "unblocked"; }, proceed() { navigations.push("discard"); } };
   const context = {
-    element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter((v) => v !== null && v !== undefined && v !== false) }),
-    fragment: "fragment", Link: "link", RecipeShopping: "recipe-shopping", MealEntryDialog: "meal-entry-dialog", styles: {}, createRecipeService: () => service, ...helpers,
+    element: (type, props, ...children) => ({
+      type, props: props || {},
+      children: (type === "page-header" ? [props?.backAction, props?.title, props?.subtitle, props?.actions, ...children] : children)
+        .flat(Infinity).filter((v) => v !== null && v !== undefined && v !== false),
+    }),
+    fragment: "fragment", Link: "link", PageHeader: "page-header",
+    RecipeShopping: "recipe-shopping", MealEntryDialog: "meal-entry-dialog", styles: {}, URL,
+    createRecipeService: () => service, document: { activeElement: { focus() {} } }, ...helpers,
     confirm: () => { assert.fail("Classification errors must not use the browser confirmation dialog"); },
     useState(value) {
       const i = index++;
       if (!(i in slots)) slots[i] = typeof value === "function" ? value() : value;
       return [slots[i], (next) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }];
     },
-    useRef(value) { const i = index++; if (!(i in slots)) slots[i] = { current: value }; return slots[i]; },
+    useRef(value) { const i = index++; if (!(i in slots)) slots[i] = { current: value === null
+      ? { showModal() {}, close() {}, focus() {} } : value }; return slots[i]; },
     useEffect(effect, dependencies) {
       const i = index++;
       if (!slots[i] || dependencies.some((v, j) => v !== slots[i].dependencies[j])) {
@@ -45,7 +52,8 @@ function harness(service = {}) {
     window: { addEventListener: (key, fn) => listeners.set(key, fn), removeEventListener: (key) => listeners.delete(key) },
   };
   const components = vm.runInNewContext(`(() => { ${compiled}; return {
-    EditorForm, ErrorMessage, Favorite, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor, Classification, ClassificationFilter, instructionLines, ingredientPasteText
+    EditorForm, ErrorMessage, Favorite, Source, DeleteConfirmation, RecipeLibrary, RecipeDetail, RecipeEditor,
+    Classification, RecipeFilterDialog, instructionLines, ingredientPasteText
   }; })()`, context);
   let filters = helpers.newRecipeFilters();
   const setFilters = (next) => { filters = typeof next === "function" ? next(filters) : next; };
@@ -63,7 +71,7 @@ function nodes(tree) {
 function text(tree) { return typeof tree === "object" ? tree.children.map(text).join("") : String(tree); }
 function button(tree, label) { return nodes(tree).find((n) => n.type === "button" && text(n) === label); }
 function labeledInput(tree, label) {
-  return nodes(tree).find((n) => n.type === "label"
+  return nodes(tree).find((n) => n.props["aria-label"] === label) || nodes(tree).find((n) => n.type === "label"
     && n.children.filter((value) => typeof value !== "object").join("") === label)
     .children.find((n) => typeof n === "object");
 }
@@ -205,9 +213,9 @@ test("Ingredient typing and untouched legacy data survive Save, while Instructio
     const props = { initial: { ...initial(), title: "Existing", ingredient_sections: [{ name: "Legacy", text: legacy }],
       instructions: "\nMix\n\nBake\n" }, categories: [], cuisines: [], edit: true };
     let tree = h.render(h.EditorForm, props);
-    for (const label of ["Title", "Source", "Instructions"]) assert.equal(labeledInput(tree, label).props.onPaste, undefined);
+    for (const label of ["Recipe Title", "Source", "Instructions"]) assert.equal(labeledInput(tree, label).props.onPaste, undefined);
     if (typed !== null) change(labeledInput(tree, "Ingredient text"), typed);
-    change(labeledInput(tree, "Title"), "Unrelated change");
+    change(labeledInput(tree, "Recipe Title"), "Unrelated change");
     tree = h.render(h.EditorForm, props);
     await nodes(tree).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
     assert.equal(submitted.ingredient_sections[0].text, typed ?? legacy);
@@ -245,7 +253,7 @@ test("Recipe Detail renders semantic numbered Instructions or the explicit empty
     await flush();
     const tree = h.render(h.RecipeDetail);
     const list = nodes(tree).find((node) => node.type === "ol");
-    const heading = nodes(tree).find((node) => node.type === "h3" && text(node) === "Instructions");
+    const heading = nodes(tree).find((node) => node.type === "h2" && text(node) === "Instructions");
     assert(heading);
     assert.equal(nodes(tree).filter((node) => node.type === "ol").length, expected.length ? 1 : 0);
     if (expected.length) {
@@ -276,7 +284,7 @@ test("Edit Recipe keeps raw Instructions including blank lines, whitespace and n
   const instructions = labeledInput(tree, "Instructions");
   assert.equal(instructions.type, "textarea");
   assert.equal(instructions.props.value, raw);
-  change(labeledInput(tree, "Title"), "Changed title");
+  change(labeledInput(tree, "Recipe Title"), "Changed title");
   tree = h.render(h.EditorForm, props);
   await nodes(tree).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
   assert.equal(submitted.instructions, raw);
@@ -292,7 +300,7 @@ function classificationEditor(kind, methods) {
   const props = { initial: { ...initial(), title: "Saved Recipe",
     category_id: categories[0].id, cuisine_id: cuisines[0].id }, categories, cuisines, edit: true };
   const renderEditor = () => editor.render(editor.EditorForm, props);
-  for (const [field, value] of [["Title", "Unsaved title"], ["Source", "Unsaved source"],
+  for (const [field, value] of [["Recipe Title", "Unsaved title"], ["Source", "Unsaved source"],
     ["Section name", "Unsaved section"], ["Ingredient text", "\nFlour\n\nEggs"],
     ["Instructions", "Mix\n\nBake"]]) {
     change(labeledInput(renderEditor(), field), value);
@@ -336,12 +344,12 @@ for (const kind of ["categories", "cuisines"]) {
     assert.equal(nodes(tree).find((n) => n.type.name === "ErrorMessage").props.error, expected);
     assert.equal(text(h.alert(tree)).trim(), expected);
     assert.equal(h.alert(tree).props.role, "alert");
-    assert.equal(tree.type, "fieldset", "Alert remains beside the classification controls");
+    assert.equal(tree.type, "div", "Alert remains beside the classification controls");
     assert.deepEqual(h.snapshot(), before);
     assert(h.editor.shouldBlock(), "Unsaved Recipe changes still require discard confirmation");
     assert.equal(text(h.alert(h.render())).trim(), expected, "Refusal persists across renders");
     assert.equal(button(tree, `Delete unused ${h.label}`).props.disabled, false);
-    assert.equal(tree.props.disabled, false, "Controls unlock after failure");
+    assert.equal(labeledInput(tree, `Select ${h.label}`).props.disabled, false, "Controls unlock after failure");
     await remove();
     assert.equal(attempts, 2);
     assert.deepEqual(h.snapshot(), before);
@@ -433,7 +441,7 @@ test("editor title-only validation, multiline text, failed-save retention/retry 
   await nodes(tree).find((n) => n.type === "form").props.onSubmit({ preventDefault() {} });
   assert.equal(attempts, 0);
   assert(nodes(render()).some((n) => n.props.error === "Recipe Title is required."));
-  change(labeledInput(tree, "Title"), "  Test Recipe  ");
+  change(labeledInput(tree, "Recipe Title"), "  Test Recipe  ");
   tree = render();
   change(labeledInput(tree, "Ingredient text"), "\nFlour\n\nFlour\n");
   tree = render();
@@ -441,7 +449,7 @@ test("editor title-only validation, multiline text, failed-save retention/retry 
   tree = render();
   await nodes(tree).find((n) => n.type === "form").props.onSubmit({ preventDefault() {} });
   tree = render();
-  assert.equal(labeledInput(tree, "Title").props.value, "  Test Recipe  ");
+  assert.equal(labeledInput(tree, "Recipe Title").props.value, "  Test Recipe  ");
   assert.equal(labeledInput(tree, "Ingredient text").props.value, "\nFlour\n\nFlour\n");
   assert(nodes(tree).some((n) => n.props.error?.includes("Recipe was not saved")));
   const form = nodes(tree).find((n) => n.type === "form");
@@ -463,7 +471,7 @@ test("unsaved warning: clean bypass, dirty block, stay retains content, delibera
   const props = { initial: initial(), categories: [], cuisines: [], edit: false };
   let tree = h.render(h.EditorForm, props);
   assert.equal(h.shouldBlock(), false);
-  change(labeledInput(tree, "Title"), "Keep this");
+  change(labeledInput(tree, "Recipe Title"), "Keep this");
   tree = h.render(h.EditorForm, props);
   assert.equal(h.shouldBlock(), true);
   assert(h.listeners.has("beforeunload"));
@@ -474,7 +482,7 @@ test("unsaved warning: clean bypass, dirty block, stay retains content, delibera
   tree = h.render(h.EditorForm, props);
   button(tree, "Stay in editor").props.onClick();
   tree = h.render(h.EditorForm, props);
-  assert.equal(labeledInput(tree, "Title").props.value, "Keep this");
+  assert.equal(labeledInput(tree, "Recipe Title").props.value, "Keep this");
   h.blocker.state = "blocked";
   tree = h.render(h.EditorForm, props);
   button(tree, "Discard changes").props.onClick();
@@ -486,8 +494,8 @@ test("default Ingredients, add/remove section, empty ingredients and edit model"
   const props = { initial: { ...initial(), title: "Existing" }, categories: [], cuisines: [], edit: true };
   let tree = h.render(h.EditorForm, props);
   assert.equal(labeledInput(tree, "Section name").props.value, "Ingredients");
-  assert.equal(labeledInput(tree, "Title").props.value, "Existing");
-  button(tree, "Add ingredient section").props.onClick();
+  assert.equal(labeledInput(tree, "Recipe Title").props.value, "Existing");
+  button(tree, "Add Ingredient Section").props.onClick();
   tree = h.render(h.EditorForm, props);
   assert.equal(nodes(tree).filter((n) => n.type === "textarea").length, 3);
   button(tree, "Remove section 2").props.onClick();
@@ -515,6 +523,68 @@ test("favorite stops propagation and never invokes navigation; single/bulk confi
     assert.equal(cancelled, 1);
     button(dialog, "Confirm delete").props.onClick();
     assert.equal(deleted, 1);
+  }
+});
+
+test("Recipe Library keeps one compact source-free row with selection and title navigation", async () => {
+  const recipe = { ...initial(), title: "Long Recipe Title", source: "https://example.test/recipe",
+    category_id: "c1", cuisine_id: "u1" };
+  const original = JSON.stringify(recipe);
+  const h = harness({ list: async () => [recipe],
+    categories: { list: async () => [{ id: "c1", name: "Dinner" }] },
+    cuisines: { list: async () => [{ id: "u1", name: "Italian" }] } });
+  h.render(h.RecipeLibrary); await flush();
+  const tree = h.render(h.RecipeLibrary);
+  const table = nodes(tree).find((node) => node.type === "table");
+  assert.deepEqual(nodes(table).filter((node) => node.type === "th").map(text),
+    ["Favorite", "Recipe", "Category", "Cuisine"]);
+  assert.doesNotMatch(text(table), /Source|example\.test/);
+  const mobileList = nodes(tree).find((node) => node.type === "ul"
+    && node.children.some((child) => child.type === "li"));
+  assert(mobileList, "A dedicated compact Recipe list is rendered for mobile");
+  const row = nodes(table).find((node) => node.type === "tr" && node.props.onClick);
+  const title = nodes(row).find((node) => node.type === "link" && text(node) === recipe.title);
+  assert.equal(title.props.to, `/meals/recipes/${recipe.id}`);
+  const selection = nodes(row).find((node) => node.type === "input" && node.props.type === "checkbox");
+  selection.props.onChange();
+  assert.match(text(h.render(h.RecipeLibrary)), /1 selected/);
+  row.props.onClick();
+  assert.equal(h.navigations.at(-1), `/meals/recipes/${recipe.id}`);
+  assert.equal(JSON.stringify(recipe), original, "Rendering/selecting does not mutate stored source data");
+});
+
+test("Recipe Detail renders URL host labels, plain-text sources, and no fabricated source", () => {
+  const h = harness();
+  const link = h.Source({ source: "https://www.example.test/path?private=1" });
+  assert.equal(link.type, "a");
+  assert.equal(link.props.href, "https://www.example.test/path?private=1");
+  assert.equal(link.props.title, "https://www.example.test/path?private=1");
+  assert.equal(text(link), "example.test");
+  const plain = h.Source({ source: "From Grandma's notebook" });
+  assert.equal(plain.type, "span");
+  assert.equal(text(plain), "From Grandma's notebook");
+  const absent = h.render(h.RecipeDetail);
+  assert(!nodes(absent).some((node) => node.type.name === "Source"));
+});
+
+test("Recipe Editor can create Category and Cuisine values from compact controls", async () => {
+  for (const [kind, label] of [["categories", "Category"], ["cuisines", "Cuisine"]]) {
+    let values = [{ id: "existing", name: "Existing" }];
+    let selected = "existing";
+    const h = harness({ [kind]: { create: async (name) => ({ id: "created", name }) } });
+    const props = { kind, label, values, value: selected,
+      onChange(next) { values = next; }, onSelect(next) { selected = next; }, onBusy() {} };
+    let tree = h.render(h.Classification, props);
+    labeledInput(tree, `Select ${label}`).props.onChange({ target: { value: `create-${kind}` } });
+    tree = h.render(h.Classification, { ...props, values, value: selected });
+    change(labeledInput(tree, `New ${label.toLowerCase()} name`), `New ${label}`);
+    tree = h.render(h.Classification, { ...props, values, value: selected });
+    button(tree, `Create ${label}`).props.onClick();
+    await flush();
+    tree = h.render(h.Classification, { ...props, values, value: selected });
+    assert.deepEqual(Array.from(values, (value) => value.name), ["Existing", `New ${label}`]);
+    assert.equal(selected, "created");
+    assert(!nodes(tree).some((node) => node.type === "input" && text(node) === "New"));
   }
 });
 
@@ -553,7 +623,7 @@ test("library loading/error/retry, empty and filtered zero-result states", async
   assert.match(text(tree), /Soup/);
 });
 
-test("Library checkbox disclosures combine OR selections with AND groups and clear all criteria", async () => {
+test("Library filter overlay supports multi-select, reset, apply, Escape and preserved filter state", async () => {
   const categories = [{ id: "c1", name: "Dinner" }, { id: "c2", name: "Lunch" }, { id: "c3", name: "Breakfast" }];
   const cuisines = [{ id: "u1", name: "French" }, { id: "u2", name: "Italian" }, { id: "u3", name: "Greek" }];
   const recipes = [
@@ -567,37 +637,61 @@ test("Library checkbox disclosures combine OR selections with AND groups and cle
     cuisines: { list: async () => cuisines } });
   const render = () => h.render(h.RecipeLibrary);
   render(); await flush();
-  function select(label, name, checked) {
-    const filter = nodes(render()).find((n) => n.type.name === "ClassificationFilter" && n.props.label === label);
-    const disclosure = h.ClassificationFilter(filter.props);
-    assert.equal(disclosure.type, "details");
-    assert(nodes(disclosure).some((n) => n.type === "summary" && text(n).startsWith(label)));
-    assert(nodes(disclosure).some((n) => n.props.role === "group" && n.props["aria-label"].includes(label)));
-    labeledInput(disclosure, name).props.onChange({ target: { checked } });
-  }
-  select("Category", "Dinner", true); select("Category", "Lunch", true);
   let tree = render();
-  assert.match(text(tree), /Soup one/); assert.match(text(tree), /Soup two/);
+  assert.equal(button(tree, "Filters").props["aria-haspopup"], "dialog");
+  button(tree, "Filters").props.onClick();
+  tree = render();
+  const filterElement = () => nodes(render()).find((node) => node.type.name === "RecipeFilterDialog");
+  assert(filterElement());
+  assert.equal(filterElement().props.filters.search, "");
+  const dialogHarness = harness();
+  function dialogTree() { return dialogHarness.render(dialogHarness.RecipeFilterDialog, filterElement().props); }
+  function select(label, name, checked) {
+    const dialog = dialogTree();
+    assert.equal(dialog.type, "dialog");
+    const group = nodes(dialog).find((node) => node.props.role === "group" && node.props["aria-label"] === `Filter Recipes by ${label}`);
+    assert(group);
+    nodes(group).find((node) => node.type === "input" && node.props["aria-label"] === name)
+      .props.onChange({ target: { checked } });
+  }
+  let dialog = dialogTree();
+  dialog.props.onClick({ target: {}, currentTarget: dialog });
+  assert(filterElement(), "Interaction inside the checklist must keep it open");
+  dialog = dialogTree();
+  dialog.props.onClick({ target: dialog, currentTarget: dialog });
+  assert(!nodes(render()).some((node) => node.type.name === "RecipeFilterDialog"),
+    "Backdrop interaction closes the filter");
+  button(render(), "Filters").props.onClick();
+  dialog = dialogTree();
+  dialog.props.onCancel({ preventDefault() {} });
+  assert(!nodes(render()).some((node) => node.type.name === "RecipeFilterDialog"));
+  button(render(), "Filters").props.onClick();
+  tree = render();
+  select("Category", "Dinner", true);
+  select("Category", "Lunch", true);
+  select("Cuisine", "French", true);
+  select("Cuisine", "Italian", true);
+  dialog = dialogTree();
+  assert.match(text(dialog), /Show 4 Recipes/);
+  filterElement().props.onApply();
+  tree = render();
+  assert.deepEqual(Array.from(h.getFilters().categoryIds), ["c1", "c2"]);
+  assert.deepEqual(Array.from(h.getFilters().cuisineIds), ["u1", "u2"]);
+  assert.match(text(tree), /Soup one/); assert.match(text(tree), /Soup two/); assert.match(text(tree), /Other/);
   assert.doesNotMatch(text(tree), /Soup three/);
-  select("Cuisine", "French", true); select("Cuisine", "Italian", true);
+  button(tree, "Favorites").props.onClick({ stopPropagation() {} });
   tree = render();
-  change(labeledInput(tree, "Search Recipes"), "soup");
-  labeledInput(render(), "Favorites only").props.onChange({ target: { checked: true } });
+  assert.doesNotMatch(text(tree), /Soup unfavored/);
+  assert.match(text(tree), /Favorites only/);
+  button(tree, "Filters (4)").props.onClick();
   tree = render();
-  assert.match(text(tree), /Soup one/); assert.match(text(tree), /Soup two/);
-  assert.doesNotMatch(text(tree), /Soup three|Soup unfavored|Other/);
-  select("Category", "Dinner", false);
-  tree = render();
-  assert.doesNotMatch(text(tree), /Soup one/); assert.match(text(tree), /Soup two/);
-  assert.deepEqual(Array.from(h.getFilters().categoryIds), ["c2"]);
-  select("Cuisine", "Italian", false);
-  tree = render();
-  assert.match(text(tree), /No Recipes match the current criteria/);
-  assert.doesNotMatch(text(tree), /No Recipes yet/);
-  button(tree, "Clear search and filters").props.onClick();
-  tree = render();
-  assert.deepEqual(h.getFilters(), helpers.newRecipeFilters());
-  for (const recipe of recipes) assert(text(tree).includes(recipe.title));
+  const reopened = filterElement();
+  assert.deepEqual(Array.from(reopened.props.filters.categoryIds), ["c1", "c2"]);
+  assert.deepEqual(Array.from(reopened.props.filters.cuisineIds), ["u1", "u2"]);
+  const reopenedHarness = harness();
+  const resetDialog = reopenedHarness.render(reopenedHarness.RecipeFilterDialog, reopened.props);
+  button(resetDialog, "Reset").props.onClick();
+  assert.deepEqual(Array.from(h.getFilters().categoryIds), ["c1", "c2"], "Reset changes the draft, not applied filters");
 });
 
 test("Library remount reloads current data, drops dead lookup IDs, and never restores transient selection", async () => {

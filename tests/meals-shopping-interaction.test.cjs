@@ -12,22 +12,28 @@ let compiled;
 test.before(async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
   const filename = path.join(root, "src", "pages", "Meals", "ShoppingPage.jsx");
-  const input = fs.readFileSync(filename, "utf8").replace(/^import .*;\r?$/gm, "").replace(/^export default /gm, "").replace(/^export /gm, "");
-  compiled = (await transformWithOxc(input, filename, { jsx: { runtime: "classic", pragma: "element", pragmaFrag: "fragment" } })).code;
+  const sourceText = fs.readFileSync(filename, "utf8").replace(/^import .*;\r?$/gm, "").replace(/^export default /gm, "").replace(/^export /gm, "");
+  compiled = (await transformWithOxc(sourceText, filename, { jsx: { runtime: "classic", pragma: "element", pragmaFrag: "fragment" } })).code;
 });
-function harness(service, mobile = false) {
+function harness(service, mobile = false, pathname = "/meals/shopping") {
   const slots = [], effects = [];
   let index = 0;
   const context = {
     ...model, createShoppingService: () => service, styles: {}, crypto: { randomUUID },
-    element: (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter((value) => value !== null && value !== undefined && value !== false) }),
-    fragment: "fragment",
+    element: (type, props, ...children) => ({
+      type, props: props || {},
+      children: (type === "page-header" ? [props?.title, ...children] : children)
+        .flat(Infinity).filter((value) => value !== null && value !== undefined && value !== false),
+    }),
+    fragment: "fragment", PageHeader: "page-header", NavLink: "link",
+    useLocation: () => ({ pathname }), document: { activeElement: { focus() {} } },
     useState(initial) {
       const i = index++;
       if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial;
       return [slots[i], (value) => { slots[i] = typeof value === "function" ? value(slots[i]) : value; }];
     },
-    useRef(initial) { const i = index++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
+    useRef(initial) { const i = index++; if (!(i in slots)) slots[i] = { current: initial === null
+      ? { showModal() {}, close() {}, focus() {} } : initial }; return slots[i]; },
     useEffect(effect, dependencies) {
       const i = index++;
       if (!slots[i] || dependencies.some((value, j) => value !== slots[i].dependencies[j])) {
@@ -36,7 +42,7 @@ function harness(service, mobile = false) {
     },
     window: { matchMedia: () => ({ matches: mobile, addEventListener() {}, removeEventListener() {} }) },
   };
-  const components = vm.runInNewContext(`(()=>{${compiled};return {ShoppingPage,ShoppingGroup,ClearConfirmation};})()`, context);
+  const components = vm.runInNewContext(`(()=>{${compiled};return {ShoppingPage,ShoppingGroup,ClearConfirmation,ItemActionDialog};})()`, context);
   return { ...components, render(Component = components.ShoppingPage, props) {
     index = 0; const result = Component(props);
     effects.splice(0).forEach((effect) => effect());
@@ -46,10 +52,13 @@ function harness(service, mobile = false) {
 const all = (tree) => !tree || typeof tree !== "object" ? [] : [tree, ...tree.children.flatMap(all)];
 const text = (tree) => typeof tree === "object" ? tree.children.map(text).join("") : String(tree);
 const button = (tree, label) => all(tree).find((node) => node.type === "button" && (node.props["aria-label"] === label || text(node) === label));
-const input = (tree, label) => all(tree).find((node) => node.props["aria-label"] === label)
-  ?? all(tree).find((node) => node.type === "label"
-  && node.children.filter((value) => typeof value !== "object").join("") === label)
-  .children.find((value) => typeof value === "object");
+function input(tree, label) {
+  const named = all(tree).find((node) => node.props["aria-label"] === label);
+  if (named) return named;
+  const field = all(tree).find((node) => node.type === "label"
+    && node.children.filter((value) => typeof value !== "object").join("") === label);
+  return field?.children.find((value) => typeof value === "object");
+}
 const change = (node, value) => node.props.onChange({ target: { value } });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const submit = { preventDefault() {} };
@@ -60,11 +69,11 @@ test("loading never flashes empty; load failure has an actionable retry", async 
   let fail = true;
   const h = harness({ load: async () => { if (fail) throw { code: "NETWORK" }; return { items: [], categories: [] }; } });
   let tree = h.render();
-  assert.equal(text(tree), "Loading Shopping...");
+  assert.match(text(tree), /Loading Shopping/);
   await flush(); tree = h.render();
-  assert.equal(tree.props.role, "alert");
+  assert(all(tree).some((node) => node.props.role === "alert"));
   fail = false; button(tree, "Retry loading Shopping").props.onClick();
-  assert.equal(text(h.render()), "Loading Shopping...");
+  assert.match(text(h.render()), /Loading Shopping/);
   await flush();
   assert.match(text(h.render()), /Your Shopping List is empty/);
   assert.match(text(h.render()), /Shopping reloaded/);
@@ -82,7 +91,7 @@ test("manual auto category is visible, double submission blocked, failed add ret
     } });
   h.render(); await flush();
   let tree = h.render();
-  change(input(tree, "New Shopping item"), "  2 eggs ");
+  change(input(tree, "Add item"), "  2 eggs ");
   tree = h.render();
   assert.match(text(tree), /Automatic category: Cheese & Dairy/);
   const form = all(tree).find((node) => node.type === "form");
@@ -91,7 +100,7 @@ test("manual auto category is visible, double submission blocked, failed add ret
   assert.equal(button(h.render(), "Add item").props.disabled, true);
   release(); await flush();
   tree = h.render();
-  assert.equal(input(tree, "New Shopping item").props.value, "  2 eggs ");
+  assert.equal(input(tree, "Add item").props.value, "  2 eggs ");
   assert.match(text(tree), /network failure/);
   fail = false; button(tree, "Retry last action").props.onClick(); release(); await flush();
   tree = h.render();
@@ -99,11 +108,11 @@ test("manual auto category is visible, double submission blocked, failed add ret
   assert.equal(calls[0].id, calls[1].id);
   assert.equal(calls[1].text, "  2 eggs ");
   assert.equal(calls[1].category_id, category.id);
-  assert.equal(input(tree, "New Shopping item").props.value, "");
+  assert.equal(input(tree, "Add item").props.value, "");
   assert.match(text(tree), /Shopping item added/);
 });
 
-test("item edits preserve attempted value on failure; category persists immediately; individual remove has no dialog", async () => {
+test("item actions stay out of rows and Edit, Move and Remove use the item action sheet", async () => {
   const a = item("eggs");
   const calls = [];
   let fail = true;
@@ -113,18 +122,48 @@ test("item edits preserve attempted value on failure; category persists immediat
     remove: async (id) => { calls.push(["remove", id]); } });
   h.render(); await flush();
   let tree = h.render();
-  button(tree, "Edit eggs").props.onClick(); tree = h.render();
-  change(input(tree, "Edit Shopping item"), "changed");
+  assert(button(tree, "Actions for eggs"));
+  assert.equal(input(tree, "Category for eggs"), undefined, "Normal item rows have no permanent Category selector");
+  button(tree, "Actions for eggs").props.onClick();
   tree = h.render();
-  all(tree).find((node) => node.type === "form" && button(node, "Save item")).props.onSubmit(submit);
+  let action = all(tree).find((node) => node.type === h.ItemActionDialog);
+  const actionHarness = harness({});
+  let dialog = actionHarness.render(actionHarness.ItemActionDialog, action.props);
+  assert.match(text(dialog), /EditMoveRemove/);
+  action.props.onMode("edit");
+  tree = h.render();
+  action = all(tree).find((node) => node.type === h.ItemActionDialog);
+  dialog = actionHarness.render(actionHarness.ItemActionDialog, action.props);
+  change(input(dialog, "Shopping item"), "changed");
+  dialog = actionHarness.render(actionHarness.ItemActionDialog, action.props);
+  all(dialog).find((node) => node.type === "form").props.onSubmit(submit);
   await flush(); tree = h.render();
-  assert.equal(input(tree, "Edit Shopping item").props.value, "changed");
-  fail = false; button(tree, "Retry last action").props.onClick(); await flush();
+  action = all(tree).find((node) => node.type === h.ItemActionDialog);
+  assert(action);
+  assert.match(action.props.error, /network failure/);
+  dialog = actionHarness.render(actionHarness.ItemActionDialog, action.props);
+  assert(button(dialog, "Retry last action"));
+  fail = false; button(dialog, "Retry last action").props.onClick(); await flush();
   tree = h.render();
-  change(input(tree, "Category for changed"), ""); await flush();
+  assert(!all(tree).some((node) => node.type === h.ItemActionDialog));
+  assert.deepEqual(calls.at(-1), ["edit", a.id, "changed"]);
+  button(tree, "Actions for changed").props.onClick(); tree = h.render();
+  action = all(tree).find((node) => node.type === h.ItemActionDialog);
+  action.props.onMode("move"); tree = h.render();
+  action = all(tree).find((node) => node.type === h.ItemActionDialog);
+  const moveHarness = harness({});
+  dialog = moveHarness.render(moveHarness.ItemActionDialog, action.props);
+  change(input(dialog, "Shopping Category"), "");
+  dialog = moveHarness.render(moveHarness.ItemActionDialog, action.props);
+  assert.equal(input(dialog, "Shopping Category").props.value, "");
+  all(dialog).find((node) => node.type === "form").props.onSubmit(submit);
+  await flush(); tree = h.render();
   assert.deepEqual(calls.at(-1), ["category", a.id, null]);
+  assert(!all(tree).some((node) => node.type === h.ItemActionDialog));
+  button(tree, "Actions for changed").props.onClick(); tree = h.render();
+  action = all(tree).find((node) => node.type === h.ItemActionDialog);
+  action.props.onRemove(); await flush();
   tree = h.render();
-  button(tree, "Remove changed").props.onClick(); await flush();
   assert.deepEqual(calls.at(-1), ["remove", a.id]);
   assert.match(text(h.render()), /Your Shopping List is empty/);
 });
@@ -138,8 +177,8 @@ test("Clear Checked removes only checked rows without confirmation; Clear List c
   button(h.render(), "Clear Checked").props.onClick(); await flush();
   let tree = h.render();
   assert.deepEqual(calls, ["checked"]);
-  assert(!button(tree, "Remove checked"));
-  assert(button(tree, "Remove unchecked"));
+  assert(!button(tree, "Actions for checked"));
+  assert(button(tree, "Actions for unchecked"));
   button(tree, "Clear List").props.onClick(); tree = h.render();
   let dialog = all(tree).find((node) => node.type === h.ClearConfirmation);
   dialog.props.onCancel(); tree = h.render();
@@ -150,7 +189,7 @@ test("Clear Checked removes only checked rows without confirmation; Clear List c
   tree = h.render();
   assert.deepEqual(calls, ["checked", "list"]);
   assert.match(text(tree), /Categories kept/);
-  assert.match(text(tree), /Predefined categories cannot be renamed or deleted/);
+  assert.match(text(tree), /Your Shopping List is empty/);
 });
 
 test("mobile fully-checked group collapses, can be expanded; desktop stays open", () => {
@@ -168,19 +207,20 @@ test("mobile fully-checked group collapses, can be expanded; desktop stays open"
   }
 });
 
-test("custom category drafts and failed Clear List remain usable for retry", async () => {
+test("Customize tab preserves category management and failed category creation is retryable", async () => {
   const a = item("keep");
-  let created, failCreate = true, failClear = true;
+  let created, failCreate = true;
   const h = harness({ load: async () => ({ items: [a], categories: [category] }),
     createCategory: async (draft) => {
       created = draft;
       if (failCreate) throw { code: "NETWORK" };
       return { ...draft, predefined_order: null, created_at: "2" };
     },
-    clearList: async () => { if (failClear) throw { code: "NETWORK" }; },
-  });
+  }, false, "/meals/shopping/customize");
   h.render(); await flush();
   let tree = h.render();
+  assert.match(text(tree), /Shopping Categories/);
+  assert.match(text(tree), /Customize/);
   change(input(tree, "New custom category"), "Custom");
   tree = h.render();
   all(tree).find((node) => node.type === "form" && button(node, "Create category")).props.onSubmit(submit);
@@ -192,18 +232,34 @@ test("custom category drafts and failed Clear List remain usable for retry", asy
   tree = h.render();
   assert(button(tree, "Rename Custom"));
   assert(!button(tree, "Rename Cheese & Dairy"));
-  button(tree, "Clear List").props.onClick();
+  assert(!button(tree, "Clear List"));
+  assert(!button(tree, "Actions for keep"));
+});
+
+test("manual Add item permits an explicit category when automatic assignment has no match", async () => {
+  const h = harness({ load: async () => ({ items: [], categories: [category] }),
+    add: async (draft) => ({ ...draft, checked: false, created_at: "2" }) });
+  h.render(); await flush();
+  let tree = h.render();
+  change(input(tree, "Add item"), "special grocery");
   tree = h.render();
-  all(tree).find((node) => node.type === h.ClearConfirmation).props.onClear();
-  await flush(); tree = h.render();
-  let dialog = all(tree).find((node) => node.type === h.ClearConfirmation);
-  assert.match(dialog.props.error, /network failure/);
-  assert(button(tree, "Remove keep"));
-  failClear = false; dialog.props.onClear(); await flush();
+  change(input(tree, "Category"), category.id);
   tree = h.render();
-  assert(!all(tree).some((node) => node.type === h.ClearConfirmation));
-  assert(button(tree, "Rename Custom"));
-  assert(!button(tree, "Remove keep"));
+  all(tree).find((node) => node.type === "form").props.onSubmit(submit);
+  await flush();
+  assert.match(text(h.render()), /Shopping item added/);
+});
+
+test("Shopping tabs expose Shopping List as default and Customize as a distinct route", async () => {
+  for (const [pathname, expected] of [["/meals/shopping", "Shopping List"], ["/meals/shopping/customize", "Customize"]]) {
+    const h = harness({ load: async () => ({ items: [], categories: [] }) }, false, pathname);
+    h.render(); await flush();
+    const tree = h.render();
+    const links = all(tree).filter((node) => node.type === "link");
+    assert(links.some((node) => node.props.to === "/meals/shopping"));
+    assert(links.some((node) => node.props.to === "/meals/shopping/customize"));
+    assert.match(text(tree), new RegExp(expected));
+  }
 });
 
 test("confirmation Escape cancellation works explicitly and is blocked while pending", () => {
