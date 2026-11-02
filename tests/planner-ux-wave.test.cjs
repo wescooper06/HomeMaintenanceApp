@@ -95,22 +95,47 @@ test("Planner responsive structure frames equal desktop days and separates Meals
   assert.match(css, /\.weekly-day-column\.is-mobile-selected\s*\{\s*display:\s*grid/s);
   assert.match(grid, /<MealRow date=\{date\} slot=\{slot\}\s*\/>/);
   assert.match(grid, /className=\{styles\["slot-task-region"\]\} aria-label=\{`\$\{label\} tasks`\}/);
-  assert.match(grid, /<h5 className=\{styles\["slot-task-region-label"\]\}>Tasks<\/h5>/);
+  assert.doesNotMatch(grid, /<h5[^>]*>\s*Tasks\s*<\/h5>/);
   assert.match(css, /\.slot-task-region\s*\{[^}]*border-top:/s);
 });
 
-test("Mobile Planner Add entry exposes existing assignment panels and touch-sized task controls", () => {
+test("Mobile Planner exposes dedicated task and calendar controls without Projects or Repeatable assignment panels", () => {
   const page = plannerSource("src/pages/Planner/PlannerPage.jsx");
   const css = plannerSource("src/pages/Planner/PlannerPage.module.css");
   const sidebar = plannerSource("src/pages/Planner/components/PlannerSidebar.jsx");
-  assert.match(page, /aria-controls="planner-task-assignment-panels" aria-expanded=\{mobileAddOpen\}/);
-  assert.match(page, /<PlannerSidebar\s*\/>/);
+  const grid = plannerSource("src/pages/Planner/components/WeeklyGrid.jsx");
+  assert.match(page, /<PlannerSidebar mobilePanel=\{mobilePanel\} onMobilePanelChange=\{setMobilePanel\}\s*\/>/);
+  assert.match(sidebar, /label: "Ad-Hoc Task", target: "adhoc-right"/);
+  assert.match(sidebar, /label: "Task Parking Lot", target: "parking-lot-column"/);
+  assert.match(sidebar, /label: "Calendar", target: "mini-calendar-column"/);
+  assert.match(sidebar, /aria-expanded=\{expanded\}/);
+  assert.match(sidebar, /data-mobile-panel=\{mobilePanel \|\| "closed"\}/);
   assert.match(sidebar, /Add Ad-Hoc Task/);
   assert.match(sidebar, /Repeatable Tasks/);
   assert.match(sidebar, /Task parking lot panel/);
-  assert(css.includes(".planner-mobile-panels:not(.is-mobile-open)") && /\.planner-mobile-panels:not\(\.is-mobile-open\)\s*\{[\s\S]*?display:\s*none/.test(css));
+  assert.match(sidebar, /planner-mobile-panel-projects/);
+  assert.match(sidebar, /planner-mobile-panel-repeatable/);
+  assert.match(css, /\.planner-mobile-controls\s*\{\s*display:\s*none/);
+  assert.match(css, /@media\s*\(max-width:\s*700px\)\s*\{[\s\S]*?\.planner-mobile-controls\s*\{\s*display:\s*flex/);
+  assert.match(css, /\.planner-mobile-panel\s*\{\s*display:\s*none/);
+  assert.match(css, /\.planner-top-panels\[data-mobile-panel="adhoc"\]\s+\.planner-mobile-panel-adhoc,[\s\S]*?\.planner-top-panels\[data-mobile-panel="calendar"\]\s+\.planner-mobile-panel-calendar\s*\{\s*display:\s*block/);
+  assert.doesNotMatch(css, /data-mobile-panel="(?:projects|repeatable)"/);
+  assert.match(grid, /tasks\.length \? tasks\.map\(\(task\) =>/);
+  assert.match(grid, /<WeeklyTaskCard task=\{task\} day=\{day\} slot=\{slot\}\s*\/>/);
   assert.match(css, /--lm-control-mobile/);
-  assert.match(css, /\.slot-task-header-actions > button,[\s\S]*?min-width:\s*var\(--lm-control-mobile\)/);
+});
+
+test("Mobile task controls occupy one row without hiding task actions or desktop task drag-and-drop", () => {
+  const card = plannerSource("src/pages/Planner/components/ProjectCard.jsx");
+  const css = plannerSource("src/pages/Planner/PlannerPage.module.css");
+  assert.match(card, /data-action="weekly-drag-handle" draggable="true"/);
+  assert.match(card, /data-action="task-complete-toggle"/);
+  assert.match(card, /data-action="task-move"/);
+  assert.match(card, /data-action="remove"/);
+  assert.match(css, /@media\s*\(max-width:\s*700px\)\s*\{[\s\S]*?\.slot-task-handle\s*\{\s*display:\s*none/);
+  assert.match(css, /\.slot-task-header-actions\s*\{[^}]*flex-wrap:\s*nowrap[^}]*gap:\s*0\.1rem[^}]*width:\s*100%/s);
+  assert.match(css, /width:\s*40px;\s*min-width:\s*40px;\s*max-width:\s*40px;\s*min-height:\s*var\(--lm-control-mobile\)/);
+  assert.doesNotMatch(css.slice(css.indexOf("@media (max-width: 700px)"), css.indexOf(".planner-parking-column", css.indexOf("@media (max-width: 700px)"))), /\.slot-task-handle\s*\{[^}]*min-width:/s);
 });
 
 test("Planner removes only the rejected future-checklist control and keeps task actions and type colors", () => {

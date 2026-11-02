@@ -47,6 +47,12 @@
 .dialog h2 { margin-top: 0; }
 .dialog textarea { display: block; margin: .35rem 0 .75rem; }
 .dialog [role="alert"] { color: var(--lm-color-error); }
+.recipeSearch { display: grid; gap: .25rem; }
+.recipeSearch > label { min-height: 0; margin: .25rem 0 0; }
+.recipeSearchControl { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.recipeSearchControl input { flex: 1 1 auto; }
+.recipeSearchControl button { flex: 0 0 auto; }
+.mealActions { justify-content: flex-start; }
 .error { color: var(--lm-color-error); }
 .status { padding: .5rem; overflow-wrap: anywhere; }
 @media (max-width: 40rem) {

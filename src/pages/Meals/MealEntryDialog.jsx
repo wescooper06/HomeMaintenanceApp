@@ -36,6 +36,8 @@ export default function MealEntryDialog({ recipeId = null, date, meal = "dinner"
   }, [recipeId, attempt]);
   const frozen = pending || submitted;
   const valid = validMealDate(mealDate) && (kind === "text" ? /\S/u.test(text) : values.some((r) => r.id === selected));
+  const searchTerm = search.trim().toLowerCase();
+  const filteredRecipes = values.filter((recipe) => recipe.title.toLowerCase().includes(searchTerm));
   async function add(event) {
     event.preventDefault();
     if (lock.current || !valid) return;
@@ -47,12 +49,25 @@ export default function MealEntryDialog({ recipeId = null, date, meal = "dinner"
     finally { lock.current = false; setPending(false); }
   }
   const close = () => { if (!pending) onClose(); };
+  const renderActions = (position) => <div className={`${styles.actions} ${styles.mealActions}`} data-action-position={position}>
+    <button type="button" disabled={pending} onClick={close}>Cancel</button>
+    <button type="submit" disabled={!valid || pending}>{pending ? "Adding..." : submitted ? "Retry Add to Planner" : "Add to Planner"}</button>
+  </div>;
   return <dialog ref={dialog} className={styles.dialog} aria-labelledby="plan-meal-title"
     onCancel={(event) => { event.preventDefault(); close(); }}
     onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
     <h2 id="plan-meal-title">{recipeId ? "Plan Meal" : "Add meal"}</h2>
-    {!loaded ? error ? <p role="alert">{error} <button type="button" onClick={() => setAttempt((n) => n + 1)}>Retry loading Recipes</button></p>
-      : <p role="status">Loading Recipes...</p> : <form onSubmit={add}>
+    {!loaded ? <>
+      {error ? <p role="alert">{error} <button type="button" onClick={() => setAttempt((n) => n + 1)}>Retry loading Recipes</button></p>
+        : <p role="status">Loading Recipes...</p>}
+      <div className={`${styles.actions} ${styles.mealActions}`} data-action-position="top">
+        <button type="button" onClick={close}>Cancel</button>
+      </div>
+      <div className={`${styles.actions} ${styles.mealActions}`} data-action-position="bottom">
+        <button type="button" onClick={close}>Cancel</button>
+      </div>
+    </> : <form onSubmit={add}>
+      {renderActions("top")}
       <fieldset disabled={frozen}>
         <legend>Meal details</legend>
         <label>Date<input type="date" min="0001-01-01" max="9999-12-31" required value={mealDate} onChange={(e) => setMealDate(e.target.value)} /></label>
@@ -65,24 +80,27 @@ export default function MealEntryDialog({ recipeId = null, date, meal = "dinner"
             <label><input type="radio" name="meal-kind" checked={kind === "text"} onChange={() => setKind("text")} />Free text</label>
           </div>
           {kind === "recipe" ? <>
-            <label>Search Recipe titles<input type="search" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+            <div className={styles.recipeSearch}>
+              <label htmlFor="plan-recipe-search">Search Recipe titles</label>
+              <div className={styles.recipeSearchControl}>
+                <input id="plan-recipe-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <button type="button" aria-label="Clear Recipe search" disabled={!search}
+                  onClick={() => setSearch("")}>Clear</button>
+              </div>
+            </div>
             <fieldset><legend>Choose Recipe</legend>
-              {values.filter((r) => r.title.toLowerCase().includes(search.toLowerCase())).map((r) => <label key={r.id} className={styles.text}>
+              {filteredRecipes.map((r) => <label key={r.id} className={styles.text}>
                 <input type="radio" name="meal-recipe" checked={selected === r.id} onChange={() => setSelected(r.id)} />
                 {r.favorite && <span aria-label="Favorite">{"\u2605"} </span>}{r.title}
               </label>)}
               {!values.length ? <p>No Recipes yet. Choose Free text or create a Recipe first.</p>
-                : !values.some((r) => r.title.toLowerCase().includes(search.toLowerCase())) && <p>No matching Recipe titles. Clear the search to see all Recipes.</p>}
+                : !filteredRecipes.length && <p>No matching Recipe titles. Clear the search to see all Recipes.</p>}
             </fieldset>
           </> : <label>Meal text<textarea required value={text} onChange={(e) => setText(e.target.value)} /></label>}
         </>}
       </fieldset>
       {error && <p role="alert">{error}</p>}
-      <div className={styles.actions}>
-        <button type="button" disabled={pending} onClick={close}>Cancel</button>
-        <button type="submit" disabled={!valid || pending}>{pending ? "Adding..." : submitted ? "Retry Add to Planner" : "Add to Planner"}</button>
-      </div>
+      {renderActions("bottom")}
     </form>}
-    {!loaded && <button type="button" onClick={close}>Cancel</button>}
   </dialog>;
 }

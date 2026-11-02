@@ -12,22 +12,13 @@ import styles from "./PlannerPage.module.css";
 
 function PlannerScreen() {
   const { snapshot } = usePlanner();
-  const [mobileAddOpen, setMobileAddOpen] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState(null);
   return (
     <DragDropLayer>
       <section className={`${styles.plannerScreen} hm-card`} aria-busy={snapshot.backupBusy || snapshot.reminderBusy || snapshot.restoreBusy}>
         <PlannerHeader />
         <div inert={snapshot.backupBusy || snapshot.backupReloadRequired || Boolean(snapshot.restoreProposal)}>
-          <div className={styles["planner-mobile-add"]}>
-            <button type="button" aria-controls="planner-task-assignment-panels" aria-expanded={mobileAddOpen}
-              onClick={() => setMobileAddOpen((open) => !open)}>
-              {mobileAddOpen ? "Close Add options" : "+ Add"}
-            </button>
-          </div>
-          <div id="planner-task-assignment-panels"
-            className={`${styles["planner-mobile-panels"]} ${mobileAddOpen ? styles["is-mobile-open"] : ""}`}>
-            <PlannerSidebar />
-          </div>
+          <PlannerSidebar mobilePanel={mobilePanel} onMobilePanelChange={setMobilePanel} />
           <WeeklyGrid />
           <PlannerFooter />
         </div>

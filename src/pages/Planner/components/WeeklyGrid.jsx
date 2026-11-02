@@ -110,7 +110,6 @@ export function DaySlot({ day, date, slot, label, tasks }) {
       <h4 className={styles["day-slot-label"]}>{label}</h4>
       <MealRow date={date} slot={slot} />
       <section className={styles["slot-task-region"]} aria-label={`${label} tasks`}>
-        <h5 className={styles["slot-task-region-label"]}>Tasks</h5>
         <div className={styles["slot-task-list"]}>
           {tasks.length ? tasks.map((task) => <div key={task.id}
             className={`${styles["weekly-insertion-target"]} ${drag.dropTarget === `${target}:before:${task.id}` ? styles["insert-before"] : ""} ${drag.dropTarget === `${target}:after:${task.id}` ? styles["insert-after"] : ""}`}
