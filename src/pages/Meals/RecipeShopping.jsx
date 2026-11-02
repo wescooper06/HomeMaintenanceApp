@@ -62,8 +62,10 @@ export default function RecipeShopping({ recipeId, onClose, onAdded }) {
     } catch (failure) { setError(shoppingError(failure)); }
     finally { locked.current = false; setPending(false); }
   }
-  return <dialog ref={dialog} className={styles.dialog} aria-labelledby="recipe-shopping-title"
+  return <dialog ref={dialog} className={`${styles.dialog} lm-overlay-panel lm-bottom-sheet`}
+    aria-labelledby="recipe-shopping-title"
     onCancel={(event) => { event.preventDefault(); if (!pending) onClose(); }}
+    onClick={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}
     onKeyDown={(event) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!pending) onClose(); }
     }}>
@@ -74,8 +76,10 @@ export default function RecipeShopping({ recipeId, onClose, onAdded }) {
     </> : <>
       <h3 className={styles.text}>{data.title}</h3>
       <div className={styles.actions}>
-        <button type="button" disabled={frozen} onClick={() => setSelected(rows.map((row) => row.id))}>Select all</button>
-        <button type="button" disabled={frozen} onClick={() => setSelected([])}>Clear all</button>
+        <button type="button" className="lm-button lm-button--secondary" disabled={frozen}
+          onClick={() => setSelected(rows.map((row) => row.id))}>Select all</button>
+        <button type="button" className="lm-button lm-button--quiet" disabled={frozen}
+          onClick={() => setSelected([])}>Clear all</button>
         <span role="status">{selected.length} selected</span>
       </div>
       {data.groups.map((group, index) => <fieldset key={index} disabled={frozen}>
@@ -92,8 +96,8 @@ export default function RecipeShopping({ recipeId, onClose, onAdded }) {
       </div>}
     </>}
     <div className={styles.actions}>
-      <button type="button" disabled={pending} onClick={onClose}>Cancel</button>
-      <button type="button" disabled={!data || !selected.length || pending} onClick={add}>
+      <button type="button" className="lm-button lm-button--secondary" disabled={pending} onClick={onClose}>Cancel</button>
+      <button type="button" className="lm-button lm-button--primary" disabled={!data || !selected.length || pending} onClick={add}>
         {pending ? "Adding..." : submitted ? "Retry Add to List" : "Add to List"}
       </button>
     </div>

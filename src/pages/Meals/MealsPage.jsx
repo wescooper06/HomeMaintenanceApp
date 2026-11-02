@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 
-import PageHeader from "../../components/layout/PageHeader.jsx";
 import { newRecipeFilters } from "../../services/recipeService.js";
 
 import styles from "./MealsPage.module.css";
@@ -27,7 +26,6 @@ export default function MealsPage() {
   }
   return (
     <main className={styles.meals}>
-      <PageHeader title="Meals" subtitle="Recipes and Shopping" />
       <nav className={styles.navigation} aria-label="Meals navigation">
         <NavLink to="/meals/recipes" className={({ isActive }) => isActive ? styles.active : undefined}>
           Recipes
@@ -42,7 +40,7 @@ export default function MealsPage() {
         <Route path="/meals/recipes/new" element={<RecipeEditor />} />
         <Route path="/meals/recipes/:id/edit" element={<RecipeEditor edit />} />
         <Route path="/meals/recipes/:id" element={<RecipeDetail />} />
-        <Route path="/meals/shopping" element={<ShoppingPage />} />
+        <Route path="/meals/shopping/*" element={<ShoppingPage />} />
         <Route path="*" element={
           <FoundationScreen title="Meals page not found">
             This Meals path is not available. Choose Recipes or Shopping above. Recipe Import remains deferred.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
 
+import PageHeader from "../../components/layout/PageHeader.jsx";
 import { createRecipeService, newRecipe, newRecipeFilters, recipeMatches, recipeSourceUrl, sortRecipes } from "../../services/recipeService.js";
 
 import MealEntryDialog from "./MealEntryDialog.jsx";
@@ -40,18 +41,21 @@ function useRecipeLoad(load, dependencies) {
     retry: () => setAttempt((n) => n + 1), setState };
 }
 
-function Favorite({ recipe, onChange, pending }) {
-  return <button type="button" disabled={pending} aria-label={`Favorite ${recipe.title}`}
+function Favorite({ recipe, onChange, pending, compact = false }) {
+  const action = recipe.favorite ? "Unfavorite" : "Favorite";
+  return <button type="button" className={compact ? "lm-icon-button" : "lm-button lm-button--secondary"}
+    disabled={pending} aria-label={`${action} ${recipe.title}`}
     aria-pressed={recipe.favorite} onClick={(event) => { event.stopPropagation(); onChange(recipe); }}>
-    <span aria-hidden="true">{recipe.favorite ? "\u2605" : "\u2606"}</span>{" "}
-    {recipe.favorite ? "Unfavorite" : "Favorite"}
+    <span aria-hidden="true">{recipe.favorite ? "\u2605" : "\u2606"}</span>
+    {compact ? <span className={styles.srOnly}>{action}</span> : <span>{action}</span>}
   </button>;
 }
 
 function Source({ source }) {
   const url = recipeSourceUrl(source);
-  return url ? <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>{source}</a>
-    : <span className={styles.preserved}>{source}</span>;
+  if (!url) return <span className={styles.preserved}>{source}</span>;
+  const label = new URL(url).hostname.replace(/^www\./iu, "");
+  return <a href={url} title={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>{label}</a>
 }
 
 function Modal({ titleId, onCancel, children }) {
@@ -76,18 +80,46 @@ function DeleteConfirmation({ count, pending, onCancel, onDelete, error }) {
   </Modal>;
 }
 
-function ClassificationFilter({ label, values, selected, onChange }) {
-  const names = values.filter((value) => selected.includes(value.id)).map((value) => value.name);
-  return <details className={styles.multiSelect}>
-    <summary>{label}: {names.length ? `${names.length} selected - ${names.join(", ")}` : "All"}</summary>
-    <div role="group" aria-label={`Filter Recipes by ${label}`}>
-      {values.length ? values.map((value) => <label key={value.id}>
-        <input type="checkbox" checked={selected.includes(value.id)} onChange={(event) =>
-          onChange(event.target.checked ? [...selected, value.id] : selected.filter((id) => id !== value.id))} />
-        {value.name}
-      </label>) : <p>No {label === "Category" ? "Categories" : "Cuisines"} available.</p>}
+function RecipeFilterDialog({ categories, cuisines, filters, setFilters, onCancel, onApply, resultCount }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    const previous = document.activeElement;
+    dialog.showModal();
+    return () => { dialog.close(); previous?.focus(); };
+  }, []);
+  function toggle(key, id, checked) {
+    setFilters((current) => ({ ...current, [key]: checked
+      ? [...current[key], id] : current[key].filter((value) => value !== id) }));
+  }
+  return <dialog ref={ref} className={`${styles.filterDialog} lm-overlay-panel lm-bottom-sheet`}
+    aria-labelledby="recipe-filter-title" onCancel={(event) => { event.preventDefault(); onCancel(); }}
+    onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+    <div className={styles.dialogHeader}>
+      <h2 id="recipe-filter-title">Filter Recipes</h2>
+      <button type="button" className="lm-button lm-button--quiet" onClick={onCancel}>Close</button>
     </div>
-  </details>;
+    <div className={styles.filterGroups}>
+      {[["categoryIds", "Category", categories], ["cuisineIds", "Cuisine", cuisines]].map(([key, label, values]) =>
+        <fieldset className={styles.filterGroup} key={key}>
+          <legend>{label}</legend>
+          <div className={styles.filterOptions} role="group" aria-label={`Filter Recipes by ${label}`}>
+            {values.length ? values.map((value) => <label key={value.id}>
+              <input className="lm-checkbox" type="checkbox" aria-label={value.name}
+                checked={filters[key].includes(value.id)}
+                onChange={(event) => toggle(key, value.id, event.target.checked)} />
+              <span>{value.name}</span>
+            </label>) : <p>No {label === "Category" ? "Categories" : "Cuisines"} available.</p>}
+          </div>
+        </fieldset>)}
+    </div>
+    <div className={styles.dialogActions}>
+      <button type="button" className="lm-button lm-button--quiet" onClick={() => setFilters(newRecipeFilters())}>Reset</button>
+      <button type="button" className="lm-button lm-button--primary" onClick={onApply}>
+        Show {resultCount} {resultCount === 1 ? "Recipe" : "Recipes"}
+      </button>
+    </div>
+  </dialog>;
 }
 
 export function RecipeLibrary({ filters, setFilters }) {
@@ -111,6 +143,8 @@ export function RecipeLibrary({ filters, setFilters }) {
   const [shoppingMessage, setShoppingMessage] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterDraft, setFilterDraft] = useState(null);
   const lock = useRef(false);
   const [error, setError] = useState("");
   function changeFilter(key, value) { setFilters((old) => ({ ...old, [key]: value })); setSelected([]); }
@@ -138,33 +172,47 @@ export function RecipeLibrary({ filters, setFilters }) {
   const data = loaded.data;
   const visible = data ? sortRecipes(data.recipes.filter((r) => recipeMatches(r, filters)),
     sort.key, sort.direction, data.categories, data.cuisines) : [];
+  const filterCount = filters.categoryIds.length + filters.cuisineIds.length;
+  const filtersActive = Boolean(filters.search || filterCount || filters.favorites);
+  const draftResultCount = data && filterDraft
+    ? data.recipes.filter((recipe) => recipeMatches(recipe, filterDraft)).length : 0;
+  function openFilters() {
+    setFilterDraft({ ...filters, categoryIds: [...filters.categoryIds], cuisineIds: [...filters.cuisineIds] });
+    setFilterOpen(true);
+  }
   function toggle(id) { setSelected((old) => old.includes(id) ? old.filter((v) => v !== id) : [...old, id]); }
   function heading(key, label) {
     return <th scope="col" aria-sort={sort.key === key ? sort.direction === 1 ? "ascending" : "descending" : "none"}>
-      <button type="button" onClick={() => setSort((old) => ({ key, direction: old.key === key ? -old.direction : 1 }))}>{label}</button>
+      <button type="button" className={styles.sortButton}
+        onClick={() => setSort((old) => ({ key, direction: old.key === key ? -old.direction : 1 }))}>{label}</button>
     </th>;
   }
-  return <section className={styles.panel} aria-labelledby="recipes-title">
-    <div className={styles.actions}><h2 id="recipes-title">Recipes</h2>
-      <Link className={styles.desktopOnly} to="/meals/recipes/new">Add Recipe</Link>
-      <details className={styles.mobileOnly}><summary>+ Add</summary><Link to="/meals/recipes/new">Create manually</Link></details>
-    </div>
+  return <section className={styles.library} aria-labelledby="recipes-title">
+    <PageHeader id="recipes-title" title="Recipes" actions={
+      <Link className="lm-button lm-button--primary" to="/meals/recipes/new">+ Add Recipe</Link>
+    } />
     {loaded.loading ? <p role="status">Loading Recipes...</p> : loaded.error
       ? <ErrorMessage error={loaded.error} retry={loaded.retry} /> : <>
-        <div className={styles.filters}>
-          <label>Search Recipes<input type="search" value={filters.search} onChange={(e) => changeFilter("search", e.target.value)} /></label>
-          <ClassificationFilter label="Category" values={data.categories} selected={filters.categoryIds}
-            onChange={(ids) => changeFilter("categoryIds", ids)} />
-          <ClassificationFilter label="Cuisine" values={data.cuisines} selected={filters.cuisineIds}
-            onChange={(ids) => changeFilter("cuisineIds", ids)} />
-          <label><input type="checkbox" checked={filters.favorites} onChange={(e) => changeFilter("favorites", e.target.checked)} />Favorites only</label>
-          <button type="button" onClick={() => { setFilters(newRecipeFilters()); setSelected([]); }}>Clear search and filters</button>
+        <div className={styles.toolbar} role="search">
+          <label className={styles.searchField}>Search Recipes
+            <input className="lm-form-control" type="search" value={filters.search}
+              onChange={(event) => changeFilter("search", event.target.value)} />
+          </label>
+          <button type="button" className="lm-button lm-button--secondary" aria-haspopup="dialog"
+            onClick={openFilters}>Filters{filterCount ? ` (${filterCount})` : ""}</button>
+          <button type="button" className="lm-button lm-button--secondary" aria-pressed={filters.favorites}
+            onClick={() => changeFilter("favorites", !filters.favorites)}>
+            {filters.favorites ? "Favorites only" : "Favorites"}
+          </button>
+          {filtersActive && <button type="button" className="lm-button lm-button--quiet"
+            onClick={() => { setFilters(newRecipeFilters()); setSelected([]); }}>Clear search and filters</button>}
         </div>
-        <div className={styles.actions}><span>{selected.length} selected</span>
-          <button type="button" disabled={!selected.length || busy} onClick={() => setConfirm(true)}>Delete selected</button>
-          <button type="button" disabled={selected.length !== 1 || busy} onClick={() => {
-            setShoppingMessage(""); setShoppingRecipe(selected[0]);
-          }}>Add to Shopping List</button>
+        <div className={styles.selectionActions}>
+          <span role="status">{selected.length} selected</span>
+          <button type="button" className="lm-button lm-button--danger" disabled={busy || !selected.length}
+            onClick={() => setConfirm(true)}>Delete selected</button>
+          <button type="button" className="lm-button lm-button--secondary" disabled={selected.length !== 1 || busy}
+            onClick={() => { setShoppingMessage(""); setShoppingRecipe(selected[0]); }}>Add to Shopping List</button>
         </div>
         {shoppingMessage && <p role="status">{shoppingMessage} <Link to="/meals/shopping">View Shopping List</Link></p>}
         {shoppingRecipe && <RecipeShopping recipeId={shoppingRecipe} onClose={() => setShoppingRecipe(null)}
@@ -174,28 +222,37 @@ export function RecipeLibrary({ filters, setFilters }) {
         }} />}
         {!data.recipes.length ? <p>No Recipes yet. <Link to="/meals/recipes/new">Add Recipe</Link></p>
           : !visible.length ? <p>No Recipes match the current criteria. Clear search and filters to see more.</p> : <>
-            <table className={styles.recipeTable}><thead><tr><th scope="col">Select</th><th scope="col">Favorite</th>
-              {heading("title", "Name")}{heading("category", "Category")}{heading("cuisine", "Cuisine")}{heading("source", "Source")}
+            <table className={styles.recipeTable}><thead><tr><th scope="col">Favorite</th>
+              {heading("title", "Recipe")}{heading("category", "Category")}{heading("cuisine", "Cuisine")}
             </tr></thead><tbody>{visible.map((recipe) => <tr key={recipe.id} onClick={() => { if (!busy) navigate(`/meals/recipes/${recipe.id}`); }}>
-              <td><input aria-label={`Select ${recipe.title}`} type="checkbox" disabled={busy} checked={selected.includes(recipe.id)}
-                onClick={(e) => e.stopPropagation()} onChange={() => toggle(recipe.id)} /></td>
-              <td><Favorite recipe={recipe} onChange={favorite} pending={busy} /></td>
-              <td><Link className={styles.preserved} to={`/meals/recipes/${recipe.id}`} onClick={(e) => e.stopPropagation()}>{recipe.title}</Link></td>
-              <td>{data.categories.find((v) => v.id === recipe.category_id)?.name}</td>
-              <td>{data.cuisines.find((v) => v.id === recipe.cuisine_id)?.name}</td>
-              <td className={styles.preserved}>{recipe.source}</td>
+              <td><Favorite compact recipe={recipe} onChange={favorite} pending={busy} /></td>
+              <td><div className={styles.recipeCell}>
+                <label className={styles.recipeSelect} onClick={(event) => event.stopPropagation()}>
+                  <input aria-label={`Select ${recipe.title}`} className="lm-checkbox" type="checkbox" disabled={busy}
+                    checked={selected.includes(recipe.id)} onChange={() => toggle(recipe.id)} />
+                </label>
+                <Link className={styles.recipeTitle} to={`/meals/recipes/${recipe.id}`}
+                  onClick={(event) => event.stopPropagation()}>{recipe.title}</Link>
+              </div></td>
+              <td>{data.categories.find((v) => v.id === recipe.category_id)?.name || "\u2014"}</td>
+              <td>{data.cuisines.find((v) => v.id === recipe.cuisine_id)?.name || "\u2014"}</td>
             </tr>)}</tbody></table>
             <ul className={styles.mobileList}>{visible.map((recipe) => <li key={recipe.id}
               onClick={() => { if (!busy) navigate(`/meals/recipes/${recipe.id}`); }}>
-              <input aria-label={`Select ${recipe.title}`} type="checkbox" disabled={busy} checked={selected.includes(recipe.id)}
-                onClick={(event) => event.stopPropagation()} onChange={() => toggle(recipe.id)} />
-              <div><Link className={styles.preserved} to={`/meals/recipes/${recipe.id}`} onClick={(event) => event.stopPropagation()}>{recipe.title}</Link>
+              <label className={styles.recipeSelect} onClick={(event) => event.stopPropagation()}>
+                <input aria-label={`Select ${recipe.title}`} className="lm-checkbox" type="checkbox" disabled={busy}
+                  checked={selected.includes(recipe.id)} onChange={() => toggle(recipe.id)} />
+              </label>
+              <div><Link className={styles.recipeTitle} to={`/meals/recipes/${recipe.id}`} onClick={(event) => event.stopPropagation()}>{recipe.title}</Link>
                 <small>{[data.categories.find((v) => v.id === recipe.category_id)?.name,
                   data.cuisines.find((v) => v.id === recipe.cuisine_id)?.name].filter(Boolean).join(" / ")}</small></div>
-              <Favorite recipe={recipe} onChange={favorite} pending={busy} />
+              <Favorite compact recipe={recipe} onChange={favorite} pending={busy} />
             </li>)}</ul>
           </>}
         {confirm && <DeleteConfirmation count={selected.length} pending={busy} error={error} onCancel={() => setConfirm(false)} onDelete={remove} />}
+        {filterOpen && filterDraft && <RecipeFilterDialog categories={data.categories} cuisines={data.cuisines}
+          filters={filterDraft} setFilters={setFilterDraft} onCancel={() => setFilterOpen(false)}
+          onApply={() => { setFilters(filterDraft); setSelected([]); setFilterOpen(false); }} resultCount={draftResultCount} />}
       </>}
   </section>;
 }
@@ -205,6 +262,9 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
+  const selected = values.find((item) => item.id === value);
+  const createValue = `create-${kind}`;
   async function act(operation) {
     if (lock.current) return;
     lock.current = true; setBusy(true); onBusy(true); setError("");
@@ -212,14 +272,16 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
       if (operation === "create") {
         const created = await service[kind].create(name);
         onChange([...values, created]); onSelect(created.id);
+        setCreating(false);
       } else if (operation === "rename") {
         const updated = await service[kind].rename(value, name);
         onChange(values.map((v) => v.id === value ? updated : v));
+        setName(updated.name);
       } else {
         await service[kind].remove(value);
         onChange(values.filter((v) => v.id !== value)); onSelect(null);
+        setName("");
       }
-      setName("");
     } catch (failure) {
       setError(operation === "remove" && failure.code === "23503"
         ? `Cannot delete this ${label} because it is used by a Recipe. Reassign Recipes using it, then try again.`
@@ -227,19 +289,52 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
     }
     finally { lock.current = false; setBusy(false); onBusy(false); }
   }
-  return <fieldset className={styles.classification} disabled={busy}><legend>{label}</legend>
-    <label>Select {label}<select value={value || ""} onChange={(e) => { setError(""); onSelect(e.target.value || null); }}>
-      <option value="">None</option>{values.map((v) => <option value={v.id} key={v.id}>{v.name}</option>)}
-    </select></label>
-    <label>{label} name<input value={name} onChange={(e) => { setError(""); setName(e.target.value); }} /></label>
-    <div className={styles.actions}>
-      <button type="button" disabled={!name.trim()} onClick={() => act("create")}>Create {label}</button>
-      <button type="button" disabled={!value || !name.trim()} onClick={() => act("rename")}>Rename {label}</button>
-      <button type="button" disabled={!value} onClick={() => act("remove")}>Delete unused {label}</button>
-    </div>
+  return <div className={styles.classification}>
+    <label className={styles.formField}><span>{label}</span>
+      <select className="lm-form-control" aria-label={`Select ${label}`} disabled={busy} value={value || ""}
+        onChange={(event) => {
+          setError("");
+          if (event.target.value === createValue) {
+            setCreating(true);
+            setName("");
+          } else {
+            setCreating(false);
+            setName(values.find((item) => item.id === event.target.value)?.name || "");
+            onSelect(event.target.value || null);
+          }
+        }}>
+        <option value="">None</option>
+        {values.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+        <option value={createValue}>Create new {label.toLowerCase()}...</option>
+      </select>
+    </label>
+    {creating && <div className={styles.classificationCreate}>
+      <label className={styles.formField}>New {label.toLowerCase()} name
+        <input className="lm-form-control" value={name} disabled={busy}
+          onChange={(event) => { setError(""); setName(event.target.value); }} />
+      </label>
+      <button type="button" className="lm-button lm-button--primary" disabled={busy || !name.trim()}
+        onClick={() => act("create")}>Create {label}</button>
+      <button type="button" className="lm-button lm-button--quiet" disabled={busy}
+        onClick={() => { setCreating(false); setError(""); }}>Cancel</button>
+    </div>}
+    <details className={styles.classificationManage}>
+      <summary>Manage {label.toLowerCase()} values</summary>
+      <label className={styles.formField}>{label} name
+        <input className="lm-form-control" value={name} disabled={busy || !selected}
+          onChange={(event) => { setError(""); setName(event.target.value); }} />
+      </label>
+      <div className={styles.actions}>
+        <button type="button" className="lm-button lm-button--secondary"
+          disabled={busy || !selected || !name.trim()} onClick={() => act("rename")}>Rename {label}</button>
+        <button type="button" className="lm-button lm-button--danger"
+          disabled={busy || !selected} onClick={() => act("remove")}>Delete unused {label}</button>
+      </div>
+      {!selected && <p>Select an existing {label.toLowerCase()} to rename or delete it.</p>}
+      <small>Changes save immediately. Referenced values cannot be deleted.</small>
+    </details>
     <ErrorMessage error={error} />
-    <small>Classification changes save immediately. Referenced values cannot be deleted.</small>
-  </fieldset>;
+  </div>;
 }
 
 function EditorForm({ initial, categories: initialCategories, cuisines: initialCuisines, edit }) {
@@ -293,25 +388,49 @@ function EditorForm({ initial, categories: initialCategories, cuisines: initialC
   }
   return <>
     <form onSubmit={save} className={styles.editor}>
-      <fieldset disabled={busy || classificationBusy}><legend>Recipe fields</legend>
-        <label>Title<input required value={draft.title} onChange={(e) => field("title", e.target.value)} /></label>
-        <label>Source<input value={draft.source} onChange={(e) => field("source", e.target.value)} /></label>
-        <label><input type="checkbox" checked={draft.favorite} onChange={(e) => field("favorite", e.target.checked)} />Favorite</label>
-        <Classification kind="categories" label="Category" values={categories} value={draft.category_id}
-          onChange={setCategories} onSelect={(value) => field("category_id", value)} onBusy={setClassificationBusy} />
-        <Classification kind="cuisines" label="Cuisine" values={cuisines} value={draft.cuisine_id}
-          onChange={setCuisines} onSelect={(value) => field("cuisine_id", value)} onBusy={setClassificationBusy} />
-        <h3>Ingredients</h3>
+      <fieldset className={styles.editorFields} disabled={busy || classificationBusy}><legend>Recipe details</legend>
+        <label className={styles.formField}>Recipe Title
+          <input className="lm-form-control" required value={draft.title} onChange={(e) => field("title", e.target.value)} />
+        </label>
+        <div className={styles.classificationRow}>
+          <Classification kind="categories" label="Category" values={categories} value={draft.category_id}
+            onChange={setCategories} onSelect={(value) => field("category_id", value)} onBusy={setClassificationBusy} />
+          <Classification kind="cuisines" label="Cuisine" values={cuisines} value={draft.cuisine_id}
+            onChange={setCuisines} onSelect={(value) => field("cuisine_id", value)} onBusy={setClassificationBusy} />
+        </div>
+        <label className={styles.formField}>Source
+          <input className="lm-form-control" value={draft.source} onChange={(e) => field("source", e.target.value)} />
+        </label>
+        <label className={styles.favoriteField}>
+          <input className="lm-checkbox" type="checkbox" checked={draft.favorite}
+            onChange={(e) => field("favorite", e.target.checked)} />Favorite
+        </label>
+        <h2>Ingredients</h2>
         {draft.ingredient_sections.map((s, index) => <fieldset key={index}><legend>Ingredient section {index + 1}</legend>
-          <label>Section name<input value={s.name} onChange={(e) => section(index, "name", e.target.value)} /></label>
-          <label>Ingredient text<textarea rows={6} value={s.text} onChange={(e) => section(index, "text", e.target.value)}
+          <label className={styles.formField}>Section name
+            <input className="lm-form-control" value={s.name} onChange={(e) => section(index, "name", e.target.value)} />
+          </label>
+          <label className={styles.formField}>Ingredient text
+            <textarea className="lm-form-control" rows={6} value={s.text} onChange={(e) => section(index, "text", e.target.value)}
             onPaste={(event) => pasteIngredients(event, index)} /></label>
-          <button type="button" onClick={() => field("ingredient_sections", draft.ingredient_sections.filter((_, i) => i !== index))}>Remove section {index + 1}</button>
+          <button type="button" className="lm-button lm-button--quiet"
+            onClick={() => field("ingredient_sections", draft.ingredient_sections.filter((_, i) => i !== index))}>
+            Remove section {index + 1}
+          </button>
         </fieldset>)}
-        <button type="button" onClick={() => field("ingredient_sections", [...draft.ingredient_sections, { name: "", text: "" }])}>Add ingredient section</button>
-        <label>Instructions<textarea rows={10} value={draft.instructions} onChange={(e) => field("instructions", e.target.value)} /></label>
-        <div className={styles.actions}><button type="submit">{busy ? "Saving..." : "Save Recipe"}</button>
-          <button type="button" onClick={() => navigate(edit ? `/meals/recipes/${initial.id}` : "/meals/recipes")}>Cancel</button></div>
+        <button type="button" className="lm-button lm-button--secondary"
+          onClick={() => field("ingredient_sections", [...draft.ingredient_sections, { name: "", text: "" }])}>
+          Add Ingredient Section
+        </button>
+        <label className={styles.formField}>Instructions
+          <textarea className="lm-form-control" rows={10} value={draft.instructions}
+            onChange={(e) => field("instructions", e.target.value)} />
+        </label>
+        <div className={styles.actions}>
+          <button type="submit" className="lm-button lm-button--primary">{busy ? "Saving..." : "Save Recipe"}</button>
+          <button type="button" className="lm-button lm-button--secondary"
+            onClick={() => navigate(edit ? `/meals/recipes/${initial.id}` : "/meals/recipes")}>Cancel</button>
+        </div>
       </fieldset>
       <ErrorMessage error={error} />
     </form>
@@ -331,8 +450,12 @@ export function RecipeEditor({ edit = false }) {
     ]);
     return { recipe, categories, cuisines };
   }, [id, edit]);
-  return <section className={styles.panel}>
-    <h2>{edit ? "Edit Recipe" : "Add Recipe"}</h2>
+  return <section className={styles.editorPage} aria-labelledby="recipe-editor-title">
+    <PageHeader id="recipe-editor-title" title={edit ? "Edit Recipe" : "Add Recipe"} backAction={
+      <Link className="lm-button lm-button--secondary" to={edit ? `/meals/recipes/${id}` : "/meals/recipes"}>
+        Back to Recipes
+      </Link>
+    } />
     {loaded.loading ? <p role="status">Loading Recipe editor...</p> : loaded.error
       ? <ErrorMessage error={loaded.error} retry={loaded.retry} /> : !loaded.data.recipe
         ? <p>Recipe not found. <Link to="/meals/recipes">Return to Recipes</Link></p>
@@ -370,23 +493,28 @@ export function RecipeDetail() {
   }
   const recipe = loaded.data?.recipe;
   const steps = recipe ? instructionLines(recipe.instructions) : [];
-  return <section className={styles.panel}>
-    <h2>Recipe Detail</h2>
+  return <section className={styles.detail} aria-labelledby="recipe-detail-title">
+    <PageHeader id="recipe-detail-title" title={recipe?.title || "Recipe Detail"}
+      backAction={<Link className="lm-button lm-button--secondary" to="/meals/recipes">Back to Recipes</Link>}
+      actions={recipe && <div className={styles.detailActions}>
+        <Favorite recipe={recipe} pending={busy} onChange={() => mutate(false)} />
+        <Link className="lm-button lm-button--secondary" to={`/meals/recipes/${id}/edit`}
+          aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>Edit Recipe</Link>
+        <button type="button" className="lm-button lm-button--primary" disabled={busy}
+          onClick={() => { setShoppingMessage(""); setShoppingOpen(true); }}>Add to Shopping List</button>
+        <button type="button" className="lm-button lm-button--secondary" disabled={busy}
+          onClick={() => { setPlanned(null); setPlanning(true); }}>Plan Meal</button>
+        <button type="button" className="lm-button lm-button--danger" disabled={busy}
+          onClick={() => setConfirm(true)}>Delete Recipe</button>
+      </div>} />
     {loaded.loading ? <p role="status">Loading Recipe...</p> : loaded.error
       ? <ErrorMessage error={loaded.error} retry={loaded.retry} /> : !recipe
         ? <p>Recipe not found. <Link to="/meals/recipes">Return to Recipes</Link></p> : <>
-          <h3 className={styles.preserved}>{recipe.title}</h3>
-          <p>{[loaded.data.categories.find((v) => v.id === recipe.category_id)?.name,
-            loaded.data.cuisines.find((v) => v.id === recipe.cuisine_id)?.name].filter(Boolean).join(" / ")}</p>
-          {recipe.source && <p>Source: <Source source={recipe.source} /></p>}
-          <div className={styles.actions}>
-            <Favorite recipe={recipe} pending={busy} onChange={() => mutate(false)} />
-            <Link to={`/meals/recipes/${id}/edit`} aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }}>Edit Recipe</Link>
-            <button type="button" disabled={busy} onClick={() => setConfirm(true)}>Delete Recipe</button>
-            <button type="button" disabled={busy} onClick={() => { setShoppingMessage(""); setShoppingOpen(true); }}>Add to Shopping List</button>
-            <button type="button" disabled={busy} onClick={() => { setPlanned(null); setPlanning(true); }}>Plan Meal</button>
-            <Link to="/meals/recipes">Back to Recipes</Link>
-          </div>
+          <p className={styles.detailMetadata}>
+            {[loaded.data.categories.find((v) => v.id === recipe.category_id)?.name,
+              loaded.data.cuisines.find((v) => v.id === recipe.cuisine_id)?.name].filter(Boolean).join(" / ")}
+          </p>
+          {recipe.source && <p className={styles.source}>Source: <Source source={recipe.source} /></p>}
           <ErrorMessage error={error} />
           {shoppingMessage && <p role="status">{shoppingMessage} <Link to="/meals/shopping">View Shopping List</Link></p>}
           {planned && <p role="status">Meal planned for {planned.meal_date}, {planned.meal_type}.{" "}
@@ -395,9 +523,9 @@ export function RecipeDetail() {
           {shoppingOpen && <RecipeShopping key={id} recipeId={id} onClose={() => setShoppingOpen(false)}
             onAdded={(count) => setShoppingMessage(`${count} ingredients added to Shopping List.`)} />}
           {recipe.ingredient_sections.map((section, index) => <section key={index}>
-            <h3 className={styles.preserved}>{section.name}</h3><div className={styles.preserved}>{section.text}</div>
+            <h2 className={styles.sectionTitle}>{section.name}</h2><div className={styles.preserved}>{section.text}</div>
           </section>)}
-          <h3>Instructions</h3>
+          <h2 className={styles.sectionTitle}>Instructions</h2>
           {steps.length ? <ol className={styles.instructions}>
             {steps.map((step, index) => <li key={index} className={styles.preserved}>{step}</li>)}
           </ol> : <p>No instructions provided.</p>}

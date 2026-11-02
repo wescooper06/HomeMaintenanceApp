@@ -158,7 +158,10 @@ test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping
     ["/meals/not-found", "Meals page not found", null],
   ]) {
     const html = render(MealsPage, "/HomeMaintenanceApp/www/trips" + pathname, "/HomeMaintenanceApp/www/trips");
-    if (title) assert.match(html, new RegExp(`<h2[^>]*>${title}</h2>`));
+    if (title) {
+      const heading = title === "Meals page not found" ? "h2" : "h1";
+      assert.match(html, new RegExp(`<${heading}[^>]*>${title}</${heading}>`));
+    }
     if (active === "recipes") assert.match(html, /role="status"[^>]*>Loading Recipe/);
     else if (active === "shopping") assert.match(html, /role="status"[^>]*>Loading Shopping/);
     else assert.match(html, /Phase 0A foundation preview - not data-backed/);
@@ -172,8 +175,23 @@ test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping
   assert.match(html, /id="nav-meals"[^>]*aria-current="page"[^>]*href="\/meals"/);
   assert.match(html, />Meals<\/a>/);
   const css = fs.readFileSync(path.join(root, "src\\pages\\Meals\\MealsPage.module.css"), "utf8");
-  assert.match(css, /min-height: 44px/);
-  assert.match(css, /@media \(max-width: 40rem\)/);
+  assert.match(css, /min-height:\s*var\(--lm-control-mobile\)/);
+  assert.match(css, /@media \(max-width: 700px\)/);
+});
+
+test("RESP-002: mobile Meals layouts constrain Recipe and Shopping content without wide rows", () => {
+  const recipeStyles = fs.readFileSync(path.join(root, "src\\pages\\Meals\\MealsPage.module.css"), "utf8");
+  const shoppingStyles = fs.readFileSync(path.join(root, "src\\pages\\Meals\\ShoppingPage.module.css"), "utf8");
+  assert.match(recipeStyles, /@media \(max-width: 700px\)[\s\S]*\.recipeTable\s*\{\s*display:\s*none/);
+  assert.match(recipeStyles, /\.mobileList\s*\{\s*display:\s*grid/);
+  assert.match(recipeStyles, /\.mobileList li\s*>\s*div\s*\{[^}]*min-width:\s*0/);
+  assert.match(recipeStyles, /\.classificationRow\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(recipeStyles, /\.editor textarea,\s*\.editor input:not\(\[type="checkbox"\]\),\s*\.editor select\s*\{[^}]*max-width:\s*100%/);
+  assert.match(shoppingStyles, /\.items li\s*\{[^}]*min-width:\s*0/);
+  assert.match(shoppingStyles, /\.itemText\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(shoppingStyles, /\.itemActionButton\s*\{[^}]*flex:\s*0 0 auto/);
+  assert.match(shoppingStyles, /\.check\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);
+  assert.match(shoppingStyles, /@media \(max-width: 700px\)[\s\S]*\.itemDialog\s*\{[^}]*width:\s*100%/);
 });
 
 test("ARCH-001/004/005: real owner boundary never mounts private Meals router while checking or logged out", async () => {
