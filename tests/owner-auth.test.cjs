@@ -17,7 +17,8 @@ test("both production builds share the exact public owner UUID without overridin
   const config = fs.readFileSync(path.join(root, "trips", ".env.production"), "utf8").trim();
   assert.equal(config, "VITE_OWNER_AUTH_USER_ID=e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60");
   const standalone = fs.readFileSync(path.join(root, "trips", "activity-planner.vite.config.js"), "utf8");
-  assert.match(standalone, /envDir: location\("\.\/"\)/);
+  assert.match(standalone, /const envDir = location\("\.\/"\)/);
+  assert.match(standalone, /\benvDir,/);
 });
 function fixture({ user = owner, saved = session, invalid = false } = {}) {
   let event, expire, resolveUser, now = 0;
