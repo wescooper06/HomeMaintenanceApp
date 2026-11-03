@@ -16,7 +16,8 @@ const load = (file, names, context = {}) => vm.runInNewContext(`(() => {
 })()`, context);
 const { resolveLifeManagerRoute, lifeManagerBasename } = load("src\\router\\lifeManagerRoutes.js",
   ["resolveLifeManagerRoute", "lifeManagerBasename"]);
-const { restoreMealsDeepLink } = load("src\\router\\mealsDeepLink.js", ["restoreMealsDeepLink"], { URL });
+const { restoreMealsDeepLink, restoreTimelineDeepLink } = load("src\\router\\mealsDeepLink.js",
+  ["restoreMealsDeepLink", "restoreTimelineDeepLink"], { URL });
 const { newRecipeFilters } = load("src\\services\\recipeService.js",
   ["newRecipeFilters"], { getSupabaseClient() {} });
 const { navigationLinks, standaloneNavigationHref } = load("src\\components\\layout\\navigationRoutes.js",
@@ -215,7 +216,7 @@ test("standalone Meals navigation retains deployment prefix and leaves other des
     "http://localhost:5173/meals");
 });
 
-test("static fallback is Meals-only and restores the exact prefixed pathname/search/hash before routing", () => {
+test("static fallback restores Meals and Timeline routes with their exact pathname/search/hash", () => {
   const fallback = fs.readFileSync(path.join(root, "404.html"), "utf8").match(/<script>([\s\S]*?)<\/script>/)[1];
   for (const pathname of paths) {
     const original = `https://fixture.invalid/HomeMaintenanceApp/www/trips${pathname}?filter=one%26two#fixture`;
@@ -231,13 +232,32 @@ test("static fallback is Meals-only and restores the exact prefixed pathname/sea
     assert.equal(new URL(restored, entry).href, original);
     assert.equal(lifeManagerBasename(new URL(restored, entry).pathname), "/HomeMaintenanceApp/www/trips");
   }
-  for (const pathname of ["/HomeMaintenanceApp/www/trips/timeline", "/elsewhere", "/meals", "/HomeMaintenanceApp/www/trips/meals-other"]) {
+  for (const pathname of ["/elsewhere", "/meals", "/HomeMaintenanceApp/www/trips/meals-other", "/HomeMaintenanceApp/www/trips/prioritize"]) {
     vm.runInNewContext(fallback, { window: { location: { pathname, search: "", hash: "", replace() { assert.fail("Unrelated route redirected"); } } }, encodeURIComponent });
+  }
+  for (const pathname of ["/timeline", "/timeline/"]) {
+    const original = `https://fixture.invalid/HomeMaintenanceApp/www/trips${pathname}?year=2026#timeline`;
+    let redirected;
+    const location = new URL(original);
+    location.replace = (value) => { redirected = value; };
+    vm.runInNewContext(fallback, { window: { location }, encodeURIComponent });
+    const entry = new URL(redirected, original);
+    assert.equal(entry.pathname, "/HomeMaintenanceApp/www/trips/index.html");
+    let restored;
+    restoreTimelineDeepLink(entry, { replaceState: (_state, _unused, value) => { restored = value; } });
+    assert.equal(new URL(restored, entry).href, original);
+    assert.equal(lifeManagerBasename(new URL(restored, entry).pathname), "/HomeMaintenanceApp/www/trips");
   }
   for (const destination of ["https://evil.invalid", "//evil.invalid", "/meals/../../outside",
     "/meals/../../trips-other/meals", "/meals\\outside", "/meals\noutside"]) {
     assert.throws(() => restoreMealsDeepLink(new URL(`https://fixture.invalid/HomeMaintenanceApp/www/trips/index.html?__meals=${encodeURIComponent(destination)}`),
       { replaceState() { assert.fail("Unsafe redirect"); } }), /Invalid Meals|escaped/);
   }
+  for (const destination of ["https://evil.invalid", "//evil.invalid", "/timeline/../../outside",
+    "/timeline/../../trips-other/timeline", "/timeline\\outside", "/timeline\noutside"]) {
+    assert.throws(() => restoreTimelineDeepLink(new URL(`https://fixture.invalid/HomeMaintenanceApp/www/trips/index.html?__timeline=${encodeURIComponent(destination)}`),
+      { replaceState() { assert.fail("Unsafe redirect"); } }), /Invalid Timeline|escaped/);
+  }
   assert.throws(() => restoreMealsDeepLink(new URL("https://fixture.invalid/index.html?__meals=/meals"), {}), /Invalid Meals/);
+  assert.throws(() => restoreTimelineDeepLink(new URL("https://fixture.invalid/index.html?__timeline=/timeline"), {}), /Invalid Timeline/);
 });
