@@ -68,3 +68,25 @@ Correct usage: use a token or shared primitive for a common control, surface, or
 The pre-change branch and validation evidence, Pages release reference, Android identity, and Acceptance Workbook digest are recorded in private session evidence outside the repository; this evidence is not application content and is not committed.
 
 Keep the UX Foundation in one isolated source commit. Roll back source by creating a `git revert` commit; do not rewrite published history. Restore the preceding Pages release by using the existing release process to republish the previously verified clean Pages `main` commit recorded in the private baseline. No database rollback is applicable.
+
+## Final owner acceptance
+
+Owner acceptance, 2026-11-03:
+
+**LIFE MANAGER UX REFINEMENT — ACCEPTED AND COMPLETE.**
+
+All required owner UAT cycles and repair re-tests passed. This includes the
+Foundation, Planner and Meals UX waves, the Remaining-app UX wave, the Planner
+desktop-fit and Timeline persistence follow-up, compact empty Meal regions, and
+assigned-meal typography normalization. The final meal-typography desktop and
+mobile checks both passed; overall result: **PASS**.
+
+Final deployed traceability: source commit `90da471` and Pages release
+`27b6b6c`. No database, production-data, or Security/Auth changes were made by
+the UX refinement work.
+
+Still deferred: General Recipe URL Import; Meal drag/drop rescheduling;
+Workbench filter Select All / Clear All; the Dashboard long-term
+product-purpose decision; final Project-card metadata; future Trips mobile
+product/design direction; and Planner Repeatable Task occurrence-specific
+checklists. This closeout does not authorize or start any deferred work.
