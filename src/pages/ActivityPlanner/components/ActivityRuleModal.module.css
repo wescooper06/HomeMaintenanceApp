@@ -4,60 +4,62 @@
   z-index: 50;
   display: grid;
   place-items: center;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.32);
+  padding: var(--lm-space-4);
+  background: var(--lm-color-overlay);
 }
 
 .dialog {
   display: flex;
   flex-direction: column;
   width: min(480px, 100%);
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   overflow: hidden;
-  background: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.22), 0 4px 12px rgba(0, 0, 0, 0.12);
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.4;
-  color: #323130;
+  border: 1px solid var(--lm-color-border);
+  background: var(--lm-color-surface);
+  border-radius: var(--lm-radius-overlay);
+  box-shadow: var(--lm-shadow-overlay);
+  font-family: var(--lm-font-family);
+  font-size: var(--lm-font-secondary);
+  line-height: var(--lm-line-body);
+  color: var(--lm-color-text);
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px 8px;
+  padding: var(--lm-space-4) var(--lm-space-5) var(--lm-space-2);
 }
 
 .header h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--lm-font-section-title);
   font-weight: 600;
-  color: #201f1e;
+  color: var(--lm-color-text);
 }
 
 .closeButton {
-  width: 32px;
-  height: 32px;
+  width: var(--lm-control-mobile);
+  height: var(--lm-control-mobile);
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--lm-radius-control);
   background: transparent;
   font-size: 20px;
-  color: #605e5c;
+  color: var(--lm-color-text-secondary);
   cursor: pointer;
 }
 
 .closeButton:hover:not(:disabled) {
-  background: #f3f2f1;
+  background: var(--lm-color-surface-subtle);
 }
 
 .body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 8px 20px 16px;
+  gap: var(--lm-space-4);
+  padding: var(--lm-space-2) var(--lm-space-5) var(--lm-space-4);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .row {
@@ -80,7 +82,7 @@
 .field > legend {
   padding: 0;
   margin-bottom: 4px;
-  font-size: 13px;
+  font-size: var(--lm-font-label);
   font-weight: 600;
 }
 
@@ -89,24 +91,24 @@
 .field textarea {
   box-sizing: border-box;
   width: 100%;
-  padding: 6px 8px;
-  border: 1px solid #8a8886;
-  border-radius: 4px;
-  background: #ffffff;
+  min-height: var(--lm-control-desktop);
+  padding: 0 var(--lm-space-3);
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
   font: inherit;
-  color: inherit;
+  color: var(--lm-color-text);
 }
 
 .field textarea {
+  min-height: 88px;
+  padding: var(--lm-space-2) var(--lm-space-3);
   resize: vertical;
 }
 
-.field select:focus,
-.field input:focus,
-.field textarea:focus {
-  outline: 2px solid #0f6cbd;
-  outline-offset: -1px;
-  border-color: transparent;
+.dialog :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--lm-color-primary);
+  outline-offset: 2px;
 }
 
 .dayToggles {
@@ -116,25 +118,25 @@
 }
 
 .dayToggle {
-  padding: 6px 0;
-  border: 1px solid #c8c6c4;
-  border-radius: 4px;
-  background: #ffffff;
+  min-height: var(--lm-control-mobile);
+  padding: 0;
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
   font: inherit;
-  font-size: 13px;
-  color: #323130;
+  color: var(--lm-color-text);
   cursor: pointer;
 }
 
 .dayToggle:hover:not(:disabled) {
-  background: #f3f2f1;
+  background: var(--lm-color-surface-subtle);
 }
 
 .dayToggleOn,
 .dayToggleOn:hover:not(:disabled) {
-  border-color: #0f6cbd;
-  background: #0f6cbd;
-  color: #ffffff;
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
 }
 
 .switchField {
@@ -149,30 +151,31 @@
 .switchField input {
   width: 16px;
   height: 16px;
-  accent-color: #0f6cbd;
+  accent-color: var(--lm-color-primary);
 }
 
 .hint {
   margin: -6px 0 0;
-  font-size: 12px;
-  color: #605e5c;
+  font-size: var(--lm-font-metadata);
+  color: var(--lm-color-text-secondary);
 }
 
 .error {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: 4px;
-  background: #fde7e9;
-  color: #a4262c;
-  font-size: 13px;
+  padding: var(--lm-space-2) var(--lm-space-3);
+  border: 1px solid var(--lm-color-danger);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-danger-subtle);
+  color: var(--lm-color-danger);
+  font-size: var(--lm-font-secondary);
 }
 
 .footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 20px 16px;
-  border-top: 1px solid #edebe9;
+  gap: var(--lm-space-2);
+  padding: var(--lm-space-3) var(--lm-space-5) var(--lm-space-4);
+  border-top: 1px solid var(--lm-color-border);
 }
 
 .spacer {
@@ -183,52 +186,77 @@
 .secondaryButton,
 .deleteButton {
   min-width: 80px;
-  padding: 6px 16px;
-  border-radius: 4px;
-  font: inherit;
+  min-height: var(--lm-control-desktop);
+  padding: 0 var(--lm-space-4);
+  border-radius: var(--lm-radius-control);
+  font: 600 var(--lm-font-secondary)/1.2 var(--lm-font-family);
   font-weight: 600;
   cursor: pointer;
 }
 
 .primaryButton {
-  border: 1px solid #0f6cbd;
-  background: #0f6cbd;
-  color: #ffffff;
+  border: 1px solid var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
 }
 
 .primaryButton:hover:not(:disabled) {
-  background: #115ea3;
+  border-color: var(--lm-color-primary-hover);
+  background: var(--lm-color-primary-hover);
 }
 
 .secondaryButton {
-  border: 1px solid #8a8886;
-  background: #ffffff;
-  color: #323130;
+  border: 1px solid var(--lm-color-border);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
 }
 
 .secondaryButton:hover:not(:disabled) {
-  background: #f3f2f1;
+  background: var(--lm-color-surface-subtle);
 }
 
 .deleteButton {
-  border: 1px solid #a4262c;
-  background: #ffffff;
-  color: #a4262c;
+  border: 1px solid var(--lm-color-danger);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-danger);
 }
 
 .deleteButton:hover:not(:disabled) {
-  background: #fde7e9;
+  background: var(--lm-color-danger-subtle);
 }
 
 .primaryButton:disabled,
 .secondaryButton:disabled,
 .deleteButton:disabled {
   opacity: 0.6;
-  cursor: default;
+  cursor: not-allowed;
 }
 
 @media (max-width: 480px) {
   .row {
     grid-template-columns: 1fr;
+  }
+
+  .field select,
+  .field input:not([type="checkbox"]),
+  .primaryButton,
+  .secondaryButton,
+  .deleteButton {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .header,
+  .body,
+  .footer {
+    padding-right: var(--lm-space-3);
+    padding-left: var(--lm-space-3);
+  }
+
+  .footer {
+    flex-wrap: wrap;
+  }
+
+  .footer button {
+    flex: 1;
   }
 }

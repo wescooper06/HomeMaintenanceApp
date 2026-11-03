@@ -479,3 +479,382 @@ html[data-vite-page="trips"] code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+html[data-vite-page="trips"] {
+  color-scheme: light;
+  background: var(--lm-color-canvas);
+  color: var(--lm-color-text);
+  font-family: var(--lm-font-family);
+}
+
+html[data-vite-page="trips"] #root {
+  text-align: left;
+  color: var(--lm-color-text);
+}
+
+html[data-vite-page="trips"] h1:not(.lm-page-title) {
+  margin: 0;
+  color: var(--lm-color-text);
+  font-family: var(--lm-font-family);
+  font-size: var(--lm-font-page-title);
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: var(--lm-line-heading);
+}
+
+html[data-vite-page="trips"] h2 {
+  color: var(--lm-color-text);
+  font-family: var(--lm-font-family);
+  font-size: var(--lm-font-section-title);
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: var(--lm-line-heading);
+}
+
+html[data-vite-page="trips"] :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--lm-color-primary);
+  outline-offset: 2px;
+}
+
+.trips-backlog,
+.prioritize-page,
+.timeline-page,
+.new-trip-page {
+  color: var(--lm-color-text);
+  background: var(--lm-color-canvas);
+  font-family: var(--lm-font-family);
+}
+
+.trips-backlog {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-card);
+  background: var(--lm-color-surface);
+}
+
+.trips-backlog-header {
+  border-color: var(--lm-color-border);
+}
+
+.trips-backlog h1:not(.lm-page-title) {
+  color: var(--lm-color-text);
+  font-size: var(--lm-font-page-title);
+  line-height: var(--lm-line-heading);
+}
+
+.trips-backlog-header p:not(.lm-page-subtitle),
+.trip-card-summary,
+.trip-card-notes,
+.trips-empty,
+.trip-editor-placeholder {
+  color: var(--lm-color-text-secondary);
+}
+
+.trips-header-actions a,
+.trip-card-actions .trip-edit,
+.trip-editor-retry {
+  box-sizing: border-box;
+  min-height: var(--lm-control-desktop);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+}
+
+.trips-header-actions a {
+  padding: 0 var(--lm-space-3);
+}
+
+.trips-header-actions button {
+  display: inline-flex;
+  min-height: var(--lm-control-desktop);
+  align-items: center;
+  justify-content: center;
+  gap: var(--lm-space-2);
+  border: 1px solid var(--lm-color-primary);
+  border-radius: var(--lm-radius-control);
+  padding: 0 var(--lm-space-4);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+  font: 600 var(--lm-font-secondary)/1.2 var(--lm-font-family);
+  cursor: pointer;
+}
+
+.trips-header-actions button:hover:not(:disabled) {
+  border-color: var(--lm-color-primary-hover);
+  background: var(--lm-color-primary-hover);
+  color: var(--lm-color-text-on-primary);
+}
+
+.trips-header-actions button:focus-visible,
+.trips-header-actions a:focus-visible,
+.trips-filter-toolbar :is(input, select, button):focus-visible,
+.trip-card:focus-visible {
+  outline-color: var(--lm-color-primary);
+}
+
+.trips-header-actions a:hover:not([aria-disabled="true"]),
+.trip-card-actions .trip-edit:hover:not(:disabled),
+.trip-editor-retry:hover:not(:disabled) {
+  border-color: var(--lm-color-border-strong);
+  background: var(--lm-color-surface-subtle);
+}
+
+.trip-card {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+}
+
+.trip-destination {
+  color: var(--lm-color-text);
+}
+
+.trip-type,
+.trip-eyebrow,
+.trip-clear-filters {
+  color: var(--lm-color-primary);
+}
+
+.trip-edit {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  color: var(--lm-color-primary);
+}
+
+.trip-card-actions .trip-edit {
+  font-weight: 600;
+}
+
+.trip-card-actions .trip-delete {
+  border-color: var(--lm-color-danger);
+  color: var(--lm-color-danger);
+}
+
+.trip-filter-chip {
+  min-height: var(--lm-control-compact);
+}
+
+.trip-save-filter-dialog {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-overlay);
+  color: var(--lm-color-text);
+  box-shadow: var(--lm-shadow-overlay);
+}
+
+.trip-save-filter-dialog h2 {
+  color: var(--lm-color-text);
+}
+
+.trip-save-filter-dialog input,
+.trip-filter-inputs input,
+.trip-filter-inputs select {
+  min-height: var(--lm-control-desktop);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  color: var(--lm-color-text);
+  font-family: var(--lm-font-family);
+}
+
+.trip-filter-inputs label {
+  color: var(--lm-color-text-secondary);
+}
+
+.trip-save-filter-actions button {
+  min-height: var(--lm-control-desktop);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  color: var(--lm-color-text);
+}
+
+.trip-save-filter-actions button[type="submit"] {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+}
+
+.view-trip-card {
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-overlay);
+  box-shadow: var(--lm-shadow-overlay);
+}
+
+.view-trip-card header {
+  border-color: var(--lm-color-border);
+}
+
+.view-trip-grid dt {
+  color: var(--lm-color-primary);
+}
+
+.view-trip-links a {
+  color: var(--lm-color-text);
+}
+
+.view-trip-links a:hover {
+  color: var(--lm-color-primary);
+}
+
+.view-trip-tags span {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary-subtle);
+  color: var(--lm-color-primary-selected-text);
+}
+
+.capture-card {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-overlay);
+  box-shadow: var(--lm-shadow-overlay);
+}
+
+.capture-card .trip-eyebrow {
+  color: var(--lm-color-primary);
+}
+
+.trip-modal-tabs {
+  border-color: var(--lm-color-border);
+}
+
+.trip-modal-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--lm-color-primary);
+  color: var(--lm-color-primary);
+}
+
+.capture-trip :is(input, select, textarea) {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+}
+
+.trip-modal-footer {
+  border-color: var(--lm-color-border);
+}
+
+.capture-actions button[type="submit"] {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+}
+
+.capture-actions .button-secondary {
+  border-color: var(--lm-color-border);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+}
+
+.capture-error,
+.trip-action-error {
+  color: var(--lm-color-danger);
+}
+
+.prioritize-page {
+  padding: var(--lm-space-6);
+  background: var(--lm-color-canvas);
+}
+
+.prioritize-header h1:not(.lm-page-title) {
+  color: var(--lm-color-text);
+  font-size: var(--lm-font-page-title);
+}
+
+.prioritize-header-actions,
+.priority-empty {
+  color: var(--lm-color-text-secondary);
+}
+
+.prioritize-header button,
+.prioritize-header a,
+.priority-error button {
+  box-sizing: border-box;
+  min-height: var(--lm-control-desktop);
+  padding: 0 var(--lm-space-3);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  color: var(--lm-color-text);
+}
+
+.priority-list {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-card);
+}
+
+.priority-table th {
+  background: var(--lm-color-surface-subtle);
+  color: var(--lm-color-text-secondary);
+}
+
+.priority-table td {
+  border-color: var(--lm-color-border);
+}
+
+.priority-table tbody tr:nth-child(even) {
+  background: var(--lm-color-surface-subtle);
+}
+
+.priority-table tbody tr[data-selected="true"] {
+  background: var(--lm-color-surface-selected);
+  box-shadow: inset 3px 0 var(--lm-color-primary);
+}
+
+.priority-select-trip {
+  color: var(--lm-color-text);
+}
+
+.priority-error {
+  border-color: var(--lm-color-danger);
+  background: var(--lm-color-danger-subtle);
+  color: var(--lm-color-danger);
+}
+
+@media (max-width: 600px) {
+  .trips-header-actions a,
+  .trips-header-actions button,
+  .trip-card-actions .trip-edit,
+  .trip-save-filter-actions button,
+  .prioritize-header button,
+  .prioritize-header a,
+  .priority-error button,
+  .capture-actions button {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .trips-header-actions {
+    justify-content: flex-start;
+  }
+
+  .trips-header-actions a {
+    flex: 1 1 auto;
+  }
+
+  .trips-header-actions button {
+    flex: 1 1 auto;
+  }
+
+  .trip-card-actions .trip-edit {
+    flex: 1 1 auto;
+  }
+
+  .trip-filter-chip,
+  .trip-clear-filters,
+  .trip-modal-tabs button,
+  .trip-filter-inputs :is(input, select),
+  .trip-save-filter-dialog input,
+  .capture-trip :is(input, select, textarea) {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .priority-drag-handle {
+    width: var(--lm-control-mobile);
+    height: var(--lm-control-mobile);
+  }
+
+  .capture-trip textarea {
+    height: auto;
+  }
+
+  .trip-save-filter-dialog {
+    max-width: calc(100vw - var(--lm-space-4));
+  }
+
+  .prioritize-page {
+    padding: var(--lm-space-2);
+  }
+}

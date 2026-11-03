@@ -24,10 +24,30 @@ const CREATE_FIELDS = [
   ["serviceDescription", "Service Description"], ["resourceLinks", "Resource Links"], ["notes", "Notes"],
 ];
 
+const FIELD_GROUPS = [
+  { title: "Project details", keys: ["source", "title", "category", "state", "priority", "order", "repeatingProject", "addToRepeating"] },
+  { title: "Schedule and assets", keys: ["recurrence", "area", "property", "vehicle", "mileage", "engineHours"] },
+  { title: "Cost and service", keys: ["actualCost", "estimatedCost", "dateCompleted", "mechanic", "serviceDescription", "maintenanceChecks"] },
+  { title: "Notes and resources", keys: ["resourceLinks", "notes"] },
+];
+
+function groupFields(fields) {
+  const groupedKeys = new Set();
+  const groups = FIELD_GROUPS.map((group) => {
+    const items = fields.filter(([key]) => group.keys.includes(key));
+    items.forEach(([key]) => groupedKeys.add(key));
+    return { title: group.title, fields: items };
+  }).filter((group) => group.fields.length);
+  const additional = fields.filter(([key]) => !groupedKeys.has(key));
+  if (additional.length) groups.push({ title: "Additional details", fields: additional });
+  return groups;
+}
+
 export default function ProjectEditor({ mode = "edit", project, busy = false, error = "", onClose, onSubmit, onDelete, deleteOnly = false }) {
   const creating = mode === "create";
   const navigate = useNavigate();
   const fields = creating ? CREATE_FIELDS : getEditFields(project);
+  const fieldGroups = groupFields(fields);
   const [values, setValues] = useState(() => creating
     ? { ...EMPTY_PROJECT }
     : Object.fromEntries(fields.map(([key, , value]) => [
@@ -109,7 +129,7 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
     const choices = options ? [...new Set([value, ...options])] : null;
     const multiline = ["notes", "resourceLinks", "serviceDescription"].includes(key) || value.length > 80;
     return (
-      <label key={key}>
+      <label key={key} className={multiline ? styles.multilineField : undefined}>
         {label}
         {choices ? (
           <select name={key} value={value} onChange={(event) => change(key, event.target.value)}
@@ -185,7 +205,12 @@ export default function ProjectEditor({ mode = "edit", project, busy = false, er
           </div>
         ) : <form onSubmit={(event) => void submit(event)}>
           <fieldset className={styles.editGrid} disabled={busy || saving}>
-            {fields.map(field)}
+            {fieldGroups.map((group) => (
+              <section key={group.title} className={styles.fieldGroup} aria-label={group.title}>
+                <h2 className={styles.fieldGroupTitle}>{group.title}</h2>
+                <div className={styles.fieldGroupGrid}>{group.fields.map(field)}</div>
+              </section>
+            ))}
             {creating && values.repeatingProject && (
               <p role="status">Project Type: repeating. Uncheck Repeating project to use the selected non-repeating type.</p>
             )}

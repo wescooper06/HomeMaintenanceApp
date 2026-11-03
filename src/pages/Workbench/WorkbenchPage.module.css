@@ -384,14 +384,43 @@
   display: grid;
   min-width: 0;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--lm-space-3);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--lm-space-4);
   margin: 0;
   border: 0;
   padding: 0;
 }
 
-.modal label {
+.fieldGroup {
+  display: grid;
+  min-width: 0;
+  gap: var(--lm-space-3);
+  margin: 0;
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-card);
+  padding: var(--lm-space-4);
+  background: var(--lm-color-surface-subtle);
+}
+
+.fieldGroupTitle {
+  margin: 0;
+  color: var(--lm-color-text);
+  font-size: var(--lm-font-card-title);
+  line-height: var(--lm-line-heading);
+}
+
+.fieldGroupGrid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--lm-space-3);
+}
+
+.fieldGroupGrid .multilineField {
+  grid-column: 1 / -1;
+}
+
+.modalCard label {
   display: grid;
   min-width: 0;
   gap: var(--lm-space-2);
@@ -400,19 +429,27 @@
   font-weight: 600;
 }
 
-.modal input,
-.modal select,
-.modal textarea {
+.modalCard input:not([type="checkbox"]),
+.modalCard select,
+.modalCard textarea {
   width: 100%;
   padding: var(--lm-space-2) var(--lm-space-3);
 }
 
-.modal textarea {
+.modalCard input[type="checkbox"] {
+  width: 20px;
+  min-height: 20px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--lm-color-primary);
+}
+
+.modalCard textarea {
   min-height: 72px;
   resize: vertical;
 }
 
-.modal select {
+.modalCard select {
   appearance: auto;
   cursor: pointer;
 }
@@ -507,7 +544,7 @@
   }
 
   .editGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -549,9 +586,24 @@
     grid-template-columns: 1fr;
   }
 
+  .fieldGroup {
+    padding: var(--lm-space-3);
+  }
+
+  .fieldGroupGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fieldGroupGrid .multilineField {
+    grid-column: auto;
+  }
+
   .filterBar input,
   .filterBar select,
   .multiSelect summary,
+  .modalCard input:not([type="checkbox"]),
+  .modalCard select,
+  .modalCard textarea,
   .modal input,
   .modal select,
   .modal textarea {

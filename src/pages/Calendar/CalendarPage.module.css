@@ -524,3 +524,296 @@
     font-size: 0.69rem;
   }
 }
+
+.calendar-screen {
+  box-sizing: border-box;
+  display: flex;
+  min-width: 0;
+  min-height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px));
+  flex-direction: column;
+  gap: var(--lm-space-3);
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-card);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+}
+
+.calendar-status {
+  border-color: var(--lm-color-info);
+  border-radius: var(--lm-radius-pill);
+  background: var(--lm-color-info-surface);
+  color: var(--lm-color-text);
+  font-size: var(--lm-font-metadata);
+}
+
+.calendar-controls button {
+  box-sizing: border-box;
+  min-height: var(--lm-control-desktop);
+  padding: 0 var(--lm-space-3);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+  font: 600 var(--lm-font-secondary)/1.2 var(--lm-font-family);
+}
+
+.calendar-controls button:hover:not(:disabled) {
+  border-color: var(--lm-color-border-strong);
+  background: var(--lm-color-surface-subtle);
+}
+
+.calendar-controls button:global(#calendar-add-event-btn) {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+}
+
+.calendar-controls button:global(#calendar-add-event-btn):hover:not(:disabled) {
+  border-color: var(--lm-color-primary-hover);
+  background: var(--lm-color-primary-hover);
+}
+
+.calendar-controls button:global(#calendar-refresh-btn) {
+  border-color: var(--lm-color-border);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+}
+
+.calendar-month-label {
+  color: var(--lm-color-text);
+  font-size: var(--lm-font-section-title);
+  font-weight: 700;
+}
+
+.calendar-updated-at {
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-metadata);
+}
+
+.calendar-events {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.calendar-month-grid {
+  min-width: 720px;
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-card);
+  background: var(--lm-color-surface);
+}
+
+.calendar-weekday-row {
+  border-color: var(--lm-color-border);
+  background: var(--lm-color-surface-subtle);
+}
+
+.calendar-weekday {
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-metadata);
+}
+
+.calendar-day-cell {
+  border-color: var(--lm-color-border);
+  background: var(--lm-color-surface);
+}
+
+.calendar-day-cell.is-outside {
+  background: var(--lm-color-surface-subtle);
+}
+
+.calendar-day-cell.is-today {
+  background: var(--lm-color-primary-subtle);
+}
+
+.calendar-day-number {
+  color: var(--lm-color-text);
+}
+
+.calendar-event-card {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  box-shadow: none;
+}
+
+.calendar-event-chip {
+  border-left-color: var(--lm-color-primary);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-primary-subtle);
+  color: var(--lm-color-text);
+}
+
+.calendar-event-card:hover .calendar-event-chip,
+.calendar-event-card:focus-visible .calendar-event-chip {
+  background: var(--lm-color-surface-selected);
+  border-left-color: var(--lm-color-primary-hover);
+}
+
+.calendar-event-card:focus-visible {
+  outline: 2px solid var(--lm-color-primary);
+}
+
+.calendar-event-open {
+  min-height: 0;
+  border: 0;
+}
+
+.calendar-event-chip-time,
+.calendar-event-chip-description {
+  color: var(--lm-color-text-secondary);
+}
+
+.calendar-planner-indicator {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+}
+
+.calendar-event-actions button {
+  min-height: var(--lm-control-compact);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+  font-size: var(--lm-font-metadata);
+}
+
+.calendar-event-actions button:hover:not(:disabled) {
+  background: var(--lm-color-surface-subtle);
+}
+
+.calendar-event-actions button.calendar-add-planner {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+}
+
+.calendar-event-actions button.calendar-add-planner:hover:not(:disabled) {
+  background: var(--lm-color-primary-hover);
+}
+
+.calendar-event-actions button.calendar-edit-pill {
+  border-color: var(--lm-color-border);
+  color: var(--lm-color-text);
+}
+
+.calendar-empty {
+  border-color: var(--lm-color-border-strong);
+  border-radius: var(--lm-radius-control);
+  color: var(--lm-color-text-secondary);
+}
+
+.weather-modal-host {
+  background: var(--lm-color-overlay);
+}
+
+.weather-modal-card {
+  max-height: min(90dvh, 880px);
+  overflow-y: auto;
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-overlay);
+  box-shadow: var(--lm-shadow-overlay);
+}
+
+.weather-modal-header {
+  border-color: var(--lm-color-border);
+  background: var(--lm-color-surface-subtle);
+}
+
+.weather-modal-title,
+.weather-modal-item strong,
+.weather-modal-column-title {
+  color: var(--lm-color-text);
+}
+
+.weather-modal-location,
+.weather-modal-item,
+.weather-modal-field label {
+  color: var(--lm-color-text-secondary);
+}
+
+.weather-modal-close {
+  box-sizing: border-box;
+  width: var(--lm-control-mobile);
+  height: var(--lm-control-mobile);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  color: var(--lm-color-text);
+}
+
+.weather-modal-actions button,
+.weather-modal-field input,
+.weather-modal-field textarea,
+.weather-modal-item select {
+  box-sizing: border-box;
+  min-height: var(--lm-control-desktop);
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  color: var(--lm-color-text);
+  background: var(--lm-color-surface);
+  font: inherit;
+}
+
+.weather-modal-actions button {
+  padding: 0 var(--lm-space-3);
+}
+
+.weather-modal-actions button.primary {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+}
+
+.weather-modal-actions button.danger {
+  border-color: var(--lm-color-danger);
+  background: var(--lm-color-danger);
+  color: var(--lm-color-text-on-primary);
+}
+
+.weather-modal-field input,
+.weather-modal-field textarea,
+.weather-modal-item select {
+  width: 100%;
+  padding: var(--lm-space-2) var(--lm-space-3);
+}
+
+.calendar-screen :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--lm-color-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .calendar-screen {
+    gap: var(--lm-space-2);
+    padding: 7px 7px 1rem;
+  }
+
+  .calendar-controls {
+    display: flex;
+    justify-content: flex-start;
+  }
+
+  .calendar-controls button,
+  .calendar-event-actions button,
+  .weather-modal-actions button {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .weather-modal-field input,
+  .weather-modal-item select {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .calendar-event-actions button {
+    flex: 1 1 auto;
+  }
+
+  .weather-modal-host {
+    padding: var(--lm-space-2);
+  }
+
+  .weather-modal-card {
+    width: 100%;
+    max-height: calc(100dvh - var(--lm-space-4));
+  }
+}
