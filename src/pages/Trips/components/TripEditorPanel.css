@@ -1,6 +1,6 @@
-.trips-backlog.trips-editor-home { display: flex; flex-direction: column; height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px)); min-height: 0; overflow: hidden; }
+.trips-backlog.trips-editor-home { display: flex; flex-direction: column; height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px) - var(--lm-control-compact, 32px) - var(--lm-space-2, 8px) - var(--lm-space-2, 8px)); min-height: 0; overflow: hidden; }
 .trips-editor-home > .trips-backlog-header { flex-shrink: 0; }
-.trips-workspace { display: flex; width: 100%; height: 100%; min-height: 0; flex: 1; }
+.trips-workspace { display: flex; width: 100%; min-height: 0; flex: 1; }
 .trips-list-column { box-sizing: border-box; width: 35%; min-width: 0; border-right: 1px solid #e5e7eb; padding-right: 16px; overflow-y: auto; overscroll-behavior: contain; }
 .trips-editor-column { box-sizing: border-box; width: 65%; min-width: 0; min-height: 0; padding: 1.5rem; overflow-y: auto; overscroll-behavior: contain; background: #f4f6f5; }
 .trips-editor-home > .trips-filter-toolbar { flex-shrink: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-bottom: 12px; }
@@ -40,7 +40,8 @@
   .trips-editor-home > .trips-filter-toolbar .trip-status-filters { grid-column: 1 / -1; }
 }
 @media (max-width: 600px) {
-  .trips-editor-home > .trips-filter-toolbar { grid-template-columns: minmax(0, 1fr); gap: 6px; max-height: 32vh; overflow-y: auto; }
+  .trips-backlog.trips-editor-home { height: calc(100dvh - var(--lm-navigation-height, 60px) - var(--lm-root-padding, 8px) - var(--lm-root-padding, 8px) - var(--lm-control-mobile, 44px) - var(--lm-space-2, 8px) - var(--lm-space-2, 8px)); }
+  .trips-editor-home > .trips-filter-toolbar { grid-template-columns: minmax(0, 1fr); gap: 6px; max-height: 24vh; overflow-y: auto; }
   .trips-editor-home > .trips-filter-toolbar .trip-filter-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trips-editor-home > .trips-filter-toolbar .trip-filter-inputs label:first-child { grid-column: 1 / -1; }
 }

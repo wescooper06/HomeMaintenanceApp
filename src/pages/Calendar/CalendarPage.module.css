@@ -21,8 +21,11 @@
   border-radius: 10px;
   padding: 0.35rem 0.6rem;
   font-size: 0.86rem;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   width: fit-content;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .calendar-header {
@@ -529,7 +532,7 @@
   box-sizing: border-box;
   display: flex;
   min-width: 0;
-  min-height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px));
+  min-height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px) - var(--lm-control-compact, 32px) - var(--lm-space-2, 8px) - var(--lm-space-2, 8px) - var(--lm-space-2, 8px));
   flex-direction: column;
   gap: var(--lm-space-3);
   border: 1px solid var(--lm-color-border);
@@ -785,6 +788,7 @@
 @media (max-width: 600px) {
   .calendar-screen {
     gap: var(--lm-space-2);
+    min-height: calc(100dvh - var(--lm-navigation-height, 60px) - var(--lm-root-padding, 8px) - var(--lm-root-padding, 8px) - var(--lm-control-mobile, 44px) - var(--lm-space-2, 8px) - var(--lm-space-2, 8px));
     padding: 7px 7px 1rem;
   }
 

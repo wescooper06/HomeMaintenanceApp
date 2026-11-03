@@ -10,7 +10,6 @@ import { TRIPS_HOME_ROUTE } from "../../router/lifeManagerRoutes.js";
 import { getTrips, updateTrip } from "../../services/tripsService.js";
 import { prioritizedTrips, tripPriority } from "../../utils/priorityUtils.js";
 
-import PriorityTimelinePreview from "./components/PriorityTimelinePreview.jsx";
 import TripEditorPanel from "./components/TripEditorPanel.jsx";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -43,42 +42,22 @@ export default function PrioritizeTrips() {
   const [syncStatus, setSyncStatus] = useState("loading");
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
-  const [timelineSelectedTrip, setTimelineSelectedTrip] = useState(null);
-  const [timelineRefreshVersion, setTimelineRefreshVersion] = useState(0);
   const [editorBusy, setEditorBusy] = useState(false);
   const rowsRef = useRef([]);
   const timer = useRef(null);
   const pendingOrder = useRef(null);
   const writing = useRef(false);
   const mounted = useRef(false);
-  const page = useRef(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   useEffect(() => {
-    function resize() {
-      let height = window.innerHeight;
-      try {
-        const bounds = window.frameElement?.getBoundingClientRect();
-        if (bounds) height = Math.max(0, Math.min(bounds.bottom, window.parent.innerHeight) - Math.max(bounds.top, 0));
-      } catch {
-        height = window.innerHeight;
-      }
-      page.current.style.height = `${height}px`;
-    }
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, []);
-
-  useEffect(() => {
     if (!selectedId || editorBusy) return undefined;
     function closeOnEscape(event) {
       if (event.key === "Escape") {
         setSelectedId(null);
-        setTimelineSelectedTrip(null);
       }
     }
     window.addEventListener("keydown", closeOnEscape);
@@ -178,10 +157,10 @@ export default function PrioritizeTrips() {
     }
   }
 
-  const selectedTrip = rows.find((trip) => trip.tripId === selectedId) || (timelineSelectedTrip?.tripId === selectedId ? timelineSelectedTrip : null);
+  const selectedTrip = rows.find((trip) => trip.tripId === selectedId) || null;
   const locked = syncStatus === "loading" || syncStatus === "saving" || syncStatus === "error" || editorBusy;
 
-  async function refreshAfterEditorSave(savedTrip) {
+  async function refreshAfterEditorSave() {
     const loadedTrips = await getTrips();
     const freshTrips = new Map(loadedTrips.map((trip) => [trip.tripId, trip]));
     const updatedRows = rowsRef.current.map((trip) => {
@@ -190,12 +169,10 @@ export default function PrioritizeTrips() {
     });
     rowsRef.current = updatedRows;
     setRows(updatedRows);
-    setTimelineSelectedTrip((current) => current?.tripId === savedTrip.tripId ? freshTrips.get(savedTrip.tripId) || savedTrip : current);
-    setTimelineRefreshVersion((current) => current + 1);
   }
 
   return (
-    <main ref={page} className="prioritize-page">
+    <main className="prioritize-page">
       <PageHeader className="prioritize-header" title="Prioritize Trips" eyebrow="Travel priorities"
         actions={<div className="prioritize-header-actions">
           <span role="status">{syncStatus === "loading" ? "Loading..." : syncStatus === "pending" ? "Changes pending" : syncStatus === "saving" ? "Saving..." : syncStatus === "ready" ? "Synced" : "Sync failed"}</span>
@@ -218,19 +195,9 @@ export default function PrioritizeTrips() {
           {syncStatus === "ready" && !rows.length && <p className="priority-empty">No prioritized trips.</p>}
         </section>
         <aside className="priority-details" aria-label="Trip editor">
-          <TripEditorPanel key={selectedTrip?.tripId || "empty"} selectedTrip={selectedTrip || null} onClose={() => { if (!editorBusy) { setSelectedId(null); setTimelineSelectedTrip(null); } }} onSave={refreshAfterEditorSave} onBusyChange={setEditorBusy} />
+          <TripEditorPanel key={selectedTrip?.tripId || "empty"} selectedTrip={selectedTrip || null} onClose={() => { if (!editorBusy) setSelectedId(null); }} onSave={refreshAfterEditorSave} onBusyChange={setEditorBusy} />
         </aside>
       </div>
-      <PriorityTimelinePreview trips={rows} refreshVersion={timelineRefreshVersion} onSelectTrip={(tripId, trip) => { setSelectedId(tripId); setTimelineSelectedTrip(trip || null); }} onTimelineRefresh={(loadedTrips) => {
-        const freshTrips = new Map(loadedTrips.map((trip) => [trip.tripId, trip]));
-        const refreshWindow = (trip) => {
-          const fresh = freshTrips.get(trip.tripId);
-          return fresh ? { ...trip, timelineMonth: fresh.timelineMonth, timelineYear: fresh.timelineYear } : trip;
-        };
-        rowsRef.current = rowsRef.current.map(refreshWindow);
-        setRows((current) => current.map(refreshWindow));
-        setTimelineSelectedTrip((current) => current ? refreshWindow(current) : current);
-      }} />
     </main>
   );
 }

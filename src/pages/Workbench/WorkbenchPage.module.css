@@ -285,6 +285,10 @@
   white-space: nowrap;
 }
 
+.taskOrder {
+  flex: 0 0 auto;
+}
+
 .orderPill {
   display: inline-flex;
   min-height: var(--lm-control-compact);
@@ -298,6 +302,26 @@
   font-size: var(--lm-font-metadata);
   font-weight: 700;
   white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .orderPill {
+    display: none;
+  }
+
+  .taskOrder {
+    display: none;
+  }
+
+  .cardTitle > :first-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .projectId {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 .meta {

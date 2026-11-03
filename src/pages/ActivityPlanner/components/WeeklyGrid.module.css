@@ -71,7 +71,50 @@
 
 .dayColumn {
   position: relative;
+  overflow: hidden;
   border-left: 1px solid var(--grid-line);
+}
+
+.earlyActivities {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--lm-space-3);
+  padding: var(--lm-space-2) var(--lm-space-3);
+  border-bottom: 1px solid var(--grid-line);
+  background: var(--lm-color-surface-subtle);
+  color: var(--muted);
+}
+
+.earlyActivities strong {
+  flex: 0 0 auto;
+  color: var(--ink);
+}
+
+.earlyActivities ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lm-space-2) var(--lm-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.earlyActivities button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--lm-control-compact);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.earlyActivities button:disabled {
+  cursor: default;
 }
 
 .slot {
@@ -179,5 +222,16 @@
 
   .dayShort {
     display: inline;
+  }
+}
+
+@media (max-width: 600px) {
+  .earlyActivities {
+    flex-direction: column;
+    gap: var(--lm-space-1);
+  }
+
+  .earlyActivities button {
+    min-height: var(--lm-control-mobile);
   }
 }

@@ -6,7 +6,11 @@ import {
 
 import styles from "./WeeklyGrid.module.css";
 
-const SLOT_INDEXES = Array.from({ length: SLOT_COUNT }, (_, index) => index);
+const FIRST_VISIBLE_SLOT = 14;
+const SLOT_INDEXES = Array.from(
+  { length: SLOT_COUNT - FIRST_VISIBLE_SLOT },
+  (_, index) => index + FIRST_VISIBLE_SLOT,
+);
 
 function buildLaneBlocks(rows) {
   const groups = new Map();
@@ -60,6 +64,7 @@ export default function WeeklyGrid({
   weeklyGrid, activityTypesById, selection, isSelecting, disabled, onSelectStart, onSelectExtend, onBlockClick,
 }) {
   const blocks = useMemo(() => buildLaneBlocks(weeklyGrid), [weeklyGrid]);
+  const earlyBlocks = blocks.filter((block) => block.startSlot < FIRST_VISIBLE_SLOT);
   const selectedRange = normalizeSelection(selection);
 
   function handleCellMouseDown(event, dayIndex, slot) {
@@ -97,6 +102,26 @@ export default function WeeklyGrid({
         ))}
       </div>
 
+      {earlyBlocks.length > 0 && (
+        <div className={styles.earlyActivities} aria-label="Activities scheduled before 7:00 AM">
+          <strong>Before 7:00 AM</strong>
+          <ul>
+            {earlyBlocks.map((block) => {
+              const type = activityTypesById[block.activityTypeId];
+              const timeRange = `${formatTimeLabel(slotToMinutes(block.startSlot))} – ${formatTimeLabel(slotToMinutes(block.endSlot + 1))}`;
+              return (
+                <li key={block.key}>
+                  <button type="button" disabled={disabled}
+                    onClick={() => onBlockClick({ ruleId: block.ruleIds[0], clickedDay: DAYS[block.dayIndex], editingSingleDay: true })}>
+                    {DAY_LABELS[block.dayIndex]}: {type?.name || block.activityTypeId}, {timeRange}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
       <div className={styles.body}>
         <div className={styles.timeGutter} aria-hidden="true">
           {SLOT_INDEXES.map((slot) => (
@@ -129,7 +154,7 @@ export default function WeeklyGrid({
                     key={block.key}
                     className={styles.blockFrame}
                     style={{
-                      "--start": block.startSlot,
+                      "--start": block.startSlot - FIRST_VISIBLE_SLOT,
                       "--span": span,
                       width: `${100 / block.laneCount}%`,
                       left: `${block.laneIndex * (100 / block.laneCount)}%`,

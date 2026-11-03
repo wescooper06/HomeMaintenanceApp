@@ -83,7 +83,7 @@ function fixture(initial = {}) {
               tables[table] = tables[table].filter((row) => !result.includes(row));
             }
             if (single && (result.length > 1 || (!result.length && single === "required"))) {
-              return { data: null, error: { message: "Expected one row" } };
+              return { data: null, error: { message: "Cannot coerce the result to a single JSON object" } };
             }
             return { data: structuredClone(single ? result[0] ?? null : result), error: null };
           }).then(resolve, reject);
@@ -123,6 +123,41 @@ test("unscheduled trips create a workflow but no invented Timeline month", async
   assert.equal(tables.trips.length, 1);
   assert.equal(tables.trips_workflow_metadata.length, 1);
   assert.equal(tables.trips_timeline.length, 0);
+});
+
+test("missing optional workflow rows load defaults without writing production state", async () => {
+  const { workflow, calls, tables } = fixture({
+    trips: [{ id, destination: "SMR Ice Climbing" }],
+  });
+  assert.deepEqual(plain(await workflow.getWorkflowMetadata(id)), {
+    id: null, tripId: id, stage: "Define", stageNotes: "",
+  });
+  assert.deepEqual(calls, [{
+    table: "trips_workflow_metadata",
+    operation: "read",
+    values: undefined,
+    filters: [["trip_id", id]],
+  }]);
+  assert.equal(tables.trips_workflow_metadata.length, 0);
+});
+
+test("saving creates a missing workflow row, while duplicate rows and service errors still surface", async () => {
+  const { workflow, client, tables } = fixture();
+  await workflow.updateWorkflowMetadata(id, { stage: "Research", stageNotes: "Compare routes" });
+  assert.equal(tables.trips_workflow_metadata.length, 1);
+  assert.equal(tables.trips_workflow_metadata[0].trip_id, id);
+  assert.equal(tables.trips_workflow_metadata[0].stage, "Research");
+  assert.equal(tables.trips_workflow_metadata[0].stage_notes, "Compare routes");
+
+  const duplicate = fixture({ trips_workflow_metadata: [
+    { id, trip_id: otherId, stage: "Define", stage_notes: "" },
+    { id: otherId, trip_id: otherId, stage: "Research", stage_notes: "" },
+  ] });
+  await assert.rejects(duplicate.workflow.getWorkflowMetadata(otherId),
+    /Load trip workflow: Cannot coerce the result to a single JSON object/);
+
+  client.failNext("trips_workflow_metadata", "read");
+  await assert.rejects(workflow.getWorkflowMetadata(id), /Load trip workflow: Fixture permission denied/);
 });
 
 test("creation accepts nullable fields and rejects conflicting reuse of an existing trip ID", async () => {
@@ -184,7 +219,9 @@ test("workflow edits use trip_id and cannot write a nonexistent priority column"
   assert.equal((await workflow.getWorkflowMetadata(id)).stageNotes, "Compare fares");
   assert.equal(tables.trips_workflow_metadata[0].stage_notes, "Compare fares");
   await assert.rejects(workflow.updateWorkflowMetadata(id, { priority: 1 }), /Unsupported field/);
-  await assert.rejects(workflow.getWorkflowMetadata(otherId), /Expected one row/);
+  assert.deepEqual(plain(await workflow.getWorkflowMetadata(otherId)), {
+    id: null, tripId: otherId, stage: "Define", stageNotes: "",
+  });
 });
 
 test("workflow creation preserves each supplied status and never updates existing workflow rows", async () => {

@@ -3,7 +3,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px));
+  height: calc(100dvh - var(--lm-navigation-height, 56px) - var(--lm-root-padding, 16px) - var(--lm-root-padding, 16px) - var(--lm-control-compact, 32px) - var(--lm-space-2, 8px) - var(--lm-space-2, 8px));
   padding: 24px;
   background: var(--lm-color-canvas);
   font-family: var(--lm-font-family);
@@ -107,6 +107,7 @@
 
 @media (max-width: 600px) {
   .page {
+    height: calc(100dvh - var(--lm-navigation-height, 60px) - var(--lm-root-padding, 8px) - var(--lm-root-padding, 8px) - var(--lm-control-mobile, 44px) - var(--lm-space-2, 8px) - var(--lm-space-2, 8px));
     padding: 8px;
   }
 

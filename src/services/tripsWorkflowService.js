@@ -10,8 +10,8 @@ export function createTripsWorkflowService(getClient = getSupabaseClient) {
   async function getWorkflowMetadata(tripId) {
     const id = tripUuid(tripId);
     const row = await tripResult(getClient().from("trips_workflow_metadata")
-      .select("*").eq("trip_id", id).single(), "Load trip workflow");
-    return fromRow(row);
+      .select("*").eq("trip_id", id).maybeSingle(), "Load trip workflow");
+    return row ? fromRow(row) : { id: null, tripId: id, stage: "Define", stageNotes: "" };
   }
 
   async function createWorkflowMetadata(tripId, status) {
@@ -26,9 +26,11 @@ export function createTripsWorkflowService(getClient = getSupabaseClient) {
   }
 
   async function updateWorkflowMetadata(id, updates) {
+    const tripId = tripUuid(id);
     const values = tripFields(updates, fields);
+    await createWorkflowMetadata(tripId, values.stage);
     const row = await tripResult(getClient().from("trips_workflow_metadata")
-      .update(values).eq("trip_id", tripUuid(id))
+      .update(values).eq("trip_id", tripId)
       .select("*").single(), "Save trip workflow");
     return fromRow(row);
   }

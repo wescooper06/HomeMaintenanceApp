@@ -300,7 +300,7 @@ export default function WorkbenchPage() {
                     <article key={task.id} className={styles.card}>
                       <div className={styles.cardTitle}>
                         <h4>{task.title} <strong className={styles.projectId}>(ID: {task.projectId || "-"})</strong></h4>
-                        <strong>Order {task.order || "-"}</strong>
+                        <strong className={styles.taskOrder}>Order {task.order || "-"}</strong>
                       </div>
                       <div className={styles.meta}>
                         <span>Source: {task.source}</span><span>Category: {task.category}</span><span>State: {task.state}</span><span>Priority: {task.priority}</span><span>Metadata: {task.metadataJson ? "available" : "-"}</span>

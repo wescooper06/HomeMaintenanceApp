@@ -89,8 +89,6 @@ export default function TripsHome() {
   const [showSaveFilterPrompt, setShowSaveFilterPrompt] = useState(false);
   const [filterName, setFilterName] = useState("");
   const saveFilterDialog = useRef(null);
-  const backlog = useRef(null);
-
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -106,23 +104,6 @@ export default function TripsHome() {
     });
     return () => { active = false; };
   }, [activeStatuses, searchQuery, sortMode, selectedSavedFilter]);
-
-  useEffect(() => {
-    if (loading || !backlog.current) return;
-    function resize() {
-      let height = window.innerHeight;
-      try {
-        const bounds = window.frameElement?.getBoundingClientRect();
-        if (bounds) height = Math.max(0, Math.min(bounds.bottom, window.parent.innerHeight) - Math.max(bounds.top, 0));
-      } catch {
-        height = window.innerHeight;
-      }
-      backlog.current.style.height = `${height}px`;
-    }
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, [loading]);
 
   useEffect(() => {
     if (!showSaveFilterPrompt) return;
@@ -258,7 +239,7 @@ export default function TripsHome() {
   if (error) return <p>Error: {error}</p>;
 
   return (
-    <main ref={backlog} className="trips-backlog trips-editor-home">
+    <main className="trips-backlog trips-editor-home">
       <PageHeader className="trips-backlog-header lm-page-header--bordered" title="Travel Backlog"
         subtitle={<span aria-live="polite">{visibleTrips.length} of {trips.length} {trips.length === 1 ? "idea" : "ideas"}</span>}
         actions={<div className="trips-header-actions">
