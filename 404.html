@@ -12,10 +12,17 @@
       (() => {
         const { pathname, search, hash } = window.location;
         const match = pathname.match(/^(.*\/www\/trips)(\/meals(?:\/.*)?)$/);
-        if (!match) return;
-        const entry = `${match[1]}/index.html`;
-        const destination = `${match[2]}${search}${hash}`;
-        window.location.replace(`${entry}?__meals=${encodeURIComponent(destination)}`);
+        if (match) {
+          const entry = `${match[1]}/index.html`;
+          const destination = `${match[2]}${search}${hash}`;
+          window.location.replace(`${entry}?__meals=${encodeURIComponent(destination)}`);
+          return;
+        }
+        const timelineMatch = pathname.match(/^(.*\/www\/trips)(\/timeline(?:\/.*)?)$/);
+        if (!timelineMatch) return;
+        const entry = `${timelineMatch[1]}/index.html`;
+        const destination = `${timelineMatch[2]}${search}${hash}`;
+        window.location.replace(`${entry}?__timeline=${encodeURIComponent(destination)}`);
       })();
     </script>
   </body>
