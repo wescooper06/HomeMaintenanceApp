@@ -94,6 +94,11 @@ test("Planner responsive structure frames equal desktop days and separates Meals
   assert.match(css, /\.weekly-day-strip button\s*\{[^}]*min-width:\s*44px/);
   assert.match(mealCss, /@media\s*\(max-width:\s*700px\)\s*\{[\s\S]*?\.row \.addButton\s*\{\s*min-width:\s*var\(--lm-control-mobile\);\s*min-height:\s*var\(--lm-control-mobile\);/);
   assert.match(mealCss, /\.row\s*\{[^}]*border:[^}]*background:[^}]*padding:/s);
+  assert.match(css, /\.slot-task\s*\{[^}]*font-size:\s*0\.88rem/);
+  assert.match(mealCss, /\.occurrence\s*\{[^}]*font-size:\s*\.88rem/);
+  assert.match(mealCss, /\.occurrenceActions button\s*\{\s*font-size:\s*1rem;\s*\}/);
+  assert.match(mealCss, /\.recipeLink\s*\{[^}]*color:\s*var\(--lm-color-meals\);[^}]*font-weight:\s*600/);
+  assert.match(mealCss, /\.dialog button, \.row button, \.row a\s*\{[^}]*min-height:\s*44px/);
   assert.doesNotMatch(mealRows, /No meals planned/);
   assert.match(mealRows, /<section className=\{styles\.row\} aria-label=\{`\$\{label\} \$\{date\}`\}>[\s\S]*?<div className=\{styles\.rowHeader\}>[\s\S]*?<button[^>]*className=\{styles\.addButton\}/);
   assert.match(mealRows, /<ul aria-label=\{`\$\{label\} meals`\}>\{entries\.map/);
