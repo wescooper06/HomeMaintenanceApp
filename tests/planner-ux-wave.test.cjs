@@ -84,6 +84,7 @@ test("Planner day strip selects one day, preserves the seven-day desktop view, a
 test("Planner responsive structure frames equal desktop days and separates Meals from Tasks", () => {
   const css = plannerSource("src/pages/Planner/PlannerPage.module.css");
   const mealCss = plannerSource("src/pages/Meals/MealPlanner.module.css");
+  const mealRows = plannerSource("src/pages/Meals/MealRows.jsx");
   const grid = plannerSource("src/pages/Planner/components/WeeklyGrid.jsx");
   assert.match(css, /\.planner-week-grid\s*\{[^}]*grid-template-columns:\s*repeat\(7,\s*minmax\(0,\s*1fr\)\)[^}]*width:\s*100%/s);
   assert.doesNotMatch(css, /repeat\(7,\s*minmax\(160px|max\(100%,\s*1260px/);
@@ -92,6 +93,10 @@ test("Planner responsive structure frames equal desktop days and separates Meals
   assert.match(css, /@media\s*\(max-width:\s*700px\)\s*\{[\s\S]*?\.weekly-day-strip\s*\{[^}]*display:\s*grid[^}]*repeat\(7,\s*minmax\(44px,\s*1fr\)\)[^}]*overflow-x:\s*auto/);
   assert.match(css, /\.weekly-day-strip button\s*\{[^}]*min-width:\s*44px/);
   assert.match(mealCss, /@media\s*\(max-width:\s*700px\)\s*\{[\s\S]*?\.row \.addButton\s*\{\s*min-width:\s*var\(--lm-control-mobile\);\s*min-height:\s*var\(--lm-control-mobile\);/);
+  assert.match(mealCss, /\.row\s*\{[^}]*border:[^}]*background:[^}]*padding:/s);
+  assert.doesNotMatch(mealRows, /No meals planned/);
+  assert.match(mealRows, /<section className=\{styles\.row\} aria-label=\{`\$\{label\} \$\{date\}`\}>[\s\S]*?<div className=\{styles\.rowHeader\}>[\s\S]*?<button[^>]*className=\{styles\.addButton\}/);
+  assert.match(mealRows, /<ul aria-label=\{`\$\{label\} meals`\}>\{entries\.map/);
   assert.match(css, /\.weekly-day-column\.is-mobile-selected\s*\{\s*display:\s*grid/s);
   assert.match(grid, /<MealRow date=\{date\} slot=\{slot\}\s*\/>/);
   assert.match(grid, /className=\{styles\["slot-task-region"\]\} aria-label=\{`\$\{label\} tasks`\}/);

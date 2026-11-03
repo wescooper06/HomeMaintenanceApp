@@ -134,8 +134,7 @@ export function MealRow({ date, slot }) {
         title={`Add ${label.toLowerCase()} for ${dateLabel}`} disabled={!state.loaded || Boolean(state.error)}
         onClick={() => state.setAdding({ date, meal })}><span aria-hidden="true">+</span></button>
     </div>
-    <ul aria-label={`${label} meals`}>{entries.map((entry) => <MealOccurrence key={entry.id} entry={entry}
-      title={entry.recipe_id ? state.recipes.find((r) => r.id === entry.recipe_id)?.title || entry.display_text : entry.display_text} />)}</ul>
-    {state.loaded && !entries.length && <p>No meals planned</p>}
+    {entries.length > 0 && <ul aria-label={`${label} meals`}>{entries.map((entry) => <MealOccurrence key={entry.id} entry={entry}
+      title={entry.recipe_id ? state.recipes.find((r) => r.id === entry.recipe_id)?.title || entry.display_text : entry.display_text} />)}</ul>}
   </section>;
 }

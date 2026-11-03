@@ -139,28 +139,48 @@ test("Add Meal presents top and bottom actions on one form with matching validat
   }));
   assert.equal(closed, 2, "Cancel from either position closes the same dialog");
 });
-test("Planner meal rows compactly group multiple meals and expose labeled add, edit, recipe and remove actions", async () => {
+test("Planner empty meal periods retain their region and add control; populated periods group Recipe and free-text meals", async () => {
   const recipeId = randomUUID();
-  let state = { entries: [{ id: "entry", meal_date: "2026-10-30", meal_type: "dinner", recipe_id: null, display_text: "Meal" }],
+  const addings = [];
+  let state = { entries: [],
     recipes: [{ id: recipeId, title: "Recipe" }], loaded: true, error: "",
-    setState(fn) { state = { ...state, ...fn(state) }; }, setMessage() {}, setAdding() {} };
+    setState(fn) { state = { ...state, ...fn(state) }; }, setMessage() {}, setAdding(value) { addings.push(value); } };
   const calls = [];
   const h = harness(rowsCode, { names: "MealRow,MealOccurrence,MealPlannerProvider,MealTextEditDialog", mealState: state,
     createRecipeService: () => ({}), createMealPlannerService: () => ({
       edit: async (e, value) => { calls.push(["edit", value]); return { ...e, display_text: value }; },
       remove: async () => { calls.push(["remove"]); },
     }) });
-  let t = h.render(h.MealRow, { date: "2026-10-30", slot: "morning" });
-  assert(text(t).includes("Breakfast")); assert(text(t).includes("No meals planned"));
-  assert.equal(button(t, "Add breakfast for Oct 30").props["aria-label"], "Add breakfast for Oct 30");
-  assert.equal(t.props["aria-label"], "Breakfast 2026-10-30");
+  const emptyPeriods = [
+    ["morning", "Breakfast", "Add breakfast for Oct 30"],
+    ["afternoon", "Lunch", "Add lunch for Oct 30"],
+    ["evening", "Dinner", "Add dinner for Oct 30"],
+  ];
+  for (const [slot, label, addLabel] of emptyPeriods) {
+    let empty = h.render(h.MealRow, { date: "2026-10-30", slot });
+    assert.equal(empty.type, "section", `${label} keeps its Meal region`);
+    assert.equal(empty.props["aria-label"], `${label} 2026-10-30`);
+    assert(text(empty).includes(label));
+    assert.equal(text(empty).includes("No meals planned"), false, `${label} omits its empty-state row`);
+    assert.equal(nodes(empty).filter((node) => node.type === "ul").length, 0, `${label} omits empty list space`);
+    assert.equal(nodes(empty).filter((node) => node.type === "li").length, 0, `${label} has no meal rows`);
+    const add = button(empty, addLabel);
+    assert.equal(add.props.disabled, false, `${label} Add Meal remains available`);
+    assert.equal(add.props["aria-label"], addLabel);
+    add.props.onClick();
+    assert.equal(addings.at(-1).date, "2026-10-30");
+    assert.equal(addings.at(-1).meal, label.toLowerCase(), `${label} still maps to the correct meal period`);
+  }
+  let t;
   state.entries = [
     { id: "entry", meal_date: "2026-10-30", meal_type: "breakfast", recipe_id: null, display_text: "Free-text meal" },
     { id: "recipe-entry", meal_date: "2026-10-30", meal_type: "breakfast", recipe_id: recipeId, display_text: "" },
+    { id: "another-recipe-entry", meal_date: "2026-10-30", meal_type: "breakfast", recipe_id: recipeId, display_text: "" },
   ];
   t = h.render(h.MealRow, { date: "2026-10-30", slot: "morning" });
-  assert.equal(nodes(t).filter((node) => node.type === "ul").length, 1, "all meals share one semantic meal region");
-  assert.equal(nodes(t).filter((node) => node.type === h.MealOccurrence).length, 2);
+  assert.equal(nodes(t).filter((node) => node.type === "ul").length, 1, "all meals share one semantic list");
+  assert.equal(nodes(t).filter((node) => node.type === h.MealOccurrence).length, 3, "multiple assigned meals share the region");
+  assert.equal(text(t).includes("No meals planned"), false, "populated Meal regions also omit the empty-state row");
   const recipeNode = nodes(t).find((node) => node.type === h.MealOccurrence && node.props.entry.id === "recipe-entry");
   assert.equal(recipeNode.props.title, "Recipe");
   const recipeEntry = state.entries[1];
