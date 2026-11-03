@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), "utf8");
@@ -106,6 +107,46 @@ test("Trips styles share the Foundation palette and retain semantic Timeline sta
   assert.match(read("src", "pages", "Trips", "components", "TripEditorPanel.css"), /\.trips-workspace\s*\{[^}]*min-height:\s*0[^}]*flex:\s*1/);
   assert.doesNotMatch(read("src", "pages", "Trips", "TripsHome.jsx"), /backlog\.current\.style\.height/);
   for (const color of ["#4ade80", "#facc15", "#ef4444"]) assert(timeline.includes(color), `missing semantic Timeline color ${color}`);
+});
+
+test("Planner desktop assignment panels fit the calendar into wide screens", () => {
+  const css = read("src", "pages", "Planner", "PlannerPage.module.css");
+  assert.match(css, /@media \(min-width:\s*1501px\)\s*\{[\s\S]*?:global\(#planner-top-columns\)\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /grid-template-columns:\s*minmax\(0,\s*1\.5fr\)\s+minmax\(0,\s*1\.5fr\)\s+minmax\(0,\s*1\.1fr\)\s+minmax\(0,\s*1\.1fr\)\s+minmax\(0,\s*1\.3fr\)\s+minmax\(0,\s*1fr\)/);
+  assert.match(css, /:global\(#mini-calendar-column\)\s*\{[^}]*min-width:\s*0[^}]*width:\s*auto[^}]*flex:\s*none/);
+});
+
+test("Trips Timeline collapse state survives page reloads and migrates legacy session preferences", () => {
+  const source = read("src", "pages", "Trips", "TimelineView.jsx");
+  const helpers = source.slice(source.indexOf("const COLLAPSED_YEARS_STORAGE_KEY"), source.indexOf("export default function TimelineView"));
+  const localValues = new Map();
+  const sessionValues = new Map();
+  const storage = (values) => ({
+    getItem: (key) => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value),
+  });
+  const window = { localStorage: storage(localValues), sessionStorage: storage(sessionValues) };
+  const { saveCollapsedYears } = vm.runInNewContext(
+    `${helpers}\n({ getCollapsedYears, saveCollapsedYears })`,
+    { window },
+  );
+
+  saveCollapsedYears({ 2026: true });
+  const reloadedState = vm.runInNewContext(
+    `${helpers}\ngetCollapsedYears()`,
+    { window: { localStorage: storage(localValues), sessionStorage: storage(new Map()) } },
+  );
+  assert.deepEqual({ ...reloadedState }, { 2026: true });
+  assert.equal(localValues.get("timelineCollapsedYears"), JSON.stringify({ 2026: true }));
+
+  const legacySessionValues = new Map([["timelineCollapsedYears", JSON.stringify({ 2025: true, invalid: true })]]);
+  const migratedValues = new Map();
+  const migrated = vm.runInNewContext(
+    `${helpers}\ngetCollapsedYears()`,
+    { window: { localStorage: storage(migratedValues), sessionStorage: storage(legacySessionValues) } },
+  );
+  assert.deepEqual({ ...migrated }, { 2025: true });
+  assert.equal(migratedValues.get("timelineCollapsedYears"), JSON.stringify({ 2025: true }));
 });
 
 test("Workbench hides only the Order pill on mobile and retains desktop order data", () => {

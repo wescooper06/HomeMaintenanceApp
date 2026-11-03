@@ -280,6 +280,25 @@
   min-width: 230px;
 }
 
+@media (min-width: 1501px) {
+  :global(#planner-top-columns) {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  :global(#curated-left),
+  :global(#curated-middle),
+  :global(#adhoc-right),
+  :global(#repeatable-right),
+  :global(#parking-lot-column),
+  :global(#mini-calendar-column) {
+    min-width: 0;
+    width: auto;
+    flex: none;
+  }
+}
+
 @media (max-width: 600px) {
   .plannerScreen {
     padding: var(--lm-space-2);

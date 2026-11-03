@@ -14,11 +14,11 @@ import TimelineGrid from "./components/TimelineGrid.jsx";
 import TripEditorPanel from "./components/TripEditorPanel.jsx";
 import "./TimelineView.css";
 
-const COLLAPSED_YEARS_SESSION_KEY = "timelineCollapsedYears";
+const COLLAPSED_YEARS_STORAGE_KEY = "timelineCollapsedYears";
 
-function getCollapsedYearsFromSession() {
+function parseCollapsedYears(value) {
   try {
-    const stored = JSON.parse(window.sessionStorage.getItem(COLLAPSED_YEARS_SESSION_KEY) || "{}");
+    const stored = JSON.parse(value || "{}");
     if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
     return Object.fromEntries(Object.entries(stored).filter(([year, collapsed]) => /^\d+$/.test(year) && collapsed === true));
   } catch {
@@ -26,11 +26,36 @@ function getCollapsedYearsFromSession() {
   }
 }
 
-function saveCollapsedYearsToSession(state) {
+function getCollapsedYears() {
   try {
-    window.sessionStorage.setItem(COLLAPSED_YEARS_SESSION_KEY, JSON.stringify(state));
+    const stored = window.localStorage.getItem(COLLAPSED_YEARS_STORAGE_KEY);
+    if (stored !== null) return parseCollapsedYears(stored);
   } catch {
-    // Session persistence is optional when browser storage is unavailable.
+    // Continue with the legacy session value when durable storage is unavailable.
+  }
+
+  try {
+    const stored = window.sessionStorage.getItem(COLLAPSED_YEARS_STORAGE_KEY);
+    if (stored !== null) {
+      const state = parseCollapsedYears(stored);
+      try {
+        window.localStorage.setItem(COLLAPSED_YEARS_STORAGE_KEY, JSON.stringify(state));
+      } catch {
+        // The current session can still use the legacy value.
+      }
+      return state;
+    }
+  } catch {
+    // Collapse preferences are optional when browser storage is unavailable.
+  }
+  return {};
+}
+
+function saveCollapsedYears(state) {
+  try {
+    window.localStorage.setItem(COLLAPSED_YEARS_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Collapse preferences are optional when browser storage is unavailable.
   }
 }
 
@@ -51,7 +76,7 @@ export default function TimelineView() {
   const [moving, setMoving] = useState(false);
   const [propagating, setPropagating] = useState(false);
   const [notice, setNotice] = useState("");
-  const [collapsedYears, setCollapsedYears] = useState(getCollapsedYearsFromSession);
+  const [collapsedYears, setCollapsedYears] = useState(getCollapsedYears);
   const [collapseAnnouncement, setCollapseAnnouncement] = useState("");
   const selectedTripId = selectedTrip?.tripId;
 
@@ -61,7 +86,7 @@ export default function TimelineView() {
     if (wasCollapsed) delete nextState[year];
     else nextState[year] = true;
     setCollapsedYears(nextState);
-    saveCollapsedYearsToSession(nextState);
+    saveCollapsedYears(nextState);
     setCollapseAnnouncement(`${year} timeline ${wasCollapsed ? "expanded" : "collapsed"}`);
   }
 
