@@ -53,3 +53,99 @@
   .trip-editor-panel .trip-modal-header { flex-wrap: wrap; gap: 6px; }
   .trip-editor-panel .trip-modal-badges { display: flex; flex-wrap: wrap; justify-items: start; }
 }
+
+.trips-list-column {
+  border-color: var(--lm-color-border);
+}
+
+.trips-editor-column {
+  background: var(--lm-color-canvas);
+}
+
+.trips-list-column .trip-card {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+}
+
+.trips-list-column .trip-card:hover {
+  background: var(--lm-color-surface-subtle);
+}
+
+.trips-list-column .trip-card[data-selected="true"] {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-surface-selected);
+  box-shadow: inset 3px 0 var(--lm-color-primary);
+}
+
+.trips-list-column .trip-card-title .trip-priority-badge {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+  color: var(--lm-color-text-on-primary);
+}
+
+.trips-list-column .trip-card-actions .trip-edit {
+  min-height: var(--lm-control-compact);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+}
+
+.trips-list-column .trip-card-actions .trip-edit:hover:not(:disabled) {
+  background: var(--lm-color-surface-subtle);
+}
+
+.capture-trip.trip-editor-panel {
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-card);
+  background: var(--lm-color-surface);
+  box-shadow: none;
+  color: var(--lm-color-text);
+}
+
+.capture-trip.trip-editor-panel h2 {
+  color: var(--lm-color-text);
+  font-size: var(--lm-font-section-title);
+}
+
+.trip-editor-panel header p:not(.trip-eyebrow),
+.trip-editor-placeholder {
+  color: var(--lm-color-text-secondary);
+}
+
+.trip-editor-panel .capture-fields {
+  overscroll-behavior: contain;
+}
+
+.trip-editor-retry {
+  min-height: var(--lm-control-desktop);
+  border-color: var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+}
+
+.trip-editor-notice {
+  color: var(--lm-color-success);
+}
+
+.trip-editor-panel :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--lm-color-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 800px) {
+  .trips-list-column .trip-card-actions {
+    flex-wrap: wrap;
+  }
+
+  .trips-list-column .trip-card-actions .trip-edit {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .trips-editor-home > .trips-filter-toolbar .trip-filter-inputs :is(input, select) {
+    min-height: var(--lm-control-mobile);
+  }
+}

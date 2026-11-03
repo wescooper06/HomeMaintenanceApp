@@ -15,3 +15,16 @@
 .priority-year-navigation .timeline-drop-year { container-type: normal; }
 @container (min-width: 928px) { .timeline-row { grid-template-columns: repeat(12, minmax(70px, 1fr)); } }
 @container (max-width: 600px) { .timeline-row { gap: 2px; } }
+
+.timeline-move-error button,
+.timeline-propagate {
+  min-height: var(--lm-control-desktop);
+  padding: 0 var(--lm-space-3);
+}
+
+@media (max-width: 600px) {
+  .timeline-move-error button,
+  .timeline-propagate {
+    min-height: var(--lm-control-mobile);
+  }
+}
