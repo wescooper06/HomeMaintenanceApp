@@ -84,6 +84,7 @@ export function WeeklyDay({ day, mobileSelected }) {
         <button type="button" className={styles["weekly-weather-icon"]} data-action="weather-open" data-date={day.date} title={day.weather.condition}
           aria-label={`Open weather for ${day.heading}: ${day.weather.condition}`} onClick={() => actions.openWeather(day.date)}>{day.weather.icon}</button>
       </h3>
+      {day.slots.map(({ slot }) => <MealRow key={`meal-${slot}`} date={day.date} slot={slot} />)}
       {day.slots.map((slot) => <DaySlot key={slot.slot} day={day.key} date={day.date} {...slot} />)}
     </article>
   );
@@ -108,7 +109,6 @@ export function DaySlot({ day, date, slot, label, tasks }) {
         finally { drag.end(); }
       }}>
       <h4 className={styles["day-slot-label"]}>{label}</h4>
-      <MealRow date={date} slot={slot} />
       <section className={styles["slot-task-region"]} aria-label={`${label} tasks`}>
         <div className={styles["slot-task-list"]}>
           {tasks.length ? tasks.map((task) => <div key={task.id}

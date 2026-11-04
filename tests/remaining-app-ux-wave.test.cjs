@@ -111,7 +111,7 @@ test("Trips styles share the Foundation palette and retain semantic Timeline sta
 
 test("Planner desktop assignment panels fit the calendar into wide screens", () => {
   const css = read("src", "pages", "Planner", "PlannerPage.module.css");
-  assert.match(css, /@media \(min-width:\s*1501px\)\s*\{[\s\S]*?:global\(#planner-top-columns\)\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /@media \(min-width:\s*1440px\)\s*\{[\s\S]*?:global\(#planner-top-columns\)\s*\{[^}]*display:\s*grid/);
   assert.match(css, /grid-template-columns:\s*minmax\(0,\s*1\.5fr\)\s+minmax\(0,\s*1\.5fr\)\s+minmax\(0,\s*1\.1fr\)\s+minmax\(0,\s*1\.1fr\)\s+minmax\(0,\s*1\.3fr\)\s+minmax\(0,\s*1fr\)/);
   assert.match(css, /:global\(#mini-calendar-column\)\s*\{[^}]*min-width:\s*0[^}]*width:\s*auto[^}]*flex:\s*none/);
 });

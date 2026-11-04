@@ -136,10 +136,77 @@ test("Planner responsive structure frames equal desktop days and separates Meals
   assert.match(mealRows, /<section className=\{styles\.row\} aria-label=\{`\$\{label\} \$\{date\}`\}>[\s\S]*?<div className=\{styles\.rowHeader\}>[\s\S]*?<button[^>]*className=\{styles\.addButton\}/);
   assert.match(mealRows, /<ul aria-label=\{`\$\{label\} meals`\}>\{entries\.map/);
   assert.match(css, /\.weekly-day-column\.is-mobile-selected\s*\{\s*display:\s*grid/s);
-  assert.match(grid, /<MealRow date=\{date\} slot=\{slot\}\s*\/>/);
+  assert.match(grid, /\{day\.slots\.map\(\(\{ slot \}\) => <MealRow key=\{`meal-\$\{slot\}`\} date=\{day\.date\} slot=\{slot\}\s*\/>\)\}/);
+  assert.doesNotMatch(grid.slice(grid.indexOf("export function DaySlot")), /<MealRow/);
   assert.match(grid, /className=\{styles\["slot-task-region"\]\} aria-label=\{`\$\{label\} tasks`\}/);
   assert.doesNotMatch(grid, /<h5[^>]*>\s*Tasks\s*<\/h5>/);
   assert.match(css, /\.slot-task-region\s*\{[^}]*border-top:/s);
+});
+
+test("each desktop and mobile Planner day renders one Meals-first stack followed by task-only sections", async () => {
+  const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const file = path.join(root, "src", "pages", "Planner", "components", "WeeklyGrid.jsx");
+  const source = plannerSource("src/pages/Planner/components/WeeklyGrid.jsx").replace(/^import .*;\r?$/gm, "")
+    .replace("export default function", "function").replace(/^export /gm, "");
+  const { code } = await transformWithOxc(source, file, { jsx: { runtime: "classic", pragma: "element" } });
+  const element = (type, props, ...children) => ({
+    type, props: props || {}, children: children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false),
+  });
+  const mealLabels = { morning: "Breakfast", afternoon: "Lunch", evening: "Dinner" };
+  const styles = new Proxy({}, { get: (_, key) => key });
+  const components = vm.runInNewContext(`(() => { ${code}; return { WeeklyDay, DaySlot }; })()`, {
+    element,
+    usePlanner: () => ({ actions: { openWeather() {}, dropOnSlot() {} } }),
+    usePlannerDrag: () => ({ drag: null, dropTarget: "", target() {}, end() {}, leave() {} }),
+    MealRow: ({ date, slot }) => element("section", {
+      "aria-label": `${mealLabels[slot]} ${date}`, "data-meal-period": mealLabels[slot],
+    }, element("h5", {}, mealLabels[slot]), element("button", {
+      "aria-label": `Add ${mealLabels[slot].toLowerCase()} for ${date}`,
+    }, "+")),
+    WeeklyTaskCard: () => element("div", {}, "task"),
+    styles, console,
+  });
+  const resolve = (node) => {
+    if (!node || typeof node !== "object") return node;
+    const rendered = typeof node.type === "function" ? node.type(node.props) : node;
+    return { ...rendered, children: (rendered.children || []).map(resolve) };
+  };
+  const flatten = (node) => !node || typeof node !== "object" ? [] : [node, ...(node.children || []).flatMap(flatten)];
+  const text = (node) => typeof node === "object" ? (node.children || []).map(text).join("") : String(node);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = `2026-11-${String(index + 9).padStart(2, "0")}`;
+    const label = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index];
+    return {
+      key: label.toLowerCase(), date, heading: `${label} (${date.slice(5)})`, today: false,
+      weather: { condition: "Clear", icon: "sun" },
+      slots: ["morning", "afternoon", "evening"].map((slot) => ({
+        slot, label: slot[0].toUpperCase() + slot.slice(1), tasks: [],
+      })),
+    };
+  });
+
+  days.forEach((day, index) => {
+    const tree = resolve(components.WeeklyDay({ day, mobileSelected: index === 2 }));
+    const renderedNodes = flatten(tree);
+    const headings = renderedNodes.filter((node) => ["h3", "h4", "h5"].includes(node.type)).map((node) =>
+      node.type === "h3" ? text(node.children.find((child) => child.props?.className === "weekly-day-label-text")) : text(node));
+    assert.deepEqual(headings, [
+      day.heading, "Breakfast", "Lunch", "Dinner", "Morning", "Afternoon", "Evening",
+    ], `${day.heading} keeps the required DOM heading order`);
+
+    const meals = tree.children.filter((node) => node.props["data-meal-period"]);
+    assert.deepEqual(meals.map((node) => node.props["data-meal-period"]), ["Breakfast", "Lunch", "Dinner"]);
+    assert.equal(meals.length, 3, "each day has exactly one region for each Meal period");
+    assert.equal(meals.reduce((count, meal) => count + flatten(meal).filter((node) => node.type === "button").length, 0), 3,
+      "each Meal region retains exactly one period-specific Add control");
+    const slots = tree.children.filter((node) => node.props.className?.startsWith("day-slot "));
+    assert.deepEqual(slots.map((node) => node.props["data-slot"]), ["morning", "afternoon", "evening"]);
+    slots.forEach((slot) => {
+      assert.equal(flatten(slot).some((node) => node.props["data-meal-period"]), false,
+        `${slot.props["data-slot"]} contains no Meal region`);
+      assert.equal(flatten(slot).filter((node) => node.props.className === "slot-task-region").length, 1);
+    });
+  });
 });
 
 test("Mobile Planner exposes dedicated task and calendar controls without Projects or Repeatable assignment panels", () => {

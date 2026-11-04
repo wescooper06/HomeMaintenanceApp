@@ -272,7 +272,7 @@
   min-width: 230px;
 }
 
-@media (min-width: 1501px) {
+@media (min-width: 1440px) {
   :global(#planner-top-columns) {
     display: grid;
     grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, 1fr);
