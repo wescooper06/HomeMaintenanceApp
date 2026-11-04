@@ -902,6 +902,157 @@ function incidentController(storage, reminderService) {
   return createPlannerController({ reminderService });
 }
 
+test("unified popup CRUD persists for each task type without persisting popup visibility", async () => {
+  for (const type of ["curated", "repeatable", "adhoc"]) {
+    const f = fixture({ planner_weekly_tasks: [
+      { id: "week-settings", metadata_json: { weekStartDate: "2026-11-02" } },
+      { id: "popup-task", task_type: type, title: `Popup ${type}`, source: type === "curated" ? "home" : type,
+        project_id: type === "curated" ? p1 : null, date: "2026-11-02", time_slot: "morning",
+        checklist_json: [], checklist_open: false, metadata_json: {}, completed: true },
+    ] });
+    let controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      const before = f.calls.filter((call) => call.op !== "read").length;
+      controller.actions.openChecklist("popup-task", "mon", "morning");
+      controller.actions.closeChecklist();
+      assert.equal(f.calls.filter((call) => call.op !== "read").length, before);
+      assert.equal(f.tables.planner_weekly_tasks[1].checklist_open, false);
+      controller.actions.openChecklist("popup-task", "mon", "morning");
+      controller.actions.addChecklistItem("popup-task", "mon", "morning", "Popup item");
+      const itemId = controller.getSnapshot().planner.tasks.find((task) => task.id === "popup-task").checklist[0].id;
+      controller.actions.updateChecklistItem("popup-task", itemId, "Edited popup item");
+      controller.actions.toggleChecklistItem("popup-task", "mon", "morning", itemId, true);
+      await controller.flush();
+      controller.destroy();
+      controller = incidentController(f.storage);
+      await controller.actions.initialize();
+      assert.equal(controller.getSnapshot().activeChecklistTaskId, "");
+      const row = f.tables.planner_weekly_tasks[1];
+      assert.equal(row.completed, true);
+      assert.deepEqual(row.checklist_json.map(({ text, completed }) => ({ text, completed })),
+        [{ text: "Edited popup item", completed: true }]);
+      controller.actions.openChecklist("popup-task", "mon", "morning");
+      controller.actions.toggleChecklistItem("popup-task", "mon", "morning", itemId, false);
+      controller.actions.removeChecklistItem("popup-task", "mon", "morning", itemId);
+      await controller.flush();
+      assert.deepEqual(row.checklist_json, []);
+      assert.equal(row.completed, true);
+    } finally { controller.destroy(); }
+  }
+});
+
+test("all checklist owner types persist ID-based before/after reordering without losing metadata or sibling state", async () => {
+  for (const type of ["curated", "project", "repeatable", "adhoc"]) {
+    const items = ["A", "B", "C"].map((text, index) => ({ id: text, text, completed: index === 1, keep: { index } }));
+    const common = { task_type: type, title: type, source: type === "curated" || type === "project" ? "home" : type,
+      project_id: type === "curated" || type === "project" ? p1 : null,
+      date: "2026-11-02", time_slot: "morning", checklist_json: clone(items), completed: true,
+      metadata_json: {}, checklist_open: false };
+    const f = fixture({ planner_weekly_tasks: [
+      { id: "week-settings", metadata_json: { weekStartDate: "2026-11-02" } },
+      { ...common, id: "owner" }, { ...clone(common), id: "sibling", date: "2026-11-09" },
+    ] });
+    const master = clone(f.tables.planner_tasks);
+    const sibling = clone(f.tables.planner_weekly_tasks[2]);
+    let controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      controller.actions.openChecklist("owner", "mon", "morning");
+      assert.equal(await controller.actions.reorderChecklistItem("owner", "mon", "morning", "C", "A"), true);
+      const row = f.tables.planner_weekly_tasks[1];
+      assert.deepEqual(row.checklist_json, [items[2], items[0], items[1]]);
+      assert.equal(row.completed, true);
+      assert.equal(row.checklist_open, false);
+      assert.deepEqual(f.tables.planner_weekly_tasks[2], sibling);
+      assert.deepEqual(f.tables.planner_tasks, master);
+      controller.actions.closeChecklist();
+      controller.actions.openChecklist("owner", "mon", "morning");
+      assert.deepEqual(plain(controller.getSnapshot().planner.tasks.find((t) => t.id === "owner").checklist), row.checklist_json);
+      controller.destroy();
+      controller = incidentController(f.storage);
+      await controller.actions.initialize();
+      assert.equal(controller.getSnapshot().activeChecklistTaskId, "");
+      await controller.actions.reorderChecklistItem("owner", "mon", "morning", "C", "A", "after");
+      assert.deepEqual(row.checklist_json, [items[0], items[2], items[1]]);
+      await controller.actions.reorderChecklistItem("owner", "mon", "morning", "A", "B", "after");
+      assert.deepEqual(row.checklist_json, [items[2], items[1], items[0]], "last position is reachable without recreating items");
+      const writes = f.calls.filter((call) => call.op !== "read").length;
+      assert.equal(controller.actions.reorderChecklistItem("owner", "mon", "morning", "C", "C"), false);
+      assert.equal(controller.actions.reorderChecklistItem("owner", "mon", "morning", "missing", "A"), false);
+      assert.equal(f.calls.filter((call) => call.op !== "read").length, writes);
+      controller.actions.moveTask("owner", "2026-11-03", "evening");
+      controller.actions.setTaskCompleted("owner", "tue", "evening", false);
+      await controller.flush();
+      assert.deepEqual(row.checklist_json, [items[2], items[1], items[0]]);
+      assert.deepEqual(f.tables.planner_tasks, master);
+    } finally { controller.destroy(); }
+  }
+});
+
+test("reorder rejects a newer persisted revision for Project, Repeatable and Ad-Hoc without optimistic success", async () => {
+  for (const type of ["curated", "repeatable", "adhoc"]) {
+    const f = fixture({ planner_weekly_tasks: [
+      { id: "week-settings", metadata_json: { weekStartDate: "2026-11-02" } },
+      { id: "owner", task_type: type, title: type, date: "2026-11-02", time_slot: "morning",
+        checklist_json: ["A", "B", "C"].map((id) => ({ id, text: id, completed: false })) },
+    ] });
+    const controller = incidentController(f.storage);
+    try {
+      await controller.actions.initialize();
+      controller.actions.openChecklist("owner", "mon", "morning");
+      const row = f.tables.planner_weekly_tasks[1];
+      row.checklist_json.reverse();
+      row.updated_at = "2026-11-04T01:00:00Z";
+      const newer = clone(row);
+      await assert.rejects(controller.actions.reorderChecklistItem("owner", "mon", "morning", "C", "A"), /changed in another session/);
+      await assert.rejects(controller.flush(), /changed in another session/);
+      assert.deepEqual(row, newer);
+      assert.match(controller.getSnapshot().error, /changed in another session/);
+      controller.actions.closeChecklist();
+    } finally { controller.destroy(); }
+  }
+});
+
+test("popup stale-write error is visible, blocks further edits and still permits closing", async () => {
+  const f = fixture();
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    controller.actions.openChecklist("w1", "mon", "morning");
+    const row = f.tables.planner_weekly_tasks.find((item) => item.id === "w1");
+    row.checklist_json = [{ id: "remote", text: "Newer remote item", completed: true }];
+    row.updated_at = "2026-11-03T20:00:00Z";
+    controller.actions.addChecklistItem("w1", "mon", "morning", "Stale popup item");
+    await assert.rejects(controller.flush(), /changed in another session/);
+    assert.match(controller.getSnapshot().error, /changed in another session/);
+    assert.throws(() => controller.actions.addChecklistItem("w1", "mon", "morning", "Retry"), /unsaved change/);
+    controller.actions.closeChecklist();
+    assert.equal(controller.getSnapshot().activeChecklistTaskId, "");
+    assert.deepEqual(row.checklist_json, [{ id: "remote", text: "Newer remote item", completed: true }]);
+  } finally { controller.destroy(); }
+});
+
+test("external deletion invalidates the selected popup owner after Planner refresh", async () => {
+  const f = fixture();
+  const controller = incidentController(f.storage);
+  let unsubscribe;
+  try {
+    await controller.actions.initialize();
+    controller.actions.openChecklist("w1", "mon", "morning");
+    const closed = new Promise((resolve) => {
+      unsubscribe = controller.subscribe((snapshot) => {
+        if (!snapshot.activeChecklistTaskId) resolve();
+      });
+    });
+    await f.storage.deleteWeeklyTask("w1");
+    await closed;
+    assert.equal(controller.getSnapshot().activeChecklistTaskId, "");
+    assert.equal(controller.actions.openChecklist("w1", "mon", "morning"), false);
+    assert.throws(() => controller.actions.addChecklistItem("w1", "mon", "morning", "Stale callback"), /missing or deleted/);
+  } finally { unsubscribe?.(); controller.destroy(); }
+});
+
 function repeatablePlacementFixture({ projectId = p1, masterId = t1, occurrence, fallback = false } = {}) {
   const date = "2026-11-11";
   const id = `repeatable-${projectId}-${date}`;
@@ -1827,7 +1978,206 @@ function recurrenceContinuationFixture() {
   });
 }
 
-test("rollover materialization preserves every existing row and inherits only approved master definitions", async () => {
+test("Repeatable checklists persist independently on their November 2 and November 9 occurrence rows", async () => {
+  const f = recurrenceContinuationFixture();
+  const occurrenceA = `repeatable-${p1}-2026-11-02`;
+  const occurrenceB = `repeatable-${p1}-2026-11-09`;
+  const rowA = f.tables.planner_weekly_tasks.find((row) => row.id === occurrenceA);
+  const rowB = f.tables.planner_weekly_tasks.find((row) => row.id === occurrenceB);
+  rowA.checklist_json = [];
+  rowA.checklist_open = false;
+  rowB.checklist_json = [];
+  rowB.checklist_open = false;
+  f.tables.planner_tasks[0].metadata_json.checklistTemplate = {
+    version: 1, items: [{ id: "legacy", text: "Legacy master definition" }],
+  };
+  const controller = incidentController(f.storage);
+  let reload, finalReload;
+  try {
+    await controller.actions.initialize();
+    controller.actions.shiftPlannerWeek(7);
+    await controller.flush();
+    assert.deepEqual(rowA.checklist_json, []);
+    assert.deepEqual(rowB.checklist_json, []);
+
+    assert(controller.actions.toggleChecklistOpen(occurrenceA, "mon", "morning"));
+    assert(controller.actions.addChecklistItem(occurrenceA, "mon", "morning", "Pay utility bill"));
+    assert(controller.actions.addChecklistItem(occurrenceA, "mon", "morning", "File receipts"));
+    controller.actions.updateChecklistItem(occurrenceA,
+      controller.getSnapshot().planner.tasks.find((task) => task.id === occurrenceA).checklist[0].id,
+      "Pay monthly utility bill");
+    const firstItemId = controller.getSnapshot().planner.tasks.find((task) =>
+      task.id === occurrenceA).checklist[0].id;
+    assert(controller.actions.toggleChecklistItem(occurrenceA, "mon", "morning", firstItemId, true));
+    controller.actions.setTaskCompleted(occurrenceA, "mon", "morning", true);
+    await controller.flush();
+
+    assert.deepEqual(rowA.checklist_json.map(({ text, completed }) => ({ text, completed })), [
+      { text: "Pay monthly utility bill", completed: true },
+      { text: "File receipts", completed: false },
+    ]);
+    assert.equal(rowA.checklist_open, true);
+    assert.deepEqual(rowB.checklist_json, []);
+    assert.equal(rowB.checklist_open, false);
+    assert.equal(rowA.completed, true);
+    assert.deepEqual(f.tables.planner_tasks[0].metadata_json.checklistTemplate,
+      { version: 1, items: [{ id: "legacy", text: "Legacy master definition" }] });
+
+    controller.destroy();
+    reload = incidentController(f.storage);
+    await reload.actions.initialize();
+    const loadedA = reload.getSnapshot().planner.tasks.find((task) => task.id === occurrenceA);
+    assert.deepEqual(loadedA.checklist.map(({ text, completed }) => ({ text, completed })), [
+      { text: "Pay monthly utility bill", completed: true },
+      { text: "File receipts", completed: false },
+    ]);
+    assert.equal(loadedA.checklistOpen, true);
+
+    reload.actions.shiftPlannerWeek(7);
+    await reload.flush();
+    assert.deepEqual(rowB.checklist_json, []);
+    assert(reload.actions.toggleChecklistOpen(occurrenceB, "mon", "morning"));
+    assert(reload.actions.addChecklistItem(occurrenceB, "mon", "morning", "Review household budget"));
+    await reload.flush();
+    assert.deepEqual(rowA.checklist_json.map(({ text, completed }) => ({ text, completed })), [
+      { text: "Pay monthly utility bill", completed: true },
+      { text: "File receipts", completed: false },
+    ]);
+    assert.deepEqual(rowB.checklist_json.map(({ text, completed }) => ({ text, completed })), [
+      { text: "Review household budget", completed: false },
+    ]);
+    assert.equal(rowB.checklist_open, true);
+
+    reload.actions.shiftPlannerWeek(-7);
+    await reload.flush();
+    assert(reload.actions.removeChecklistItem(occurrenceA, "mon", "morning",
+      reload.getSnapshot().planner.tasks.find((task) => task.id === occurrenceA).checklist[1].id));
+    await reload.flush();
+    assert.deepEqual(rowA.checklist_json.map(({ text, completed }) => ({ text, completed })), [
+      { text: "Pay monthly utility bill", completed: true },
+    ]);
+    assert.deepEqual(rowB.checklist_json.map(({ text, completed }) => ({ text, completed })), [
+      { text: "Review household budget", completed: false },
+    ]);
+
+    assert(reload.actions.moveTask(occurrenceA, "2026-11-04", "evening"));
+    await reload.flush();
+    assert.equal(rowA.id, occurrenceA);
+    assert.equal(rowA.occurrence_date, "2026-11-02");
+    assert.equal(rowA.date, "2026-11-04");
+    assert.deepEqual(rowA.checklist_json, [{ id: firstItemId, text: "Pay monthly utility bill", completed: true }]);
+    assert.deepEqual(rowB.checklist_json.map(({ text }) => text), ["Review household budget"]);
+    assert(reload.actions.setTaskCompleted(occurrenceA, "wed", "evening", false));
+    await reload.flush();
+    assert.deepEqual(rowA.checklist_json, [{ id: firstItemId, text: "Pay monthly utility bill", completed: true }]);
+    assert.deepEqual(rowB.checklist_json.map(({ text }) => text), ["Review household budget"]);
+    const secondItemId = rowB.checklist_json[0].id;
+    assert(reload.actions.moveTask(occurrenceB, "2026-11-04", "evening"));
+    await reload.flush();
+    assert.equal(rowA.id, occurrenceA);
+    assert.equal(rowA.occurrence_date, "2026-11-02");
+    assert.equal(rowB.id, occurrenceB);
+    assert.equal(rowB.occurrence_date, "2026-11-09");
+    assert.equal(rowB.date, "2026-11-04");
+    assert.deepEqual(rowB.checklist_json, [{ id: secondItemId, text: "Review household budget", completed: false }]);
+    finalReload = incidentController(f.storage);
+    await finalReload.actions.initialize();
+    const persistedA = finalReload.getSnapshot().planner.tasks.find((task) => task.id === occurrenceA);
+    const persistedB = finalReload.getSnapshot().planner.tasks.find((task) => task.id === occurrenceB);
+    assert.deepEqual(persistedA.checklist, [{ id: firstItemId, text: "Pay monthly utility bill", completed: true }]);
+    assert.deepEqual(persistedB.checklist, [{ id: secondItemId, text: "Review household budget", completed: false }]);
+    assert.equal(persistedA.checklistOpen, true);
+    assert.equal(persistedB.checklistOpen, true);
+  } finally { controller.destroy(); reload?.destroy(); finalReload?.destroy(); }
+});
+
+test("reordered Repeatable items stay on the original occurrence through move, completion, recurrence and removal", async () => {
+  const f = recurrenceContinuationFixture();
+  const id = `repeatable-${p1}-2026-11-02`;
+  const row = f.tables.planner_weekly_tasks.find((item) => item.id === id);
+  row.checklist_json.push({ id: "third", text: "Third", completed: false, note: "Keep" });
+  const expected = [clone(row.checklist_json[2]), clone(row.checklist_json[0]), clone(row.checklist_json[1])];
+  const siblings = clone(f.tables.planner_weekly_tasks.filter((item) => item.id !== id && item.id !== "week-settings"));
+  let controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    controller.actions.shiftPlannerWeek(7);
+    await controller.flush();
+    const master = clone(f.tables.planner_tasks);
+    await controller.actions.reorderChecklistItem(id, "mon", "morning", "third", "first");
+    controller.actions.moveTask(id, "2026-11-03", "evening");
+    controller.actions.setTaskCompleted(id, "tue", "evening", false);
+    await controller.flush();
+    assert.equal(row.id, id);
+    assert.equal(row.occurrence_date, "2026-11-02");
+    assert.deepEqual(row.checklist_json, expected);
+    controller.actions.shiftPlannerWeek(7);
+    await controller.flush();
+    controller.actions.shiftPlannerWeek(-7);
+    await controller.flush();
+    controller.actions.removeTask(id);
+    await controller.flush();
+    assert.equal(row.deleted_instance, true);
+    assert.deepEqual(row.checklist_json, expected);
+    assert.deepEqual(f.tables.planner_tasks, master);
+    assert.deepEqual(f.tables.planner_weekly_tasks.filter((item) => siblings.some((sibling) => sibling.id === item.id)), siblings);
+    controller.destroy();
+    controller = incidentController(f.storage);
+    await controller.actions.initialize();
+    assert.deepEqual(row.checklist_json, expected);
+    assert.equal(row.deleted_instance, true, "loading cannot regenerate the removed occurrence");
+  } finally { controller.destroy(); }
+});
+
+test("stale Repeatable checklist writes are rejected without replacing the newer occurrence state", async () => {
+  const f = recurrenceContinuationFixture();
+  const occurrenceId = `repeatable-${p1}-2026-11-02`;
+  const row = f.tables.planner_weekly_tasks.find((item) => item.id === occurrenceId);
+  row.checklist_json = [];
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    controller.actions.shiftPlannerWeek(7);
+    await controller.flush();
+    row.checklist_json = [{ id: "newer", text: "Concurrent update", completed: true }];
+    row.updated_at = "2099-01-01T00:00:00";
+    const concurrent = clone(row);
+    assert(controller.actions.addChecklistItem(occurrenceId, "mon", "morning", "Stale edit"));
+    await assert.rejects(controller.flush(), /changed in another session/);
+    assert.deepEqual(row, concurrent);
+  } finally { controller.destroy(); }
+});
+
+test("recurrence edits generate newly introduced dates with empty checklists", async () => {
+  const f = recurrenceContinuationFixture();
+  f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) =>
+    row.id === "week-settings" || row.id === `repeatable-${p1}-2026-10-26` || row.task_type === "adhoc");
+  f.tables.planner_tasks[0].metadata_json.checklistTemplate = {
+    version: 2, items: [{ id: "legacy", text: "Invalid legacy definition" }],
+  };
+  const priorChecklists = new Map(f.tables.planner_weekly_tasks
+    .filter((row) => row.parent_rep === p1)
+    .map((row) => [row.id, clone(row.checklist_json)]));
+  const controller = incidentController(f.storage);
+  try {
+    await controller.actions.initialize();
+    controller.actions.saveSeries(`repeatable-${p1}-2026-10-26`, {
+      recurrence: "weekly", baseDay: "Tuesday", baseBucket: "Morning", applyScope: "this-future",
+    });
+    await controller.flush();
+    const introduced = f.tables.planner_weekly_tasks.find((row) =>
+      row.id === `repeatable-${p1}-2026-10-27`);
+    assert(introduced);
+    assert.deepEqual(introduced.checklist_json, []);
+    assert.deepEqual(f.tables.planner_tasks[0].metadata_json.checklistTemplate,
+      { version: 2, items: [{ id: "legacy", text: "Invalid legacy definition" }] });
+    for (const [id, checklist] of priorChecklists) {
+      assert.deepEqual(f.tables.planner_weekly_tasks.find((row) => row.id === id).checklist_json, checklist);
+    }
+  } finally { controller.destroy(); }
+});
+
+test("rollover materialization preserves existing rows and creates empty Repeatable checklists", async () => {
   for (const checklist of [null, [], [{ id: "progress", text: "Occurrence progress", completed: true }]]) {
     const f = recurrenceContinuationFixture();
     const currentId = `repeatable-${p1}-2026-10-26`;
@@ -1846,8 +2196,7 @@ test("rollover materialization preserves every existing row and inherits only ap
       await controller.flush();
       const generated = f.tables.planner_weekly_tasks.find((row) => row.id === newId);
       assert(generated);
-      assert.deepEqual(generated.checklist_json,
-        [{ id: "definition", text: "Approved definition", completed: false }]);
+      assert.deepEqual(generated.checklist_json, []);
       assert.equal(generated.metadata_json.sourceTaskId, t1);
       assert.equal(generated.project_id, p1);
       assert.equal(generated.parent_rep, p1);
@@ -1886,7 +2235,7 @@ test("week navigation never reconciles normalized checklists back over stored no
   }
 });
 
-test("rollover fails closed without an approved template when same-identity history has checklist data", async () => {
+test("rollover creates an empty occurrence without a template even when prior checklist history exists", async () => {
   for (const tombstoned of [false, true]) {
     const f = recurrenceContinuationFixture();
     f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) =>
@@ -1898,10 +2247,16 @@ test("rollover fails closed without an approved template when same-identity hist
     try {
       await controller.actions.initialize();
       const before = clone(f.tables);
-      assert.throws(() => controller.actions.shiftPlannerWeek(7), /no approved checklist template/);
+      controller.actions.shiftPlannerWeek(7);
       await controller.flush();
-      assert.deepEqual(f.tables, before);
-      assert.equal(controller.getSnapshot().planner.weekStartDate, "2026-10-26");
+      const generated = f.tables.planner_weekly_tasks.find((row) =>
+        row.id === `repeatable-${p1}-2026-11-02`);
+      assert(generated);
+      assert.deepEqual(generated.checklist_json, []);
+      assert.deepEqual(f.tables.planner_weekly_tasks.find((row) =>
+        row.id === `repeatable-${p1}-2026-10-26`), before.planner_weekly_tasks.find((row) =>
+        row.id === `repeatable-${p1}-2026-10-26`));
+      assert.equal(controller.getSnapshot().planner.weekStartDate, "2026-11-02");
     } finally { controller.destroy(); }
   }
 });
@@ -1939,31 +2294,19 @@ test("rollover neither revives tombstones nor borrows templates from similarly n
   } finally { controller.destroy(); }
 });
 
-test("Repeatable template approval preserves occurrence completion and survives reload for next-week generation", async () => {
+test("Repeatable occurrence checklists cannot be approved as templates", async () => {
   const f = recurrenceContinuationFixture();
   const currentId = `repeatable-${p1}-2026-10-26`;
-  f.tables.planner_weekly_tasks = f.tables.planner_weekly_tasks.filter((row) =>
-    row.id !== `repeatable-${p1}-2026-11-02`);
   const controller = incidentController(f.storage);
-  let reload;
   try {
     await controller.actions.initialize();
-    const before = clone(f.tables.planner_weekly_tasks);
-    await controller.actions.saveChecklistTemplate(currentId);
-    const template = f.tables.planner_tasks[0].metadata_json.checklistTemplate;
-    assert.deepEqual(template, { version: 1, items: [
-      { id: "first", text: "First" }, { id: "second", text: "Second" },
-    ] });
-    assert.deepEqual(f.tables.planner_weekly_tasks, before);
-    reload = incidentController(f.storage);
-    await reload.actions.initialize();
-    reload.actions.shiftPlannerWeek(7);
-    await reload.flush();
-    const fresh = f.tables.planner_weekly_tasks.find((row) => row.id === `repeatable-${p1}-2026-11-02`);
-    assert.deepEqual(fresh.checklist_json, template.items.map((item) => ({ ...item, completed: false })));
-    assert.deepEqual(f.tables.planner_weekly_tasks.find((row) => row.id === currentId),
-      before.find((row) => row.id === currentId));
-  } finally { controller.destroy(); reload?.destroy(); }
+    const before = clone(f.tables);
+    await assert.rejects(controller.actions.saveChecklistTemplate(currentId),
+      /Repeatable occurrence checklists cannot be saved as reusable templates/);
+    await assert.rejects(f.storage.saveProjectChecklistTemplate(t1, currentId, []),
+      /Repeatable occurrence checklists cannot be saved as reusable templates/);
+    assert.deepEqual(f.tables, before);
+  } finally { controller.destroy(); }
 });
 
 test("rollover accepts absent or explicitly empty templates without copying NULL/empty occurrence state", async () => {

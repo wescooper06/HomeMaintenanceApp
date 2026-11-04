@@ -3,7 +3,7 @@ import { useState } from "react";
 import { cleanText, DAY_ORDER, getWeeklyTaskType, parseResourceLinkEntries, parseWeeklySourceId, SLOT_ORDER } from "../../../services/plannerService.js";
 import styles from "../PlannerPage.module.css";
 
-import Checklist from "./Checklist.jsx";
+import ChecklistAction from "./Checklist.jsx";
 import InlinePlannerText from "./InlinePlannerText.jsx";
 import { usePlanner } from "./usePlanner.js";
 import usePlannerDrag from "./usePlannerDrag.js";
@@ -91,10 +91,13 @@ export function WeeklyTaskCard({ task, day, slot }) {
                 onClick={() => actions.openReminder(task.id)}>{activeReminder ? "\ud83d\udd14" : "\ud83d\udd15"}</button>
               {type === "repeatable" && task.parentRepeatableId && <button type="button" className={styles["slot-task-series-button"]} data-action="series-edit" aria-label="Edit recurrence series" title="Edit Series"
                 onClick={() => actions.openSeries(task.id)}>{"\u21bb"}</button>}
-              {type === "adhoc" && <button type="button" className={styles["slot-task-checklist-button"]} data-action="adhoc-checklist-open" aria-label="Open checklist" title="Checklist"
-                onClick={() => actions.openChecklist(task.id, day, slot)}><span className={styles["material-symbols-rounded"]}>checklist</span></button>}
+              {["curated", "project", "repeatable", "adhoc"].includes(type) && <ChecklistAction task={task} day={day} slot={slot} />}
               <button type="button" className={styles["move-task-icon"]} data-action="task-move" aria-label="Move Task" title="Move Task" onClick={() => actions.openMove(task.id)}>
-                <span className={`${styles["material-symbols-rounded"]} ${styles["slot-task-week-icon"]}`} aria-hidden="true">calendar_month</span>
+                <svg className={styles["planner-action-icon"]} viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                  <rect x="3" y="5" width="18" height="16" rx="2" />
+                  <path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2M8 18h2M14 18h2" />
+                </svg>
               </button>
               <input type="checkbox" className={styles["slot-task-complete"]} data-action="task-complete-toggle" aria-label="Mark task complete" checked={Boolean(task.completed)}
                 onChange={(event) => actions.setTaskCompleted(task.id, day, slot, event.target.checked)} />
@@ -102,7 +105,6 @@ export function WeeklyTaskCard({ task, day, slot }) {
             </div>
           </div>
           <div className={styles["slot-task-reminder-confirmation"]} data-role="reminder-confirmation" aria-live="polite" hidden={!snapshot.confirmations[task.id]}>{snapshot.confirmations[task.id]}</div>
-          {(type === "curated" || type === "project" || type === "repeatable") && <Checklist task={task} day={day} slot={slot} />}
         </div>
       </div>
     </div>

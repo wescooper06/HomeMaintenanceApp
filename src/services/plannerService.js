@@ -946,6 +946,16 @@ export function getSeriesEditorValues(master, current) {
   };
 }
 
+export function selectChecklistOwner(snapshot) {
+  const task = snapshot.planner.tasks.find((item) => item.id === snapshot.activeChecklistTaskId);
+  if (!task || task.deleted || task.deletedInstance
+    || !["curated", "project", "repeatable", "adhoc"].includes(getWeeklyTaskType(task))
+    || !SLOT_ORDER.includes(task.timeSlot)) return null;
+  const index = DAY_ORDER.findIndex((_, dayIndex) =>
+    getWeekDateKey(snapshot.planner.weekStartDate, dayIndex) === task.date);
+  return index < 0 ? null : { task, day: DAY_ORDER[index].key, slot: task.timeSlot };
+}
+
 export function createPlannerController({ reminderService = calendarReminders } = {}) {
   const state = {
     curatedTasks: [], repeatableTasks: [], repeatableOverrideMap: new Map(),
@@ -953,7 +963,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
     selectedCalendarDate: "", calendarMonthDate: "", weatherByDate: {},
     status: "Loading planner...", mode: "Local mode", loading: true,
     warning: "", drag: null, dropTarget: "", modal: null, moveTaskId: "",
-    reminderTaskId: "", seriesTaskId: "", activeAdhocChecklist: null,
+    reminderTaskId: "", seriesTaskId: "", activeChecklistTaskId: "",
     linkProject: null, confirmations: {}, error: "",
     gridRevision: 0,
     backupBusy: false,
@@ -979,6 +989,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
   let refreshRequest = 0;
 
   function snapshot() {
+    refreshChecklist();
     return structuredClone(state);
   }
   function notify() {
@@ -1053,8 +1064,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
     return new Promise((resolve) => { linkResolve = resolve; });
   }
   function refreshChecklist() {
-    const context = state.activeAdhocChecklist;
-    if (context && !findSlotTask(context.day, context.slot, context.taskId)) state.activeAdhocChecklist = null;
+    if (state.activeChecklistTaskId && !selectChecklistOwner(state)) state.activeChecklistTaskId = "";
   }
 
   function displayPlannerWeek(weekStartDate, selectedDate) {
@@ -1062,6 +1072,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
     state.planner.weekStartDate = weekStartDate;
     try { generateVisibleRecurringInstances(false); }
     catch (error) { state.planner.weekStartDate = previousWeek; throw error; }
+    state.activeChecklistTaskId = "";
     state.selectedCalendarDate = selectedDate;
     state.calendarMonthDate = toMonthStartDateKey(selectedDate);
     savePlanner({ materializeOnly: true });
@@ -1189,12 +1200,6 @@ export function createPlannerController({ reminderService = calendarReminders } 
     const parentRepeatableId = cleanText(master.id || master.projectId, "");
     const id = `repeatable-${parentRepeatableId}-${occurrenceDate}`;
     const previous = removedWeeklyRows.get(id);
-    const template = master.checklistTemplate;
-    if (!previous && template == null && state.planner.tasks.some((item) =>
-      (item.parentRepeatableId === parentRepeatableId || item.metadata?.sourceTaskId === master.taskId)
-      && item.checklist?.length)) {
-      throw new Error("This Repeatable has no approved checklist template. Review its checklist and save an authoritative template before generating new work.");
-    }
     return toPlannerSlotItem({
       ...previous,
       id,
@@ -1210,7 +1215,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
       taskType: "repeatable",
       source: "repeating",
       recurrence: normalizeRecurrence(master.recurrence),
-      checklist: previous?.checklist ?? (template || []).map((item) => ({ id: item.id, text: item.text, completed: false })),
+      checklist: [],
       overridden: false,
       deleted: false,
       deletedInstance: false,
@@ -1781,11 +1786,11 @@ export function createPlannerController({ reminderService = calendarReminders } 
     await persistence;
     if (persistenceError) throw persistenceError;
     const occurrence = findWeeklyTaskById(taskId)?.item;
-    const masters = occurrence?.taskType === "repeatable"
-      ? state.repeatableTasks.filter((task) => task.projectId === occurrence.parentRepeatableId
-        && task.projectId === occurrence.projectId
-        && (!occurrence.metadata?.sourceTaskId || occurrence.metadata.sourceTaskId === task.taskId))
-      : state.curatedTasks.filter((task) => projectOccurrences(task).some((item) => item.id === taskId));
+    if (occurrence?.taskType === "repeatable") {
+      throw new Error("Repeatable occurrence checklists cannot be saved as reusable templates.");
+    }
+    const masters = state.curatedTasks.filter((task) =>
+      projectOccurrences(task).some((item) => item.id === taskId));
     if (!occurrence || masters.length !== 1) {
       throw new Error("This task has no unique Planner master. Review its identity before saving a checklist template.");
     }
@@ -1860,7 +1865,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
           category: cleanText(project.category, "uncategorized"),
           asset: cleanText(project.asset, ""),
           mileage: cleanText(project.mileage, ""),
-          checklistTemplate: master ? readProjectChecklistTemplate(master) : null,
+          checklistTemplate: null,
         });
       };
       state.allProjects.filter((project) => normalizeSource(project.source) === "repeating")
@@ -2062,7 +2067,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
   function toggleChecklistOpen(taskId, day, slot) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc" && taskType !== "repeatable")) {
       return false;
     }
 
@@ -2075,7 +2080,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
   function toggleChecklistItem(taskId, day, slot, checklistId, completed) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc" && taskType !== "repeatable")) {
       return false;
     }
 
@@ -2095,7 +2100,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
   function addChecklistItem(taskId, day, slot, text) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc" && taskType !== "repeatable")) {
       return false;
     }
 
@@ -2122,7 +2127,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
   function removeChecklistItem(taskId, day, slot, checklistId) {
     const match = findSlotTask(day, slot, taskId);
     const taskType = cleanText(match && match.item && (match.item.taskType || match.item.type), "curated");
-    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc")) {
+    if (!match || (taskType !== "curated" && taskType !== "project" && taskType !== "adhoc" && taskType !== "repeatable")) {
       return false;
     }
 
@@ -2139,28 +2144,37 @@ export function createPlannerController({ reminderService = calendarReminders } 
     return true;
   }
 
-  function reorderChecklistItem(taskId, day, slot, fromChecklistId, toChecklistId) {
+  function reorderChecklistItem(taskId, day, slot, fromChecklistId, toChecklistId, placement = "before") {
     const match = findSlotTask(day, slot, taskId);
-    if (!match || cleanText(match.item.type, "curated") !== "curated") {
-      return false;
+    if (!match || match.item.deleted || match.item.deletedInstance
+      || !["curated", "project", "repeatable", "adhoc"].includes(getWeeklyTaskType(match.item))) {
+      throw new Error("That task cannot reorder a checklist. Reload Planner before editing.");
     }
 
-    const checklist = normalizeChecklist(match.item.checklist);
+    const checklist = Array.isArray(match.item.checklist) ? [...match.item.checklist] : [];
     const fromId = cleanText(fromChecklistId, "");
     const toId = cleanText(toChecklistId, "");
     const fromIndex = checklist.findIndex((entry) => cleanText(entry.id, "") === fromId);
     const toIndex = checklist.findIndex((entry) => cleanText(entry.id, "") === toId);
 
-    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex || !["before", "after"].includes(placement)) {
+      setStatus("Checklist reorder canceled: select two existing, different sub-tasks.");
       return false;
     }
 
     const [moved] = checklist.splice(fromIndex, 1);
-    checklist.splice(toIndex, 0, moved);
+    const targetIndex = checklist.findIndex((entry) => cleanText(entry.id, "") === toId);
+    checklist.splice(targetIndex + (placement === "after" ? 1 : 0), 0, moved);
+    if (checklist.every((item, index) => item === match.item.checklist[index])) {
+      setStatus("Checklist order is unchanged.");
+      return false;
+    }
 
     match.item.checklist = checklist;
-    savePlanner();
-    return true;
+    return savePlanner().then(() => {
+      setStatus(`Sub-task order saved for "${match.item.title}".`);
+      return true;
+    });
   }
 
   function setTaskCompleted(taskId, day, slot, completed) {
@@ -2391,7 +2405,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
           category: cleanText(entry.category, "uncategorized"),
           asset: cleanText(entry.asset, ""),
           mileage: cleanText(entry.mileage, ""),
-          checklistTemplate: readProjectChecklistTemplate(entry),
+          checklistTemplate: null,
         };
 
         if (repeatableIndex >= 0) {
@@ -2648,7 +2662,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
     state.reminderTaskId = "";
     state.seriesTaskId = "";
     state.moveTaskId = "";
-    state.activeAdhocChecklist = null;
+    state.activeChecklistTaskId = "";
     if (linkResolve) { const resolve = linkResolve; linkResolve = null; resolve(null); }
     state.linkProject = null;
   }
@@ -2711,11 +2725,20 @@ export function createPlannerController({ reminderService = calendarReminders } 
     openSeries(taskId) { getSeries(taskId); state.seriesTaskId = taskId; },
     closeSeries() { state.seriesTaskId = ""; },
     openChecklist(taskId, day, slot) {
-      if (!findSlotTask(day, slot, taskId)) { setStatus("Unable to locate that task."); return false; }
-      state.activeAdhocChecklist = { taskId, day, slot };
+      const match = findSlotTask(day, slot, taskId);
+      if (!match || match.item.deleted || match.item.deletedInstance
+        || !["curated", "project", "repeatable", "adhoc"].includes(getWeeklyTaskType(match.item))) {
+        setStatus("Unable to locate that task.");
+        return false;
+      }
+      closeDialogs();
+      state.drag = null;
+      state.dropTarget = "";
+      state.activeChecklistTaskId = taskId;
+      return true;
     },
     refreshChecklist,
-    closeChecklist() { state.activeAdhocChecklist = null; },
+    closeChecklist() { state.activeChecklistTaskId = ""; state.drag = null; state.dropTarget = ""; },
     closeWeather() { linksRequest += 1; state.modal = null; },
     selectMaster(id) {
       const resolve = linkResolve;
@@ -2742,6 +2765,35 @@ export function createPlannerController({ reminderService = calendarReminders } 
     if (destroyed && name !== "initialize") return undefined;
     try {
       if (name === "getTaskProject" || name === "getSeries") return operation(...args);
+      const selected = state.activeChecklistTaskId;
+      refreshChecklist();
+      const checklistMutation = ["addChecklistItem", "updateChecklistItem", "toggleChecklistItem",
+        "removeChecklistItem", "reorderChecklistItem"].includes(name);
+      if (checklistMutation) {
+        const owner = findWeeklyTaskById(args[0])?.item;
+        if (!owner || owner.deleted || owner.deletedInstance) {
+          throw new Error("That checklist task is missing or deleted. Reload Planner before editing.");
+        }
+      }
+      if (selected && checklistMutation && (!state.activeChecklistTaskId || args[0] !== selected)) {
+        throw new Error("That checklist owner is no longer available. Close the dialog and reopen the task.");
+      }
+      if (state.activeChecklistTaskId) {
+        const owner = selectChecklistOwner(state);
+        if (checklistMutation && name !== "updateChecklistItem"
+          && (args[1] !== owner.day || args[2] !== owner.slot)) {
+          throw new Error("That checklist task moved. Close the dialog and reopen its current location.");
+        }
+        const allowed = ["openChecklist", "closeChecklist", "closeDialogs", "refreshChecklist", "setDrag", "setDropTarget"];
+        if (!checklistMutation && !allowed.includes(name)) {
+          throw new Error("Close the checklist dialog before using other Planner actions.");
+        }
+        if (name === "setDrag" && args[0]
+          && (args[0].kind !== "checklist-reorder" || args[0].taskId !== state.activeChecklistTaskId
+            || !["curated", "project", "repeatable", "adhoc"].includes(getWeeklyTaskType(owner.task)))) {
+          throw new Error("Only the active checklist can be reordered while its dialog is open.");
+        }
+      }
       if (name === "cancelRestore") { const result = operation(...args); notify(); return result; }
       if (state.restoreProposal && !["restoreRepeatableOccurrence", "setDrag", "setDropTarget", "closeDialogs"].includes(name)) {
         throw new Error("Finish or cancel the restoration decision before editing.");
@@ -2753,7 +2805,7 @@ export function createPlannerController({ reminderService = calendarReminders } 
         throw new Error("Planner must reload after a backup operation before editing. Retry a backup operation or reload Planner.");
       }
       if (state.backupBusy) throw new Error("Planner backup is in progress. Wait before editing.");
-      if (persistenceError && !["initialize", "backupOperation", "closeMove", "closeReminder", "closeChecklist", "closeSeries", "closeWeather"].includes(name)) {
+      if (persistenceError && !["initialize", "backupOperation", "closeMove", "closeReminder", "closeChecklist", "closeDialogs", "closeSeries", "closeWeather"].includes(name)) {
         throw new Error(`Planner has an unsaved change. Reload before editing. ${persistenceError.message}`);
       }
       if (state.reminderBusy) throw new Error("A Calendar notification operation is in progress. Wait before editing.");

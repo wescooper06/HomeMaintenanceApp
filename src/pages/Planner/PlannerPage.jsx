@@ -15,7 +15,8 @@ function PlannerScreen() {
   const [mobilePanel, setMobilePanel] = useState(null);
   return (
     <DragDropLayer>
-      <section className={`${styles.plannerScreen} hm-card`} aria-busy={snapshot.backupBusy || snapshot.reminderBusy || snapshot.restoreBusy}>
+      <section className={`${styles.plannerScreen} hm-card`} data-role="planner-focus-fallback" tabIndex={-1}
+        aria-busy={snapshot.backupBusy || snapshot.reminderBusy || snapshot.restoreBusy}>
         <PlannerHeader />
         <div inert={snapshot.backupBusy || snapshot.backupReloadRequired || Boolean(snapshot.restoreProposal)}>
           <PlannerSidebar mobilePanel={mobilePanel} onMobilePanelChange={setMobilePanel} />

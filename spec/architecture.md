@@ -81,16 +81,12 @@ master/project links or duplicate dates stop generation before writing.
 Hydration retains raw checklist arrays; display-only checklist normalization is
 not written back merely because a different field or recurrence setting changed.
 
-New Repeatable occurrences inherit the approved master
-`metadata_json.checklistTemplate` definition, retaining item IDs/order/text and
-resetting completion to false. Known master UUIDs are recorded in
+New Repeatable occurrences start with empty occurrence-local checklists;
+legacy master checklist templates are ignored. Known master UUIDs are recorded in
 `metadata_json.sourceTaskId`; project UUID remains both `project_id` and `parent_rep`.
-Existing occurrence progress is never used as an automatic template. If related
-checklist history exists without an approved definition, generation stops with
-an explicit error rather than inserting a blank checklist. The Repeatable weekly
-card now exposes the same checklist and **Use this checklist for future tasks**
-approval action as Project cards. Only an explicitly approved live occurrence
-can supply that definition; deleted history cannot be approved implicitly.
+Existing occurrence progress is never used as a template. Historical or malformed
+legacy template data does not prevent empty future Repeatable occurrences.
+Repeatable template promotion is rejected by the controller and storage boundary.
 
 Project/curated occurrences remain on their assigned dates; navigating elsewhere
 can hide them from the displayed week but does not carry, replace, or delete them.
@@ -172,25 +168,72 @@ container ordering change. Multiple unfinished occurrences or conflicting
 ownership produce a review error, never an arbitrary selection. Moving to a
 different week does not imply fresh work.
 
-The separate **Start fresh task** action requires an explicitly approved master
-template. The versioned typed definition uses the existing JSONB column:
+For ordinary Projects, the separate **Start fresh task** action requires an
+explicitly approved master template. The versioned typed definition uses the
+existing JSONB column:
 `planner_tasks.metadata_json.checklistTemplate = {version: 1, items: [{id, text}]}`.
 Item IDs are unique nonempty strings, text is nonempty, array order is
 authoritative, and items cannot contain completion state. Fresh occurrences
 retain those stable definition IDs but initialize each `completed` to false.
 Existing `planner_weekly_tasks.checklist_json` history is never rewritten.
-The weekly-card **Use this checklist for future tasks** action explicitly
-approves the visible definition on its uniquely resolved master. Later checklist
-edits do not silently change the approved template; approve again deliberately.
+The existing `saveChecklistTemplate` service explicitly approves a definition on
+its uniquely resolved Project master. The owner-rejected weekly-card approval
+button remains absent; the checklist popup does not restore it. Checklist edits
+do not silently change an approved template.
 
 No physical schema migration or automatic historical backfill is required for
 this contract. Template approval is a separate user write, not a load-time
-repair. With no unfinished occurrence and no approved template, historical or
-tombstoned checklist evidence blocks assignment pending review; it is never
-chosen by title or recency or automatically revived. Only a genuinely new
-Project without matching checklist history may receive an initially empty
-ordinary occurrence. Incident exports and recovery packages are local-only
-evidence and are not application inputs or deployment artifacts.
+repair. With no unfinished Project occurrence and no approved template,
+historical or tombstoned checklist evidence blocks assignment pending review; it
+is never chosen by title or recency or automatically revived. Only a genuinely
+new Project without matching checklist history may receive an initially empty
+ordinary occurrence.
+
+Repeatable Planner checklists are stored on individual scheduled occurrence
+rows. Newly generated Repeatable occurrences start with empty checklists.
+Repeatable occurrence checklist contents do not propagate to the Repeatable
+definition or other occurrences. Existing occurrence data is preserved, and
+moving an occurrence retains its identity and checklist on that same row.
+
+Scheduled Project, Repeatable and Ad-Hoc cards use one checklist action in their
+action row and one central `ChecklistModal` portal in `PlannerFooter`.
+`ChecklistBody` and `ChecklistItem` remain the shared editor. All three task types
+use `useChecklistReorder`: a dedicated Pointer Events handle with capture,
+viewport targeting/autoscroll. Each reorderable row has only its handle, checkbox,
+editable text and remove action, with no visible move-arrow buttons or reserved
+arrow-control layout. Handle arrow keys
+move one position; Escape cancels an active gesture before dismissing the popup.
+The upper/lower half of a row inserts before/after it, with an insertion line;
+pointer users can reach both the beginning and the end of the list.
+Only the handle suppresses touch scrolling. Reordering uses existing owner-local
+weekly-row JSON/revision writes, preserves raw item objects and array order, and
+announces success only after persistence. No Repeatable master/sibling write or
+Project template change is involved. Single/empty lists expose no reorder control.
+The icon's populated state derives from checklist contents, not parent completion.
+
+Popup ownership is the transient `activeChecklistTaskId`. The controller/footer
+resolve the latest live task and current visible-week location; missing,
+tombstoned and off-week owners cannot remain active. Background Planner mutations
+are blocked while the popup is active, and stale-owner/location callbacks fail
+explicitly. Checklist mutations retain the existing weekly-row persistence and
+revision checks. No copied task is stored as popup state.
+
+Popup visibility is not persisted and reload returns to the closed Planner.
+`checklist_open` remains hydrated/serialized for backward compatibility; existing
+add/toggle APIs retain their historical field behavior but no longer determine
+weekly-card or popup visibility. Opening/closing a popup produces no storage write.
+No migration or historical data cleanup is required.
+
+The popup uses `usePlannerDialog` for focus entry/trapping, Escape and focus
+return, with isolated background interaction and scroll locking. Existing stable
+scrollbar gutters are not compensated twice. Missing origin buttons fall back to
+the Planner region. Checklist text has a semantic touch/keyboard edit action;
+editing Escape cancels before dialog Escape closes. Mutation errors remain in the
+Planner controller and are also announced inside the popup. The viewport-bounded
+shell keeps Close outside its internally scrolling checklist content.
+
+Incident exports and recovery packages are local-only evidence and are not
+application inputs or deployment artifacts.
 
 Google Identity Services authorizes Calendar explicitly. Calendar event CRUD and
 notification services call Calendar API directly. There is no Sheets/Apps Script

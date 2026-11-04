@@ -393,12 +393,12 @@ export function createPlannerSupabaseStorage(getData) {
       const linkedId = task?.metadata?.sourceTaskId;
       const matches = master && state.tasks.filter((row) =>
         row.projectId === master.projectId && row.source === master.source);
-      const repeatable = task?.taskType === "repeatable";
-      if (!master || !task || !["curated", "project", "repeatable"].includes(task.taskType)
+      if (task?.taskType === "repeatable") {
+        throw new Error("Repeatable occurrence checklists cannot be saved as reusable templates.");
+      }
+      if (!master || !task || !["curated", "project"].includes(task.taskType)
         || task.deleted || task.deletedInstance || matches.length !== 1
         || task.source !== master.source
-        || (repeatable && (master.source !== "repeating" || task.projectId !== master.projectId
-          || task.parentRepeatableId !== master.projectId))
         || (linkedId ? linkedId !== masterId : !master.projectId || task.projectId !== master.projectId)
         || JSON.stringify(task.checklist.map(({ id, text }) => ({ id, text }))) !== JSON.stringify(definition)) {
         throw new Error("Project checklist changed or its ownership is ambiguous. Reload and review before saving a template.");

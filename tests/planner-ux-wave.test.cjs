@@ -8,6 +8,39 @@ const root = path.resolve(__dirname, "..");
 const plannerSource = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const nodes = (tree) => !tree || typeof tree !== "object" ? [] : [tree, ...(tree.children || []).flatMap(nodes)];
 
+test("Planner action icons are fixed-size local SVGs independent of external font availability", () => {
+  const checklist = plannerSource("src\\pages\\Planner\\components\\Checklist.jsx");
+  const cards = plannerSource("src\\pages\\Planner\\components\\ProjectCard.jsx");
+  const css = plannerSource("src\\pages\\Planner\\PlannerPage.module.css");
+  for (const component of [checklist, cards]) {
+    assert.match(component, /<svg className=\{styles\["planner-action-icon"\]\} viewBox="0 0 24 24"/);
+    assert.match(component, /aria-hidden="true" focusable="false"/);
+    assert.doesNotMatch(component, /calendar_month|material-symbols-rounded/);
+  }
+  assert.match(css, /\.planner-action-icon\s*\{[^}]*width: 1rem;[^}]*height: 1rem;[^}]*flex: 0 0 auto;[^}]*pointer-events: none;/s);
+  assert.doesNotMatch(css, /Material Icons Round|material-symbols-rounded|slot-task-week-icon/);
+});
+
+test("shared checklist reorder keeps captured pointers and touch-sized handles without visible arrows or reserved spacing", () => {
+  const checklist = plannerSource("src\\pages\\Planner\\components\\Checklist.jsx");
+  const hook = plannerSource("src\\pages\\Planner\\components\\useChecklistReorder.js");
+  const css = plannerSource("src\\pages\\Planner\\PlannerPage.module.css");
+  assert.match(checklist, /data-action="checklist-drag-handle"/);
+  assert.match(checklist, /count > 1/);
+  assert.match(checklist, /onPointerCancel=\{reorder.cancel\}/);
+  assert.match(checklist, /onLostPointerCapture=\{reorder.cancel\}/);
+  assert.doesNotMatch(checklist, /checklist-move-up|checklist-move-down|checklist-reorder-controls/);
+  assert.match(checklist, /onKeyDown=\{\(event\) => reorder.handleKey\(event, index\)\}/);
+  assert.doesNotMatch(checklist, /draggable="true"|onDrop/);
+  assert.match(checklist, /onDragStart=\{\(event\) => event.preventDefault\(\)\}/);
+  assert.match(hook, /setPointerCapture/);
+  assert.match(hook, /requestAnimationFrame\(tick\)/);
+  assert.match(hook, /await actions.reorderChecklistItem/);
+  assert.match(css, /\.slot-checklist-handle\s*\{[^}]*touch-action:\s*none;/s);
+  assert.doesNotMatch(css, /checklist-reorder-controls/);
+  assert.match(css, /\.slot-checklist-handle\s*\{[^}]*min-width:\s*var\(--lm-control-mobile\);[^}]*min-height:\s*var\(--lm-control-mobile\);/s);
+});
+
 test("Planner day strip selects one day, preserves the seven-day desktop view, and honors meal-date navigation", async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
   const file = path.join(root, "src", "pages", "Planner", "components", "WeeklyGrid.jsx");
@@ -135,7 +168,7 @@ test("Mobile Planner exposes dedicated task and calendar controls without Projec
   assert.match(css, /--lm-control-mobile/);
 });
 
-test("Mobile task controls occupy one row without hiding task actions or desktop task drag-and-drop", () => {
+test("Mobile task controls wrap only as needed without hiding actions or desktop task drag-and-drop", () => {
   const card = plannerSource("src/pages/Planner/components/ProjectCard.jsx");
   const css = plannerSource("src/pages/Planner/PlannerPage.module.css");
   assert.match(card, /data-action="weekly-drag-handle" draggable="true"/);
@@ -143,9 +176,20 @@ test("Mobile task controls occupy one row without hiding task actions or desktop
   assert.match(card, /data-action="task-move"/);
   assert.match(card, /data-action="remove"/);
   assert.match(css, /@media\s*\(max-width:\s*700px\)\s*\{[\s\S]*?\.slot-task-handle\s*\{\s*display:\s*none/);
-  assert.match(css, /\.slot-task-header-actions\s*\{[^}]*flex-wrap:\s*nowrap[^}]*gap:\s*0\.1rem[^}]*width:\s*100%/s);
+  assert.match(css, /\.slot-task-header-actions\s*\{[^}]*flex-wrap:\s*wrap[^}]*gap:\s*0\.1rem[^}]*width:\s*100%/s);
   assert.match(css, /width:\s*40px;\s*min-width:\s*40px;\s*max-width:\s*40px;\s*min-height:\s*var\(--lm-control-mobile\)/);
   assert.doesNotMatch(css.slice(css.indexOf("@media (max-width: 700px)"), css.indexOf(".planner-parking-column", css.indexOf("@media (max-width: 700px)"))), /\.slot-task-handle\s*\{[^}]*min-width:/s);
+});
+
+test("Mobile checklist controls use touch-sized targets and constrain long checklist text", () => {
+  const css = plannerSource("src/pages/Planner/PlannerPage.module.css");
+  assert.doesNotMatch(css, /\.slot-task-repeatable \.slot-checklist[^{}]*\{[^}]*display:\s*none/s);
+  const mobile = css.slice(css.indexOf("@media (max-width: 700px)"), css.indexOf(".planner-parking-column", css.indexOf("@media (max-width: 700px)")));
+  assert.match(mobile, /\.checklist-modal-header button,[\s\S]*?\.checklist-text-edit\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(mobile, /\.slot-checklist-item input\[type="checkbox"\]\s*\{[^}]*width:\s*var\(--lm-control-mobile\)[^}]*height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(mobile, /\.slot-checklist-remove,[\s\S]*?\.slot-checklist-add button\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(mobile, /\.slot-checklist-add input\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(mobile, /\.slot-checklist-text\s*\{[^}]*overflow-wrap:\s*anywhere/s);
 });
 
 test("Planner removes only the rejected future-checklist control and keeps task actions and type colors", () => {
@@ -155,7 +199,19 @@ test("Planner removes only the rejected future-checklist control and keeps task 
   assert.doesNotMatch(card, /Use this checklist for future tasks/);
   assert.match(card, /task-complete-toggle/);
   assert.match(card, /weekly-move/);
-  assert.match(card, /openChecklist/);
+  assert.match(card, /<ChecklistAction task=\{task\}/);
   assert.match(service, /saveChecklistTemplate/);
   for (const selector of [".slot-task-repeatable", ".slot-task-adhoc", ".slot-task-curated"]) assert(css.includes(selector));
+});
+
+test("unified checklist popup is bounded, scrollable and never rendered inline in scheduled cards", () => {
+  const css = plannerSource("src/pages/Planner/PlannerPage.module.css");
+  const card = plannerSource("src/pages/Planner/components/ProjectCard.jsx");
+  assert.doesNotMatch(card, /<Checklist(?:Body)?\s/);
+  assert.match(css, /\.slot-task-header\s*\{[^}]*display:\s*grid/s);
+  assert.match(css, /\.checklist-modal-card\s*\{[^}]*box-sizing:\s*border-box[^}]*max-height:\s*calc\(100dvh - 2rem\)/s);
+  assert.match(css, /\.checklist-modal-content\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.checklist-modal-header\s*\{[^}]*flex:\s*0 0 auto/s);
+  assert.match(css, /\.checklist-text-edit\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css, /\.slot-task \.slot-task-checklist-button\.has-checklist-items/);
 });

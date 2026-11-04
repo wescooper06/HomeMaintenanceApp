@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 
+import { selectChecklistOwner } from "../../../services/plannerService.js";
 import styles from "../PlannerPage.module.css";
 
-import { AdhocChecklistModal } from "./Checklist.jsx";
+import { ChecklistModal } from "./Checklist.jsx";
 import MasterProjectTitleEditor from "./MasterProjectTitleEditor.jsx";
 import PlannerMoveTaskModal from "./PlannerMoveTaskModal.jsx";
 import ReminderModal from "./ReminderModal.jsx";
@@ -20,7 +21,7 @@ export default function PlannerFooter() {
   const move = task(snapshot.moveTaskId);
   const reminder = task(snapshot.reminderTaskId);
   const series = task(snapshot.seriesTaskId);
-  const checklist = task(snapshot.activeAdhocChecklist?.taskId);
+  const checklist = selectChecklistOwner(snapshot);
   useEffect(() => {
     const escape = (event) => { if (event.key === "Escape") actions.closeDialogs(); };
     document.addEventListener("keydown", escape);
@@ -41,10 +42,10 @@ export default function PlannerFooter() {
         onClick={(event) => { if (event.target === event.currentTarget) actions.closeSeries(); }}>
         {series?.parentRepeatableId && <RepeatableSeriesEditor key={snapshot.seriesTaskId} taskId={snapshot.seriesTaskId} />}
       </div>
-      <div id="adhoc-checklist-modal" className={styles["adhoc-checklist-modal-host"]} hidden={!checklist}
+      {checklist && createPortal(<div className={styles["checklist-modal-host"]}
         onClick={(event) => { if (event.target === event.currentTarget) actions.closeChecklist(); }}>
-        {checklist && <AdhocChecklistModal task={checklist} day={snapshot.activeAdhocChecklist.day} slot={snapshot.activeAdhocChecklist.slot} />}
-      </div>
+        <ChecklistModal key={checklist.task.id} {...checklist} />
+      </div>, document.body)}
       {move && createPortal(<PlannerMoveTaskModal key={move.id} task={move} />, document.body)}
       {snapshot.linkProject && createPortal(<MasterProjectTitleEditor />, document.body)}
       {snapshot.restoreProposal && createPortal(<RestoreOccurrenceDialog />, document.body)}

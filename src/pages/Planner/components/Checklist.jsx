@@ -1,20 +1,29 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { normalizeChecklist } from "../../../services/plannerService.js";
 import styles from "../PlannerPage.module.css";
 
 import InlinePlannerText from "./InlinePlannerText.jsx";
+import useChecklistReorder from "./useChecklistReorder.js";
 import { usePlanner } from "./usePlanner.js";
-import usePlannerDrag from "./usePlannerDrag.js";
+import usePlannerDialog from "./usePlannerDialog.js";
 
-export default function Checklist({ task, day, slot }) {
+export default function ChecklistAction({ task, day, slot }) {
   const { actions } = usePlanner();
+  const checklist = normalizeChecklist(task.checklist);
+  const completed = checklist.filter((item) => item.completed).length;
   return (
-    <div className={styles["slot-checklist"]}>
-      <button type="button" className={styles["slot-checklist-toggle"]} data-action="checklist-toggle"
-        onClick={() => actions.toggleChecklistOpen(task.id, day, slot)}>Checklist {task.checklistOpen ? "\u25b2" : "\u25bc"}</button>
-      {task.checklistOpen && <ChecklistBody task={task} day={day} slot={slot} />}
-    </div>
+    <button type="button" id={`planner-checklist-${task.id}`}
+      className={`${styles["slot-task-checklist-button"]} ${checklist.length ? styles["has-checklist-items"] : ""}`}
+      data-action="checklist-open" aria-haspopup="dialog"
+      aria-label={`Open checklist for ${task.title}, ${completed} of ${checklist.length} sub-tasks complete`}
+      title={checklist.length ? "Checklist has sub-tasks" : "Checklist"}
+      onClick={() => actions.openChecklist(task.id, day, slot)}>
+      <svg className={styles["planner-action-icon"]} viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+        <path d="m3 6 2 2 3-4M11 6h10M3 13l2 2 3-4M11 13h10M11 20h10" />
+      </svg>
+    </button>
   );
 }
 
@@ -22,13 +31,17 @@ export function ChecklistBody({ task, day, slot, adhoc = false }) {
   const { actions } = usePlanner();
   const [text, setText] = useState("");
   const checklist = normalizeChecklist(task.checklist);
+  const listRef = useRef(null);
+  const reorder = useChecklistReorder({ task: { ...task, checklist }, day, slot, listRef });
   const add = () => {
     if (actions.addChecklistItem(task.id, day, slot, text)) setText("");
   };
   return (
     <div className={styles["slot-checklist-body"]}>
-      <div className={styles["slot-checklist-list"]}>
-        {checklist.length ? checklist.map((item) => <ChecklistItem key={item.id} item={item} task={task} day={day} slot={slot} adhoc={adhoc} />)
+      <p className={styles["checklist-reorder-status"]} role="status" aria-live="polite">{reorder.status}</p>
+      <div ref={listRef} className={styles["slot-checklist-list"]}>
+        {checklist.length ? checklist.map((item, index) => <ChecklistItem key={item.id} item={item} index={index}
+          count={checklist.length} reorder={reorder} task={task} day={day} slot={slot} adhoc={adhoc} />)
           : <div className={styles["slot-checklist-empty"]}>No sub-tasks yet.</div>}
       </div>
       <div className={styles["slot-checklist-add"]}>
@@ -40,43 +53,47 @@ export function ChecklistBody({ task, day, slot, adhoc = false }) {
   );
 }
 
-export function ChecklistItem({ item, task, day, slot, adhoc = false }) {
+export function ChecklistItem({ item, index, count, reorder, task, day, slot, adhoc = false }) {
   const { actions } = usePlanner();
-  const drag = usePlannerDrag();
-  const sameTask = drag.drag?.kind === "checklist-reorder" && drag.drag.taskId === task.id && drag.drag.day === day && drag.drag.slot === slot;
-  const target = `checklist:${task.id}:${item.id}`;
   return (
-    <div className={`${styles["slot-checklist-item"]} ${item.completed ? styles["is-complete"] : ""} ${sameTask && drag.drag.checklistId === item.id ? styles["is-dragging"] : ""} ${drag.dropTarget === target ? styles["is-drop-target"] : ""}`}
-      data-checklist-id={item.id}
-      onDragOver={(event) => { if (!adhoc && sameTask) drag.target(event, target); }}
-      onDragLeave={drag.leave}
-      onDrop={(event) => {
-        if (adhoc || !sameTask) return;
-        event.preventDefault();
-        event.stopPropagation();
-        actions.reorderChecklistItem(task.id, day, slot, drag.drag.checklistId, item.id);
-        drag.end();
-      }}>
-      {!adhoc && <span className={styles["slot-checklist-handle"]} data-action="checklist-drag-handle" draggable="true" aria-label="Drag sub-task" title="Drag to reorder"
-        onDragStart={(event) => drag.start(event, { kind: "checklist-reorder", taskId: task.id, day, slot, checklistId: item.id })} onDragEnd={drag.end}>{"\u22ee\u22ee"}</span>}
-      <input type="checkbox" data-action={adhoc ? "adhoc-checklist-item-toggle" : "checklist-item-toggle"} data-checklist-id={item.id} checked={item.completed}
+    <div className={`${styles["slot-checklist-item"]} ${item.completed ? styles["is-complete"] : ""} ${reorder?.drag?.fromId === item.id ? styles["is-dragging"] : ""} ${reorder?.drag?.toId === item.id ? styles["is-drop-target"] : ""}`}
+      data-checklist-id={item.id} data-checklist-placement={reorder?.drag?.toId === item.id ? reorder.drag.placement : undefined}>
+      {count > 1 && <button type="button" className={styles["slot-checklist-handle"]} data-action="checklist-drag-handle"
+          data-checklist-dragging={reorder.drag?.fromId === item.id}
+          aria-disabled={reorder.busy} aria-label={`Reorder ${item.text}`} title="Drag to reorder; arrow keys move up or down"
+          onPointerDown={(event) => reorder.start(event, item.id)} onPointerMove={reorder.pointerMove}
+          onPointerUp={reorder.finish} onPointerCancel={reorder.cancel} onLostPointerCapture={reorder.cancel}
+          onKeyDown={(event) => reorder.handleKey(event, index)} onDragStart={(event) => event.preventDefault()}>{"\u22ee\u22ee"}</button>}
+      <input type="checkbox" aria-label={item.text} data-action={adhoc ? "adhoc-checklist-item-toggle" : "checklist-item-toggle"} data-checklist-id={item.id} checked={item.completed}
         onChange={(event) => { actions.toggleChecklistItem(task.id, day, slot, item.id, event.target.checked); if (adhoc) actions.refreshChecklist(); }} />
-      <InlinePlannerText className={styles["slot-checklist-text"]} text={item.text} label="Sub-task name" onSave={(text) => actions.updateChecklistItem(task.id, item.id, text)} />
+      <InlinePlannerText className={styles["slot-checklist-text"]} text={item.text} label="Sub-task name" editable
+        onSave={(text) => actions.updateChecklistItem(task.id, item.id, text)} />
       <button type="button" className={styles["slot-checklist-remove"]} data-action={adhoc ? "adhoc-checklist-item-remove" : "checklist-item-remove"} data-checklist-id={item.id}
+        aria-label={`Remove ${item.text}`}
         onClick={() => { actions.removeChecklistItem(task.id, day, slot, item.id); if (adhoc) actions.refreshChecklist(); }}>X</button>
     </div>
   );
 }
 
-export function AdhocChecklistModal({ task, day, slot }) {
-  const { actions } = usePlanner();
+export function ChecklistModal({ task, day, slot }) {
+  const { snapshot, actions } = usePlanner();
+  const ref = useRef(null);
+  usePlannerDialog(ref, actions.closeChecklist, "[data-action='checklist-close']", {
+    isolate: true, returnFocusId: `planner-checklist-${task.id}`,
+  });
   return (
-    <div className={styles["adhoc-checklist-modal-card"]} role="dialog" aria-modal="true" aria-labelledby="adhoc-checklist-modal-title">
-      <div className={styles["adhoc-checklist-modal-header"]}>
-        <div><h2 id="adhoc-checklist-modal-title">Checklist</h2><p>{task.title}</p></div>
-        <button type="button" data-action="adhoc-checklist-close" aria-label="Close checklist dialog" title="Close" onClick={actions.closeChecklist}>X</button>
+    <section ref={ref} className={styles["checklist-modal-card"]} role="dialog" aria-modal="true"
+      aria-labelledby="checklist-modal-title checklist-modal-task-title" tabIndex={-1}>
+      <div className={styles["checklist-modal-header"]}>
+        <div><h2 id="checklist-modal-title">Checklist</h2><p id="checklist-modal-task-title">{task.title}</p></div>
+        <button type="button" data-action="checklist-close" aria-label="Close checklist dialog" title="Close" onClick={actions.closeChecklist}>X</button>
       </div>
-      <ChecklistBody task={task} day={day} slot={slot} adhoc />
-    </div>
+      <div className={styles["checklist-modal-content"]} data-checklist-scroll>
+        {snapshot.error && <p className={styles["checklist-modal-error"]} role="alert">{snapshot.error}</p>}
+        <fieldset disabled={Boolean(snapshot.error)} className={styles["checklist-modal-editor"]}>
+          <ChecklistBody task={task} day={day} slot={slot} adhoc={(task.taskType || task.type) === "adhoc"} />
+        </fieldset>
+      </div>
+    </section>
   );
 }
