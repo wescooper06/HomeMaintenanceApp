@@ -7,7 +7,9 @@ The approved direction is [Life_Manager_UX_Proposal_v2.pptx](https://1drv.ms/p/c
 ## Desktop Planner
 
 - Keep seven equally framed day columns at normal zoom, with content wrapping vertically instead of changing column width or creating page-level horizontal scrolling.
-- In each Morning, Afternoon, and Evening section, keep one compact warm Meals region above a distinct Tasks region.
+- Use Day / Date, Breakfast, Lunch, Dinner, Morning tasks, Afternoon tasks,
+  Evening tasks in that order. Keep three compact warm Meal regions immediately
+  below Day/Date, separate from the task-only time sections.
 - Group every occurrence for a meal slot in its single Meals region. Recipe titles navigate directly to the Recipe; free-text entries have compact Edit and Remove actions. Add uses a compact plus control.
 - Free-text editing uses a modal or mobile sheet, saves only after confirmed persistence, and reports failures without closing or changing the displayed meal.
 - Removing a meal deletes only its Planner occurrence, never the Recipe.
@@ -15,12 +17,13 @@ The approved direction is [Life_Manager_UX_Proposal_v2.pptx](https://1drv.ms/p/c
 ## Mobile Planner
 
 - Replace the seven-column squeeze with a seven-day strip and one visible selected-day view.
-- Keep Morning, Afternoon, and Evening sections in order, each with its Meals region followed by its existing task functionality.
+- Use the same Meals-first hierarchy as desktop for the selected day; preserve
+  existing Morning, Afternoon and Evening task functionality below the Meals.
 - Provide a top-level Add entry to reveal the existing Planner assignment and creation panels. Keep task controls touch-usable and prevent page-level horizontal scrolling.
 
 ## Preservation and deferrals
 
-Preserve task types, colors, completion, checklist interactions, task actions, and existing task drag/drop. Remove only the owner-rejected “Use this checklist for future tasks” control. Meal drag/drop rescheduling, Workbench filter Select All / Clear All, Meals page UX, and other module UX waves remain deferred.
+Preserve task types, colors, completion, checklist interactions, task actions, and existing task drag/drop. Remove only the owner-rejected “Use this checklist for future tasks” control. Meal drag/drop/rescheduling is REMOVED / NOT PLANNED. The current deferred/completed dispositions and final Meals-first owner acceptance are recorded in [life-manager-ux-foundation.md](./life-manager-ux-foundation.md#planner-meals-first-final-owner-acceptance); earlier UX wave acceptance history remains intact.
 
 No database, persistence-schema, RLS, grant, policy, Auth, or production-data changes are part of this UX wave.
 

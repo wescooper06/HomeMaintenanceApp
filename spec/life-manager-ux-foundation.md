@@ -85,8 +85,58 @@ Final deployed traceability: source commit `90da471` and Pages release
 `27b6b6c`. No database, production-data, or Security/Auth changes were made by
 the UX refinement work.
 
-Still deferred: General Recipe URL Import; Meal drag/drop rescheduling;
+Deferred at the 2026-11-03 closeout: General Recipe URL Import; Meal drag/drop rescheduling;
 Workbench filter Select All / Clear All; the Dashboard long-term
 product-purpose decision; final Project-card metadata; future Trips mobile
 product/design direction; and Planner Repeatable Task occurrence-specific
 checklists. This closeout does not authorize or start any deferred work.
+
+## Planner Meals-first final owner acceptance
+
+**LIFE MANAGER PLANNER MEALS-FIRST LAYOUT - FINAL OWNER ACCEPTANCE**
+
+Owner acceptance, 2026-11-04:
+
+| Check | Owner result |
+| --- | --- |
+| Desktop Planner layout | PASS |
+| Mobile selected-day layout | PASS |
+| Functionality regression | PASS |
+| Overall | PASS |
+| Remaining issues | None |
+| Status | ACCEPTED AND COMPLETE |
+
+The accepted daily hierarchy is Day / Date, Breakfast, Lunch, Dinner, Morning
+tasks, Afternoon tasks, Evening tasks. Breakfast, Lunch and Dinner are distinct
+Meal regions immediately below Day/Date; task sections contain Tasks only.
+Empty Meal regions show only the period title and Add control, without
+"No meals planned". Populated regions grow naturally without equalized heights;
+compact assigned-meal typography and all existing Meal/Task behavior remain intact.
+Desktop fits at 100% zoom with seven days and the mini-calendar visible; mobile
+uses the same hierarchy for one selected day. Neither has page-level overflow.
+
+Verified release: source `b8e92ec`, Pages
+`18f73f63caed267a17fc19fda0aad2a62337871d`, successful deployment run
+`41863661530`; previous release / rollback target `945e141`. Live HTML,
+current and retained assets, owner authentication, desktop and mobile checks
+passed before owner acceptance. Database Changes: None. Production Data Changes:
+None. Security/Auth Changes: None. No further Pages release is needed for closeout.
+
+### Current completed, removed and deferred items
+
+This disposition supersedes the historical deferred list above.
+
+Completed:
+- Repeatable Task occurrence-specific checklists: COMPLETED.
+
+Removed / not planned:
+- Meal drag/drop/rescheduling: REMOVED / NOT PLANNED.
+
+Remaining deferred:
+- General Recipe URL Import
+- Workbench filter Select All / Clear All
+- Dashboard long-term product-purpose decision
+- Final Project-card metadata decision
+- Future Trips mobile product/design direction
+
+No remaining deferred work is authorized by this closeout.
