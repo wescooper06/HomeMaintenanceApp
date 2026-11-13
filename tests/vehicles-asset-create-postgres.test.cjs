@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -8,11 +8,20 @@ const test = require("node:test");
 
 const bin = process.env.WORKBENCH_TEST_PG_BIN;
 const root = path.resolve(__dirname, "..");
+const assetCreateMigrationPath = "supabase/migrations/202611130001_vehicles_asset_creation_rpc.sql";
+const committedAssetCreateMigration = execFileSync(
+  "git",
+  ["show", `HEAD:${assetCreateMigrationPath}`],
+  { cwd: root, encoding: "utf8" },
+);
+const worktreeAssetCreateMigration = fs.readFileSync(path.join(root, assetCreateMigrationPath), "utf8")
+  .replace(/\r\n/g, "\n");
+assert.equal(worktreeAssetCreateMigration, committedAssetCreateMigration);
 const migrations = [
-  "202611110001_vehicles_domain.sql",
-  "202611110002_vehicles_save_changes_rpc.sql",
-  "202611130001_vehicles_asset_creation_rpc.sql",
-].map((name) => fs.readFileSync(path.join(root, "supabase", "migrations", name), "utf8"));
+  fs.readFileSync(path.join(root, "supabase", "migrations", "202611110001_vehicles_domain.sql"), "utf8"),
+  fs.readFileSync(path.join(root, "supabase", "migrations", "202611110002_vehicles_save_changes_rpc.sql"), "utf8"),
+  committedAssetCreateMigration,
+];
 const ownerA = "10000000-0000-4000-8000-000000000001";
 const ownerB = "10000000-0000-4000-8000-000000000002";
 const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
@@ -68,7 +77,7 @@ function lastJson(output) {
 
 const call = (payload) => `select public.create_vehicle_asset(${quote(JSON.stringify(payload))}::jsonb);`;
 
-test("asset-create RPC migration/security/reconciliation on disposable PostgreSQL 18",
+test("applies the exact committed asset-create migration and checks RPC security/reconciliation on PostgreSQL 18",
   { skip: !bin && "Set WORKBENCH_TEST_PG_BIN to a local PostgreSQL bin directory", timeout: 180000 }, async () => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "vehicles-asset-create-pg-"));
     data = path.join(directory, "data");
@@ -109,6 +118,14 @@ test("asset-create RPC migration/security/reconciliation on disposable PostgreSQ
         'public.create_vehicle_asset(jsonb)','EXECUTE')::text`), "true");
       assert.equal(await sql(`select has_function_privilege('anon',
         'public.create_vehicle_asset(jsonb)','EXECUTE')::text`), "false");
+      assert.equal(await sql(`select exists (
+        select 1
+        from pg_catalog.pg_proc p,
+          lateral pg_catalog.aclexplode(p.proacl) acl
+        where p.oid='public.create_vehicle_asset(jsonb)'::regprocedure
+          and acl.grantee=0
+          and acl.privilege_type='EXECUTE'
+      )::text`), "false");
       assert.equal(await sql(`select has_table_privilege('authenticated',
         'public.vehicles_assets','INSERT')::text`), "false");
       await assert.rejects(sql(`set role authenticated;
@@ -157,8 +174,15 @@ test("asset-create RPC migration/security/reconciliation on disposable PostgreSQ
       })), /validation_error/);
       assert.equal(await sql("select count(*) from public.vehicles_assets"), "1");
       assert.equal(await sql("select count(*) from public.maintenance_items"), "0");
+      assert.equal(await sql("select count(*) from public.vehicle_maintenance_item_assets"), "0");
       assert.equal(await sql("select count(*) from public.vehicle_ongoing_records"), "0");
+      assert.equal(await sql("select count(*) from public.vehicle_ongoing_items"), "0");
+      assert.equal(await sql("select count(*) from public.vehicle_recommended_records"), "0");
+      assert.equal(await sql("select count(*) from public.vehicle_completed_records"), "0");
+      assert.equal(await sql("select count(*) from public.vehicle_maintenance_intervals"), "0");
+      assert.equal(await sql("select count(*) from public.vehicle_key_information"), "0");
       assert.equal(await sql("select count(*) from public.vehicle_links"), "0");
+      assert.equal(await sql("select count(*) from public.vehicles_save_requests"), "2");
     } finally {
       if (started) {
         await command("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
