@@ -9,6 +9,7 @@ const pages = {
   dashboard: lazy(() => import("../../pages/Dashboard/DashboardPage.jsx")),
   calendar: lazy(() => import("../../pages/Calendar/CalendarPage.jsx")),
   daily: lazy(() => import("../../pages/DailyActivities/DailyActivitiesPage.jsx")),
+  vehicles: lazy(() => import("../../pages/Vehicles/VehiclesPage.jsx")),
   meals: lazy(() => import("../../pages/Meals/MealsPage.jsx")),
 };
 

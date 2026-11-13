@@ -4,6 +4,7 @@ export const navigationLinks = [
   ["planner", "Planner"],
   ["calendar", "Calendar"],
   ["daily", "Daily Activities"],
+  ["vehicles", "Vehicles"],
   ["meals", "Meals"],
   ["trips", "Trips"],
 ];

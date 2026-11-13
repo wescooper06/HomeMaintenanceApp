@@ -7,6 +7,7 @@ const aliases = {
   dashboard: "dashboard",
   calendar: "calendar",
   daily: "daily",
+  vehicles: "vehicles",
   trips: "trips",
   meals: "meals",
 };

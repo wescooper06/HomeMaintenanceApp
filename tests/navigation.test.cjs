@@ -24,7 +24,7 @@ test("standalone navigation uses the modern development shell and retains protec
     "/index.html#workbench");
   assert.equal(standaloneNavigationHref("daily", { pathname: "/activity-planner/", port: "" }), "#daily");
   assert.deepEqual(Array.from(navigationLinks, ([route]) => route),
-    ["dashboard", "workbench", "planner", "calendar", "daily", "meals", "trips"]);
+    ["dashboard", "workbench", "planner", "calendar", "daily", "vehicles", "meals", "trips"]);
 });
 
 test("modern projects/new route resolves to the create-mode ProjectEditor", () => {
@@ -45,7 +45,7 @@ test("standalone links preserve repository prefixes for every main destination",
     "/another/deployment/activity-planner/index.html",
   ]) {
     const root = pathname.slice(0, pathname.indexOf("activity-planner"));
-    for (const route of ["planner", "trips", "calendar", "workbench", "dashboard"]) {
+    for (const route of ["planner", "trips", "calendar", "workbench", "dashboard", "vehicles"]) {
       const href = standaloneNavigationHref(route, { pathname, port: "" });
       assert.equal(href, `${root}index.html#${route}`);
       const resolved = new URL(href, `https://fixture.invalid${pathname}`);
@@ -101,7 +101,7 @@ test("rendered main navigation and Planner reload retain the production basename
     }, React.createElement(Navigation, { active: "planner" })));
     const html = render();
     assert.equal(render(), html, "fresh reload must preserve navigation");
-    for (const route of ["planner", "trips", "calendar", "workbench", "dashboard"]) {
+    for (const route of ["planner", "trips", "calendar", "workbench", "dashboard", "vehicles"]) {
       const href = html.match(new RegExp(`href="([^"]*#${route})"`))?.[1];
       assert(href, html);
       assert.equal(new URL(href, "https://fixture.invalid").pathname.replace(/\/$/, ""), basename);
@@ -114,7 +114,7 @@ test("modern root defaults to the canonical Planner while direct module and Trip
   for (const pathname of ["/", "/index.html"]) {
     assert.equal(resolveLifeManagerRoute({ pathname, hash: "" }), "planner");
   }
-  for (const route of ["planner", "workbench", "dashboard", "calendar", "daily", "trips"]) {
+  for (const route of ["planner", "workbench", "dashboard", "calendar", "daily", "vehicles", "trips"]) {
     assert.equal(resolveLifeManagerRoute({ pathname: `/${route}`, hash: "" }), route);
     assert.equal(resolveLifeManagerRoute({ pathname: "/", hash: `#${route}` }), route);
   }
