@@ -182,5 +182,18 @@ export function createVehiclesDataAccess(client) {
       }
       return response.data;
     },
+    async createAsset(request) {
+      let response;
+      try {
+        response = assertResponse(
+          await client.rpc("create_vehicle_asset", { p_request: request }),
+          "create asset"
+        );
+      } catch (error) {
+        if (error instanceof VehiclesDataAccessError) throw error;
+        throw new VehiclesDataAccessError("create asset", error);
+      }
+      return response.data;
+    },
   });
 }

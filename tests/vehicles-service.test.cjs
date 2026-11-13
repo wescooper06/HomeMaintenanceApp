@@ -147,6 +147,147 @@ test("VEHICLES: asset list uses mapped fields and deterministic case-insensitive
   assert.deepEqual(asPlain(await setup().service.listAssets()), []);
 });
 
+test("VEHICLES: asset creation trims and maps the atomic RPC response without table writes", async () => {
+  const { service, client } = setup();
+  const serviceSource = fs.readFileSync(path.join(root, "src", "services", "vehiclesService.js"), "utf8");
+  const accessSource = fs.readFileSync(path.join(root, "src", "services", "vehiclesDataAccess.js"), "utf8");
+  assert.doesNotMatch(serviceSource, /\.from\s*\(|\.rpc\s*\(|\.insert\s*\(|\.update\s*\(|\.delete\s*\(/);
+  assert.doesNotMatch(accessSource, /\.insert\s*\(|\.update\s*\(|\.delete\s*\(/);
+  const request = {
+    request_id: uuid(81),
+    asset_id: uuid(82),
+    name: "Synthetic engine",
+    usage_unit: "hours",
+    ok: true,
+    replayed: false,
+    reconciled: false,
+    asset_version: 1,
+    asset: {
+      id: uuid(82), name: "Synthetic engine", usage_unit: "hours", version: 1,
+      created_at: now, updated_at: now,
+    },
+  };
+  client.control.rpcResult = request;
+  const result = await service.createAsset({
+    id: uuid(82), name: "  Synthetic engine  ", usageUnit: "hours", requestId: uuid(81),
+  });
+  assert.equal(result.status, "created");
+  assert.equal(result.asset.id, uuid(82));
+  assert.equal(result.asset.name, "Synthetic engine");
+  assert.equal(result.asset.usageUnit, "hours");
+  assert.equal(result.asset.version, 1);
+  assert.equal(result.asset.createdAt, now);
+  const rpc = client.control.calls.find((call) => call.rpc);
+  assert.equal(rpc.rpc, "create_vehicle_asset");
+  assert.deepEqual(asPlain(rpc.payload), {
+    p_request: {
+      request_id: uuid(81), asset_id: uuid(82), name: "Synthetic engine", usage_unit: "hours",
+    },
+  });
+  assert.equal(client.control.calls.some((call) => call.table === "vehicles_assets"), false);
+  assert.equal(client.control.calls.some((call) => call.table === "maintenance_items"), false);
+});
+
+test("VEHICLES: asset creation validates the client UUID, trimmed name limit and usage unit", async () => {
+  const { service, client } = setup();
+  for (const invalid of [
+    { id: "not-a-uuid", name: "Valid", usageUnit: "miles" },
+    { id: uuid(1), name: " \t ", usageUnit: "miles" },
+    { id: uuid(1), name: "x".repeat(121), usageUnit: "miles" },
+    { id: uuid(1), name: "Valid", usageUnit: "kilometers" },
+    { id: uuid(1), name: "Valid", usageUnit: "none", ownerId: uuid(90) },
+  ]) {
+    await assert.rejects(service.createAsset(invalid), (error) => error.code === "validation_error");
+  }
+  assert.equal(client.control.calls.length, 0);
+});
+
+test("VEHICLES: asset creation maps authorization and ID conflicts without exposing RPC details", async () => {
+  const { service, client } = setup();
+  client.control.rpcError = {
+    code: "P0001",
+    details: JSON.stringify({ code: "asset_id_conflict", context: { owner: "private" } }),
+    message: "private database detail",
+  };
+  await assert.rejects(service.createAsset({
+    id: uuid(83), name: "Synthetic conflict", usageUnit: "none", requestId: uuid(84),
+  }), (error) => {
+    assert.equal(error.code, "asset_id_conflict");
+    assert.doesNotMatch(error.message, /private|database/);
+    assert.equal("cause" in error, false);
+    return true;
+  });
+  client.control.rpcError = {
+    code: "P0001",
+    details: JSON.stringify({ code: "authorization_error" }),
+    message: "private database detail",
+  };
+  await assert.rejects(service.createAsset({
+    id: uuid(83), name: "Synthetic conflict", usageUnit: "none", requestId: uuid(84),
+  }), (error) => error.code === "authorization_error");
+});
+
+test("VEHICLES: unknown asset-create outcome retains request and asset IDs for exact retry", async () => {
+  const { service, client } = setup();
+  const input = {
+    id: uuid(85), name: "Synthetic retry asset", usageUnit: "miles", requestId: uuid(86),
+  };
+  client.control.rpcReject = Object.assign(new Error("network response lost"), { code: "ETIMEDOUT" });
+  let unknown;
+  await assert.rejects(service.createAsset(input), (error) => {
+    unknown = error;
+    assert.equal(error.code, "unknown_outcome");
+    assert.equal(error.requestId, input.requestId);
+    assert.deepEqual(asPlain(error.retryDraft), {
+      requestId: input.requestId,
+      id: input.id,
+      name: input.name,
+      usageUnit: input.usageUnit,
+    });
+    assert.doesNotMatch(error.message, /network response lost/);
+    return true;
+  });
+
+  client.control.rpcReject = null;
+  client.control.rpcResult = {
+    ok: true,
+    request_id: input.requestId,
+    replayed: true,
+    reconciled: false,
+    asset_id: input.id,
+    asset_version: 1,
+    asset: {
+      id: input.id, name: input.name, usage_unit: input.usageUnit, version: 1,
+      created_at: now, updated_at: now,
+    },
+  };
+  const result = await service.createAsset(unknown.retryDraft);
+  assert.equal(result.replayed, true);
+  const calls = client.control.calls.filter((call) => call.rpc);
+  assert.equal(calls[0].payload.p_request.asset_id, calls[1].payload.p_request.asset_id);
+  assert.equal(calls[0].payload.p_request.request_id, calls[1].payload.p_request.request_id);
+  assert.deepEqual(asPlain(calls[0].payload), asPlain(calls[1].payload));
+});
+
+test("VEHICLES: malformed create response and safe connection failures retain retry identity", async () => {
+  const { service, client } = setup();
+  const input = { id: uuid(87), name: "Synthetic", usageUnit: "none", requestId: uuid(88) };
+  client.control.rpcResult = { ok: true };
+  await assert.rejects(service.createAsset(input), (error) => {
+    assert.equal(error.code, "unknown_outcome");
+    assert.equal(error.retryDraft.id, input.id);
+    assert.equal(error.retryDraft.requestId, input.requestId);
+    return true;
+  });
+  client.control.rpcReject = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
+  await assert.rejects(service.createAsset(input), (error) => {
+    assert.equal(error.code, "retryable_transport");
+    assert.equal(error.retryDraft.id, input.id);
+    assert.equal(error.retryDraft.requestId, input.requestId);
+    return true;
+  });
+});
+
 test("VEHICLES: list pagination is complete beyond the PostgREST page size", async () => {
   const rows = Array.from({ length: 510 }, (_, index) => makeAsset(uuid(index + 1), "none", `Asset ${index}`));
   const { service, client } = setup({ vehicles_assets: rows });

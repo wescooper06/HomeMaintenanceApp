@@ -548,11 +548,12 @@ const SAVE_ERROR_MESSAGES = {
   not_found: "The asset or record is no longer available. Reload the workspace.",
   version_conflict: "Vehicles data changed elsewhere. Reload before saving again.",
   validation_error: "Some Vehicles changes are invalid. Review the affected fields.",
+  asset_id_conflict: "This asset ID is already assigned to incompatible data.",
+  request_id_payload_mismatch: "This request ID was already used for different Vehicles changes.",
   duplicate_service_date: "A record already exists for that service date.",
   duplicate_active_item_name: "An active Maintenance Item already uses that name.",
   duplicate_interval: "An interval already exists for that Maintenance Item.",
   item_archived_or_unavailable: "A Maintenance Item is no longer available for this asset.",
-  request_id_payload_mismatch: "This save request ID was already used for different changes. Reload before saving.",
 };
 
 function validResult(data, request) {
@@ -620,6 +621,37 @@ function translateSaveError(error, retryDraft, requestId) {
     requestId,
     retryDraft,
   });
+}
+
+function translateCreateAssetError(error, retryDraft, requestId) {
+  const dataAccessError = error instanceof VehiclesDataAccessError ? error.cause : error;
+  const rpcCode = parseRpcCode(dataAccessError);
+  if (rpcCode && SAVE_ERROR_MESSAGES[rpcCode]) {
+    return new VehiclesServiceError(rpcCode, SAVE_ERROR_MESSAGES[rpcCode], { requestId, retryDraft });
+  }
+  if (dataAccessError?.code === "42501") {
+    return new VehiclesServiceError("authorization_error", SAVE_ERROR_MESSAGES.authorization_error, {
+      requestId,
+      retryDraft,
+    });
+  }
+  if (["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT"]
+    .includes(dataAccessError?.code)) {
+    return new VehiclesServiceError(
+      "retryable_transport",
+      "The asset request could not reach the server. Retry the same request.",
+      { requestId, retryDraft }
+    );
+  }
+  const transportCode = typeof dataAccessError?.code === "string" ? dataAccessError.code : "";
+  if (/^(PGRST|22|23)/.test(transportCode)) {
+    return new VehiclesServiceError("save_rejected", SAVE_ERROR, { requestId, retryDraft });
+  }
+  return new VehiclesServiceError(
+    "unknown_outcome",
+    "Asset creation could not be confirmed. Retry this exact request.",
+    { requestId, retryDraft }
+  );
 }
 
 function deepCopyJson(value) {
@@ -766,6 +798,70 @@ export function createVehiclesService(clientProvider = getSupabaseClient) {
       return await operation(getAccess());
     } catch (error) {
       throw translateReadError(error);
+    }
+  }
+
+  async function createAsset(input) {
+    assertObject(input, "Asset creation");
+    assertAllowedKeys(input, ["id", "name", "usageUnit", "requestId"], "Asset creation");
+    const assetId = assertUuid(input.id, "Asset ID");
+    if (typeof input.name !== "string") {
+      throw new VehiclesServiceError("validation_error", "Asset name must be nonblank and at most 120 characters.");
+    }
+    const name = input.name.trim();
+    if (!name || [...name].length > 120) {
+      throw new VehiclesServiceError("validation_error", "Asset name must be nonblank and at most 120 characters.");
+    }
+    if (!USAGE_UNITS.has(input.usageUnit)) {
+      throw new VehiclesServiceError("validation_error", "Asset usage unit is invalid.");
+    }
+    const requestId = input.requestId === undefined
+      ? newRequestId()
+      : assertUuid(input.requestId, "Request ID");
+    const retryDraft = {
+      requestId,
+      id: assetId,
+      name,
+      usageUnit: input.usageUnit,
+    };
+    let response;
+    try {
+      response = await getAccess().createAsset({
+        request_id: requestId,
+        asset_id: assetId,
+        name,
+        usage_unit: input.usageUnit,
+      });
+    } catch (error) {
+      throw translateCreateAssetError(error, retryDraft, requestId);
+    }
+
+    try {
+      assertObject(response, "Asset creation response");
+      if (response.ok !== true || response.request_id !== requestId
+        || response.asset_id !== assetId || typeof response.replayed !== "boolean"
+        || typeof response.reconciled !== "boolean"
+        || !Number.isSafeInteger(response.asset_version) || response.asset_version <= 0) {
+        throw new Error("Malformed asset creation response.");
+      }
+      const asset = mapAsset(response.asset);
+      if (asset.id !== assetId || asset.name !== name || asset.usageUnit !== input.usageUnit
+        || asset.version !== response.asset_version) {
+        throw new Error("Asset creation response does not match the request.");
+      }
+      return {
+        status: "created",
+        requestId,
+        replayed: response.replayed,
+        reconciled: response.reconciled,
+        asset,
+      };
+    } catch {
+      throw new VehiclesServiceError(
+        "unknown_outcome",
+        "Asset creation could not be confirmed. Retry this exact request.",
+        { requestId, retryDraft }
+      );
     }
   }
 
@@ -958,6 +1054,7 @@ export function createVehiclesService(clientProvider = getSupabaseClient) {
 
   return Object.freeze({
     listAssets: () => read(async (access) => sortAssets((await access.listAssets()).map(mapAsset))),
+    createAsset,
     getAsset: (assetId) => read((access) => readAsset(access, assetId)),
     loadVehicleWorkspace: readWorkspace,
     listMaintenanceItems: () => read(readCatalog),

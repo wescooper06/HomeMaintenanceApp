@@ -10,6 +10,7 @@ const ownerA = "10000000-0000-4000-8000-000000000001";
 const ownerB = "10000000-0000-4000-8000-000000000002";
 const phase4a = fs.readFileSync(path.join(root, "supabase", "migrations", "202611110001_vehicles_domain.sql"), "utf8");
 const phase4b = fs.readFileSync(path.join(root, "supabase", "migrations", "202611110002_vehicles_save_changes_rpc.sql"), "utf8");
+const phase5bp = fs.readFileSync(path.join(root, "supabase", "migrations", "202611130001_vehicles_asset_creation_rpc.sql"), "utf8");
 const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
 let db;
 let nextUuid = 1;
@@ -51,8 +52,26 @@ async function saveWithParams(payload, owner = ownerA) {
   }
 }
 
+async function createAssetWithParams(payload, owner = ownerA) {
+  await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub',${quote(owner ?? "")},false)`);
+  try {
+    return (await db.query("select public.create_vehicle_asset($1::jsonb) as result",
+      [JSON.stringify(payload)])).rows[0].result;
+  } finally {
+    await db.exec("reset role; select set_config('request.jwt.claim.sub','',false)");
+  }
+}
+
 async function expectCode(payload, expected, owner = ownerA) {
   await assert.rejects(saveWithParams(payload, owner), (error) => {
+    assert.equal(error.code, "P0001");
+    assert.equal(JSON.parse(error.detail).code, expected);
+    return true;
+  });
+}
+
+async function expectAssetCode(payload, expected, owner = ownerA) {
+  await assert.rejects(createAssetWithParams(payload, owner), (error) => {
     assert.equal(error.code, "P0001");
     assert.equal(JSON.parse(error.detail).code, expected);
     return true;
@@ -106,6 +125,7 @@ test.before(async () => {
     grant execute on function auth.uid() to anon,authenticated,service_role;`);
   await db.exec(phase4a);
   await db.exec(phase4b);
+  await db.exec(phase5bp);
 });
 
 test.after(async () => {
@@ -129,6 +149,76 @@ test("function is restricted SECURITY DEFINER and direct client DML remains deni
   await assert.rejects(asRole("authenticated", ownerA,
     "insert into public.vehicles_assets(owner_id,name,usage_unit) values('10000000-0000-4000-8000-000000000001','Direct','miles')"),
   /permission denied/i);
+  assert.equal(await scalar(`select prosecdef from pg_catalog.pg_proc
+    where oid='public.create_vehicle_asset(jsonb)'::regprocedure`), true);
+  assert.equal(await scalar(`select has_function_privilege('authenticated','public.create_vehicle_asset(jsonb)','EXECUTE')`), true);
+  assert.equal(await scalar(`select has_function_privilege('anon','public.create_vehicle_asset(jsonb)','EXECUTE')`), false);
+  assert.equal(await scalar(`select has_table_privilege('authenticated','public.vehicles_assets','INSERT')`), false);
+  await assert.rejects(asRole("authenticated", ownerA,
+    "insert into public.vehicles_assets(owner_id,name,usage_unit) values('10000000-0000-4000-8000-000000000001','Direct asset','miles')"),
+  /permission denied/i);
+});
+
+test("asset creation validates identity, names and units and creates only an owner-scoped v1 asset", async () => {
+  const unauthenticated = {
+    request_id: uuid(), asset_id: uuid(), name: "Synthetic unauthenticated", usage_unit: "miles",
+  };
+  await expectAssetCode(unauthenticated, "authorization_error", null);
+
+  const valid = { request_id: uuid(), asset_id: uuid(), name: " \t Synthetic engine \t ", usage_unit: "hours" };
+  const created = await createAssetWithParams(valid);
+  assert.equal(created.asset_id, valid.asset_id);
+  assert.equal(created.asset.name, "Synthetic engine");
+  assert.equal(created.asset.usage_unit, "hours");
+  assert.equal(created.asset.version, 1);
+  assert.equal(created.asset.created_at !== null, true);
+  assert.equal(created.asset.updated_at !== null, true);
+  assert.equal(await scalar("select owner_id::text from public.vehicles_assets where id=$1", [valid.asset_id]), ownerA);
+  assert.equal(await scalar("select count(*) from public.vehicle_ongoing_records"), 0);
+  assert.equal(await scalar("select count(*) from public.maintenance_items"), 0);
+  assert.equal(await scalar("select count(*) from public.vehicle_links"), 0);
+  await expectAssetCode({ ...valid, request_id: uuid(), asset_id: uuid(), owner_id: ownerB }, "validation_error");
+  await expectAssetCode({ ...valid, request_id: uuid(), asset_id: uuid(), name: " \t " }, "validation_error");
+  await expectAssetCode({ ...valid, request_id: uuid(), asset_id: uuid(), name: "x".repeat(121) }, "validation_error");
+  await expectAssetCode({ ...valid, request_id: uuid(), asset_id: uuid(), usage_unit: "kilometers" }, "validation_error");
+
+  for (const usageUnit of ["miles", "hours", "none"]) {
+    const result = await createAssetWithParams({
+      request_id: uuid(), asset_id: uuid(), name: "Duplicate display name is allowed", usage_unit: usageUnit,
+    });
+    assert.equal(result.asset.usage_unit, usageUnit);
+  }
+});
+
+test("asset creation retries reconcile the stable ID and reject foreign or incompatible ID reuse", async () => {
+  const payload = {
+    request_id: uuid(), asset_id: uuid(), name: "Synthetic retry asset", usage_unit: "none",
+  };
+  const first = await createAssetWithParams(payload);
+  const replay = await createAssetWithParams(payload);
+  assert.equal(first.reconciled, false);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.asset_id, payload.asset_id);
+  assert.equal(await scalar("select count(*) from public.vehicles_assets where id=$1", [payload.asset_id]), 1);
+
+  const secondRequest = await createAssetWithParams({ ...payload, request_id: uuid() });
+  assert.equal(secondRequest.reconciled, true);
+  assert.equal(await scalar("select count(*) from public.vehicles_assets where id=$1", [payload.asset_id]), 1);
+
+  await expectAssetCode({ ...payload, request_id: uuid(), name: "Incompatible retry" }, "asset_id_conflict");
+  await expectAssetCode(payload, "asset_id_conflict", ownerB);
+  await expectAssetCode({ ...payload, name: "Different payload with same request" }, "request_id_payload_mismatch");
+});
+
+test("asset creation and existing asset-scoped save RPC remain separate", async () => {
+  const payload = { request_id: uuid(), asset_id: uuid(), name: "Created then updated", usage_unit: "miles" };
+  const created = await createAssetWithParams(payload);
+  const updated = await save(request(created.asset_id, {
+    asset_patch: { name: "Updated through the existing save RPC" },
+  }));
+  assert.equal(updated.asset_version, 2);
+  assert.equal(await scalar("select name from public.vehicles_assets where id=$1", [created.asset_id]),
+    "Updated through the existing save RPC");
 });
 
 test("authentication, owner isolation, strict request fields, and owner_id spoofing", async () => {
@@ -894,5 +984,11 @@ test("migration changes only the new RPC boundary and contains no credentials or
   assert.match(phase4b, /SECURITY DEFINER/i);
   assert.match(phase4b, /auth\.uid\(\)/i);
   assert.match(phase4b, /pg_advisory_xact_lock/i);
+  assert.match(phase5bp, /CREATE FUNCTION public\.create_vehicle_asset\(p_request jsonb\)/i);
+  assert.match(phase5bp, /SECURITY DEFINER[\s\S]*SET search_path = ''[\s\S]*auth\.uid\(\)/i);
+  assert.match(phase5bp, /GRANT EXECUTE ON FUNCTION public\.create_vehicle_asset\(jsonb\) TO authenticated/i);
+  assert.doesNotMatch(phase5bp, /GRANT\s+(?:SELECT\s*,\s*)?INSERT[\s\S]*vehicles_assets/i);
+  assert.doesNotMatch(phase5bp, /projects_vehicle|projects_all|workbench/i);
+  assert.doesNotMatch(phase5bp, /e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60|service[_ -]?role[_ -]?key|bearer\s+[a-z0-9._-]{16,}|postgres(?:ql)?:\/\/\S+|password\s*=/i);
   assert.equal(await scalar("select count(*) from public.vehicles_save_requests"), 0);
 });
