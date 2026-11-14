@@ -553,6 +553,7 @@ const SAVE_ERROR_MESSAGES = {
   duplicate_service_date: "A record already exists for that service date.",
   duplicate_active_item_name: "An active Maintenance Item already uses that name.",
   duplicate_interval: "An interval already exists for that Maintenance Item.",
+  item_id_conflict: "This Maintenance Item ID is already assigned to incompatible data.",
   item_archived_or_unavailable: "A Maintenance Item is no longer available for this asset.",
 };
 
@@ -783,6 +784,121 @@ export function buildAvailabilityOperation(item, changes) {
     expectedVersion: version(item.version),
     addAssetIds: uniqueAddIds,
     removeAssetIds: uniqueRemoveIds,
+  };
+}
+
+function normalizeMaintenanceItemRequest(input) {
+  assertObject(input, "Maintenance Item save");
+  if (!["create", "update", "archive"].includes(input.operation)) {
+    throw new VehiclesServiceError("validation_error", "Maintenance Item operation must be create, update, or archive.");
+  }
+  const operation = input.operation;
+  const allowedFields = operation === "archive"
+    ? ["operation", "id", "expectedVersion", "requestId"]
+    : [
+      "operation", "id", "expectedVersion", "displayName", "group", "availabilityMode",
+      "currentAssetId", "selectedAssetIds", "requestId",
+    ];
+  assertAllowedKeys(input, allowedFields, "Maintenance Item save");
+  const id = input.id === undefined && operation === "create"
+    ? newRequestId()
+    : assertUuid(input.id, "Maintenance Item ID").toLowerCase();
+  const requestId = input.requestId === undefined
+    ? newRequestId()
+    : assertUuid(input.requestId, "Request ID").toLowerCase();
+  const retryDraft = { operation, id, requestId };
+  const request = { operation, item_id: id, request_id: requestId };
+
+  if (operation !== "create") {
+    if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion <= 0) {
+      throw new VehiclesServiceError("validation_error", "Maintenance Item changes require an expected version.");
+    }
+    const expectedVersion = input.expectedVersion;
+    retryDraft.expectedVersion = expectedVersion;
+    request.expected_version = expectedVersion;
+  } else if (input.expectedVersion !== undefined) {
+    throw new VehiclesServiceError("validation_error", "Maintenance Item creation cannot include an expected version.");
+  }
+
+  if (operation === "archive") return { retryDraft, request };
+
+  if (typeof input.displayName !== "string") {
+    throw new VehiclesServiceError("validation_error", "Maintenance Item name must be 1-100 nonblank characters.");
+  }
+  const displayName = input.displayName.trim();
+  if (!displayName || [...displayName].length > 100) {
+    throw new VehiclesServiceError("validation_error", "Maintenance Item name must be 1-100 nonblank characters.");
+  }
+  if (!ITEM_GROUPS.has(input.group)) {
+    throw new VehiclesServiceError("validation_error", "Maintenance Item group is invalid.");
+  }
+  if (!AVAILABILITY_MODES.has(input.availabilityMode)) {
+    throw new VehiclesServiceError("validation_error", "Maintenance Item availability mode is invalid.");
+  }
+
+  let currentAssetId = null;
+  if (input.availabilityMode === "current_asset_only") {
+    currentAssetId = assertUuid(input.currentAssetId, "Current asset ID").toLowerCase();
+  } else if (input.currentAssetId !== undefined && input.currentAssetId !== null) {
+    throw new VehiclesServiceError("validation_error", "Only current-asset items may specify a current asset.");
+  }
+
+  let selectedAssetIds = [];
+  if (input.selectedAssetIds !== undefined) {
+    if (!Array.isArray(input.selectedAssetIds)) {
+      throw new VehiclesServiceError("validation_error", "Selected asset IDs must be an array.");
+    }
+    selectedAssetIds = [...new Set(input.selectedAssetIds
+      .map((assetId) => assertUuid(assetId, "Selected asset ID").toLowerCase()))].sort();
+  }
+  if (input.availabilityMode === "selected_assets" && !selectedAssetIds.length) {
+    throw new VehiclesServiceError("validation_error", "Selected-asset items require one or more asset IDs.");
+  }
+  if (input.availabilityMode !== "selected_assets" && selectedAssetIds.length) {
+    throw new VehiclesServiceError("validation_error", "Only selected-asset items may specify selected asset IDs.");
+  }
+
+  Object.assign(retryDraft, {
+    displayName,
+    group: input.group,
+    availabilityMode: input.availabilityMode,
+    currentAssetId,
+    selectedAssetIds,
+  });
+  Object.assign(request, {
+    display_name: displayName,
+    item_group: input.group,
+    availability_mode: input.availabilityMode,
+    current_asset_id: currentAssetId,
+    selected_asset_ids: selectedAssetIds,
+  });
+  return { retryDraft, request };
+}
+
+function mapMaintenanceItemSaveResult(data, request) {
+  if (!data || typeof data !== "object" || Array.isArray(data)
+    || data.ok !== true
+    || data.request_id !== request.request_id
+    || data.operation !== request.operation
+    || data.item_id !== request.item_id
+    || typeof data.replayed !== "boolean"
+    || typeof data.reconciled !== "boolean"
+    || !data.item || typeof data.item !== "object" || Array.isArray(data.item)
+    || !Array.isArray(data.item.selected_asset_ids)
+    || data.item.selected_asset_ids.some((id) => typeof id !== "string" || !UUID_PATTERN.test(id))) return null;
+  const item = mapMaintenanceItem(data.item, data.item.selected_asset_ids);
+  if (item.id !== request.item_id || (data.operation === "archive") !== (item.archivedAt !== null)) return null;
+  return {
+    status: data.operation === "create" ? "created" : data.operation === "archive" ? "archived" : "updated",
+    requestId: data.request_id,
+    replayed: data.replayed,
+    reconciled: data.reconciled,
+    item,
+    applicability: {
+      mode: item.availabilityMode,
+      currentAssetId: item.currentAssetId,
+      selectedAssetIds: item.selectedAssetIds,
+    },
   };
 }
 
@@ -1052,6 +1168,30 @@ export function createVehiclesService(clientProvider = getSupabaseClient) {
     }
   }
 
+  async function saveMaintenanceItem(input) {
+    const { retryDraft, request } = normalizeMaintenanceItemRequest(input);
+    try {
+      const data = await getAccess().saveMaintenanceItem(request);
+      let result = null;
+      try {
+        result = mapMaintenanceItemSaveResult(data, request);
+      } catch {
+        result = null;
+      }
+      if (!result) {
+        throw new VehiclesServiceError(
+          "unknown_outcome",
+          "Maintenance Item save outcome is unknown. Reconcile or retry this exact draft.",
+          { requestId: request.request_id, retryDraft }
+        );
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof VehiclesServiceError && error.code === "unknown_outcome") throw error;
+      throw translateSaveError(error, retryDraft, request.request_id);
+    }
+  }
+
   return Object.freeze({
     listAssets: () => read(async (access) => sortAssets((await access.listAssets()).map(mapAsset))),
     createAsset,
@@ -1085,6 +1225,7 @@ export function createVehiclesService(clientProvider = getSupabaseClient) {
     }),
     createVehicleChangesDraft,
     saveVehicleChanges,
+    saveMaintenanceItem,
     buildRecordDeleteOperation,
     buildMaintenanceItemCreateOperation,
     buildMaintenanceItemUpdateOperation,

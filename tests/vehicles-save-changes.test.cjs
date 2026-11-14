@@ -11,6 +11,7 @@ const ownerB = "10000000-0000-4000-8000-000000000002";
 const phase4a = fs.readFileSync(path.join(root, "supabase", "migrations", "202611110001_vehicles_domain.sql"), "utf8");
 const phase4b = fs.readFileSync(path.join(root, "supabase", "migrations", "202611110002_vehicles_save_changes_rpc.sql"), "utf8");
 const phase5bp = fs.readFileSync(path.join(root, "supabase", "migrations", "202611130001_vehicles_asset_creation_rpc.sql"), "utf8");
+const phase5cp = fs.readFileSync(path.join(root, "supabase", "migrations", "202611130002_vehicles_maintenance_item_catalog_rpc.sql"), "utf8");
 const quote = (value) => `'${String(value).replace(/'/g, "''")}'`;
 let db;
 let nextUuid = 1;
@@ -62,6 +63,16 @@ async function createAssetWithParams(payload, owner = ownerA) {
   }
 }
 
+async function saveMaintenanceItemWithParams(payload, owner = ownerA) {
+  await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub',${quote(owner ?? "")},false)`);
+  try {
+    return (await db.query("select public.save_maintenance_item($1::jsonb) as result",
+      [JSON.stringify(payload)])).rows[0].result;
+  } finally {
+    await db.exec("reset role; select set_config('request.jwt.claim.sub','',false)");
+  }
+}
+
 async function expectCode(payload, expected, owner = ownerA) {
   await assert.rejects(saveWithParams(payload, owner), (error) => {
     assert.equal(error.code, "P0001");
@@ -72,6 +83,14 @@ async function expectCode(payload, expected, owner = ownerA) {
 
 async function expectAssetCode(payload, expected, owner = ownerA) {
   await assert.rejects(createAssetWithParams(payload, owner), (error) => {
+    assert.equal(error.code, "P0001");
+    assert.equal(JSON.parse(error.detail).code, expected);
+    return true;
+  });
+}
+
+async function expectCatalogCode(payload, expected, owner = ownerA) {
+  await assert.rejects(saveMaintenanceItemWithParams(payload, owner), (error) => {
     assert.equal(error.code, "P0001");
     assert.equal(JSON.parse(error.detail).code, expected);
     return true;
@@ -126,6 +145,7 @@ test.before(async () => {
   await db.exec(phase4a);
   await db.exec(phase4b);
   await db.exec(phase5bp);
+  await db.exec(phase5cp);
 });
 
 test.after(async () => {
@@ -977,6 +997,151 @@ test("asset deletion is intentionally absent from this asset-scoped RPC", async 
   assert.equal(await scalar("select count(*) from public.vehicles_assets where id=$1", [assetId]), 1);
 });
 
+test("catalog RPC is owner-authenticated, receipt-backed, and does not grant direct table writes", async () => {
+  assert.equal(await scalar(`select prosecdef from pg_catalog.pg_proc
+    where oid='public.save_maintenance_item(jsonb)'::regprocedure`), true);
+  assert.equal(await scalar(`select pg_catalog.pg_get_function_identity_arguments(
+    'public.save_maintenance_item(jsonb)'::regprocedure)`), "p_request jsonb");
+  assert.equal(await scalar(`select has_function_privilege('authenticated','public.save_maintenance_item(jsonb)','EXECUTE')`), true);
+  assert.equal(await scalar(`select has_function_privilege('anon','public.save_maintenance_item(jsonb)','EXECUTE')`), false);
+  assert.equal(await scalar(`select has_table_privilege('authenticated','public.maintenance_items','INSERT')`), false);
+  assert.equal(await scalar(`select has_table_privilege('authenticated','public.maintenance_items','UPDATE')`), false);
+  assert.equal(await scalar(`select has_table_privilege('authenticated','public.vehicle_maintenance_item_assets','DELETE')`), false);
+
+  const unauthenticated = {
+    request_id: uuid(), operation: "create", item_id: uuid(), display_name: "Synthetic unauthenticated",
+    item_group: "routine", availability_mode: "all_assets", current_asset_id: null, selected_asset_ids: [],
+  };
+  await expectCatalogCode(unauthenticated, "authorization_error", null);
+
+  const payload = {
+    request_id: uuid(), operation: "create", item_id: uuid(), display_name: "Synthetic owner item",
+    item_group: "routine", availability_mode: "all_assets", current_asset_id: null, selected_asset_ids: [],
+  };
+  const created = await saveMaintenanceItemWithParams(payload);
+  assert.equal(created.ok, true);
+  assert.equal(created.item_id, payload.item_id);
+  assert.equal(created.item.version, 1);
+  assert.equal(created.item.availability_mode, "all_assets");
+  assert.equal(created.item.selected_asset_ids.length, 0);
+  assert.equal(created.replayed, false);
+  const replay = await saveMaintenanceItemWithParams(payload);
+  assert.equal(replay.replayed, true);
+  await expectCatalogCode({ ...payload, display_name: "Different payload" }, "request_id_payload_mismatch");
+  await expectCatalogCode({ ...payload, request_id: uuid(), item_id: uuid(), owner_id: ownerB }, "validation_error");
+  await expectCatalogCode({ ...payload, request_id: uuid() }, "item_id_conflict");
+  await expectCatalogCode({
+    request_id: uuid(), operation: "update", item_id: payload.item_id, expected_version: 1,
+    display_name: payload.display_name, item_group: payload.item_group,
+    availability_mode: payload.availability_mode, current_asset_id: null, selected_asset_ids: [],
+  }, "not_found", ownerB);
+  assert.equal(await scalar("select count(*) from public.maintenance_items where id=$1", [payload.item_id]), 1);
+  assert.equal(await scalar("select count(*) from public.vehicles_save_requests where request_id=$1", [payload.request_id]), 1);
+});
+
+test("catalog create and complete selected-set replacement are atomic and owner-scoped", async () => {
+  const firstAsset = await asset(ownerA, "Synthetic catalog first");
+  const secondAsset = await asset(ownerA, "Synthetic catalog second");
+  const thirdAsset = await asset(ownerA, "Synthetic catalog third");
+  const foreignAsset = await asset(ownerB, "Synthetic foreign catalog asset");
+  const payload = {
+    request_id: uuid(), operation: "create", item_id: uuid(), display_name: "Synthetic selected catalog item",
+    item_group: "components_other", availability_mode: "selected_assets", current_asset_id: null,
+    selected_asset_ids: [secondAsset, firstAsset],
+  };
+  const created = await saveMaintenanceItemWithParams(payload);
+  assert.equal(created.item.availability_mode, "selected_assets");
+  assert.deepEqual(created.item.selected_asset_ids, [firstAsset, secondAsset].sort());
+  assert.equal(await scalar("select count(*) from public.vehicle_maintenance_item_assets where maintenance_item_id=$1", [payload.item_id]), 2);
+
+  await expectCatalogCode({
+    ...payload, request_id: uuid(), item_id: uuid(), display_name: "Synthetic duplicated IDs",
+    selected_asset_ids: [firstAsset, firstAsset],
+  }, "validation_error");
+  await expectCatalogCode({
+    ...payload, request_id: uuid(), item_id: uuid(), display_name: "Synthetic foreign association",
+    selected_asset_ids: [firstAsset, foreignAsset],
+  }, "not_found");
+  const missingAsset = uuid();
+  await expectCatalogCode({
+    ...payload, request_id: uuid(), item_id: uuid(), display_name: "Synthetic missing association",
+    selected_asset_ids: [firstAsset, missingAsset],
+  }, "not_found");
+  assert.equal(await scalar("select count(*) from public.maintenance_items where display_name like 'Synthetic foreign association%' or display_name like 'Synthetic missing association%'"), 0);
+  assert.equal(await scalar("select count(*) from public.vehicle_maintenance_item_assets where maintenance_item_id=$1", [payload.item_id]), 2);
+
+  const updated = await saveMaintenanceItemWithParams({
+    request_id: uuid(), operation: "update", item_id: payload.item_id, expected_version: 1,
+    display_name: "Synthetic selected catalog renamed", item_group: "routine",
+    availability_mode: "selected_assets", current_asset_id: null, selected_asset_ids: [thirdAsset, firstAsset],
+  });
+  assert.equal(updated.item.version, 2);
+  assert.deepEqual(updated.item.selected_asset_ids, [firstAsset, thirdAsset].sort());
+  await expectCatalogCode({
+    request_id: uuid(), operation: "update", item_id: payload.item_id, expected_version: 1,
+    display_name: "Synthetic stale edit", item_group: "routine",
+    availability_mode: "selected_assets", current_asset_id: null, selected_asset_ids: [secondAsset],
+  }, "version_conflict");
+  assert.equal(await scalar("select version from public.maintenance_items where id=$1", [payload.item_id]), 2);
+  assert.deepEqual(await rows("select asset_id from public.vehicle_maintenance_item_assets where maintenance_item_id=$1 order by asset_id", [payload.item_id]),
+    [{ asset_id: firstAsset }, { asset_id: thirdAsset }].sort((a, b) => a.asset_id.localeCompare(b.asset_id)));
+});
+
+test("catalog updates preserve historical snapshots and interval references block unavailable or archived items", async () => {
+  const firstAsset = await asset(ownerA, "Synthetic interval first");
+  const secondAsset = await asset(ownerA, "Synthetic interval second");
+  const itemId = uuid();
+  await saveMaintenanceItemWithParams({
+    request_id: uuid(), operation: "create", item_id: itemId, display_name: "Synthetic interval item",
+    item_group: "routine", availability_mode: "selected_assets", current_asset_id: null,
+    selected_asset_ids: [firstAsset, secondAsset],
+  });
+  const recordId = await scalar(`insert into public.vehicle_ongoing_records
+    (owner_id,asset_id,service_date,usage_reading_unit)
+    values($1,$2,'2026-11-01','none') returning id`, [ownerA, firstAsset]);
+  await db.query(`insert into public.vehicle_ongoing_items
+    (owner_id,record_id,maintenance_item_id,is_performed,display_name_snapshot,group_snapshot)
+    values($1,$2,$3,true,'Captured original name','components_other')`, [ownerA, recordId, itemId]);
+  await db.query(`insert into public.vehicle_maintenance_intervals
+    (owner_id,asset_id,maintenance_item_id,interval_unit,interval_value)
+    values($1,$2,$3,'miles',100)`, [ownerA, firstAsset, itemId]);
+
+  const replacement = {
+    request_id: uuid(), operation: "update", item_id: itemId, expected_version: 1,
+    display_name: "Synthetic edited interval item", item_group: "fluids_drivetrain",
+    availability_mode: "selected_assets", current_asset_id: null, selected_asset_ids: [secondAsset],
+  };
+  await expectCatalogCode(replacement, "item_archived_or_unavailable");
+  await expectCatalogCode({
+    request_id: uuid(), operation: "archive", item_id: itemId, expected_version: 1,
+  }, "item_archived_or_unavailable");
+  assert.equal(await scalar("select display_name from public.maintenance_items where id=$1", [itemId]), "Synthetic interval item");
+  assert.equal(await scalar("select version from public.maintenance_items where id=$1", [itemId]), 1);
+  assert.deepEqual(await rows("select asset_id from public.vehicle_maintenance_item_assets where maintenance_item_id=$1 order by asset_id", [itemId]),
+    [{ asset_id: firstAsset }, { asset_id: secondAsset }].sort((a, b) => a.asset_id.localeCompare(b.asset_id)));
+
+  const validUpdate = await saveMaintenanceItemWithParams({
+    ...replacement,
+    request_id: uuid(),
+    display_name: "Synthetic interval renamed",
+    selected_asset_ids: [firstAsset, secondAsset],
+  });
+  assert.equal(validUpdate.item.version, 2);
+  assert.deepEqual(await rows(`select display_name_snapshot,group_snapshot from public.vehicle_ongoing_items
+    where maintenance_item_id=$1`, [itemId]), [{
+    display_name_snapshot: "Captured original name", group_snapshot: "components_other",
+  }]);
+
+  await db.query("delete from public.vehicle_maintenance_intervals where maintenance_item_id=$1", [itemId]);
+  const archived = await saveMaintenanceItemWithParams({
+    request_id: uuid(), operation: "archive", item_id: itemId, expected_version: 2,
+  });
+  assert.equal(archived.item.version, 3);
+  assert(archived.item.archived_at);
+  assert.deepEqual(archived.item.selected_asset_ids, [firstAsset, secondAsset].sort());
+  assert.equal(await scalar("select count(*) from public.vehicle_ongoing_items where maintenance_item_id=$1", [itemId]), 1);
+});
+
 test("migration changes only the new RPC boundary and contains no credentials or production identity", async () => {
   assert.doesNotMatch(phase4b, /projects_vehicle|projects_all|workbench/i);
   assert.doesNotMatch(phase4b, /e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60|service[_ -]?role[_ -]?key|bearer\s+[a-z0-9._-]{16,}|postgres(?:ql)?:\/\/\S+|password\s*=/i);
@@ -990,5 +1155,12 @@ test("migration changes only the new RPC boundary and contains no credentials or
   assert.doesNotMatch(phase5bp, /GRANT\s+(?:SELECT\s*,\s*)?INSERT[\s\S]*vehicles_assets/i);
   assert.doesNotMatch(phase5bp, /projects_vehicle|projects_all|workbench/i);
   assert.doesNotMatch(phase5bp, /e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60|service[_ -]?role[_ -]?key|bearer\s+[a-z0-9._-]{16,}|postgres(?:ql)?:\/\/\S+|password\s*=/i);
+  assert.match(phase5cp, /CREATE FUNCTION public\.save_maintenance_item\(p_request jsonb\)/i);
+  assert.match(phase5cp, /SECURITY DEFINER[\s\S]*SET search_path = ''[\s\S]*auth\.uid\(\)/i);
+  assert.match(phase5cp, /GRANT EXECUTE ON FUNCTION public\.save_maintenance_item\(jsonb\) TO authenticated/i);
+  assert.match(phase5cp, /ORDER BY a\.id[\s\S]*FOR UPDATE/i);
+  assert.doesNotMatch(phase5cp, /GRANT\s+(?:SELECT\s*,\s*)?INSERT[\s\S]*maintenance_items/i);
+  assert.doesNotMatch(phase5cp, /projects_vehicle|projects_all|workbench/i);
+  assert.doesNotMatch(phase5cp, /e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60|service[_ -]?role[_ -]?key|bearer\s+[a-z0-9._-]{16,}|postgres(?:ql)?:\/\/\S+|password\s*=/i);
   assert.equal(await scalar("select count(*) from public.vehicles_save_requests"), 0);
 });

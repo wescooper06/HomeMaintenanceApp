@@ -195,5 +195,18 @@ export function createVehiclesDataAccess(client) {
       }
       return response.data;
     },
+    async saveMaintenanceItem(request) {
+      let response;
+      try {
+        response = assertResponse(
+          await client.rpc("save_maintenance_item", { p_request: request }),
+          "save Maintenance Item"
+        );
+      } catch (error) {
+        if (error instanceof VehiclesDataAccessError) throw error;
+        throw new VehiclesDataAccessError("save Maintenance Item", error);
+      }
+      return response.data;
+    },
   });
 }

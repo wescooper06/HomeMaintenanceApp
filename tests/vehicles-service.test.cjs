@@ -288,6 +288,154 @@ test("VEHICLES: malformed create response and safe connection failures retain re
   });
 });
 
+test("VEHICLES: Maintenance Item save normalizes complete applicability and maps atomic results", async () => {
+  const { service, client } = setup();
+  const selectedIds = [uuid(92), uuid(91), uuid(92)];
+  const input = {
+    operation: "create",
+    id: uuid(93),
+    requestId: uuid(94),
+    displayName: "  Synthetic selected item  ",
+    group: "components_other",
+    availabilityMode: "selected_assets",
+    selectedAssetIds: selectedIds,
+  };
+  const normalized = {
+    request_id: input.requestId,
+    operation: "create",
+    item_id: input.id,
+    display_name: "Synthetic selected item",
+    item_group: "components_other",
+    availability_mode: "selected_assets",
+    current_asset_id: null,
+    selected_asset_ids: [uuid(91), uuid(92)],
+  };
+  client.control.rpcResult = {
+    ok: true,
+    request_id: input.requestId,
+    operation: "create",
+    item_id: input.id,
+    replayed: false,
+    reconciled: false,
+    item: {
+      id: input.id,
+      display_name: "Synthetic selected item",
+      item_group: "components_other",
+      availability_mode: "selected_assets",
+      current_asset_id: null,
+      archived_at: null,
+      version: 1,
+      selected_asset_ids: [uuid(91), uuid(92)],
+    },
+  };
+  const result = await service.saveMaintenanceItem(input);
+  assert.equal(result.status, "created");
+  assert.equal(result.item.id, input.id);
+  assert.equal(result.item.version, 1);
+  assert.equal(result.item.archivedAt, null);
+  assert.deepEqual(asPlain(result.applicability), {
+    mode: "selected_assets", currentAssetId: null, selectedAssetIds: [uuid(91), uuid(92)],
+  });
+  const rpc = client.control.calls.find((call) => call.rpc);
+  assert.equal(rpc.rpc, "save_maintenance_item");
+  assert.deepEqual(asPlain(rpc.payload), { p_request: normalized });
+  assert.equal(client.control.calls.some((call) => call.table === "maintenance_items"), false);
+});
+
+test("VEHICLES: Maintenance Item save validates groups, names, applicability and operation versions", async () => {
+  const { service, client } = setup();
+  const valid = {
+    operation: "create",
+    id: uuid(101),
+    displayName: "Valid item",
+    group: "routine",
+    availabilityMode: "all_assets",
+  };
+  for (const invalid of [
+    { ...valid, displayName: " \t " },
+    { ...valid, displayName: "x".repeat(101) },
+    { ...valid, group: "invalid" },
+    { ...valid, availabilityMode: "invalid" },
+    { ...valid, availabilityMode: "current_asset_only" },
+    { ...valid, availabilityMode: "selected_assets", selectedAssetIds: [] },
+    { ...valid, availabilityMode: "all_assets", selectedAssetIds: [uuid(1)] },
+    { ...valid, unknown: true },
+    { ...valid, expectedVersion: 1 },
+    { operation: "update", id: uuid(101), displayName: "Valid", group: "routine", availabilityMode: "all_assets" },
+    { operation: "archive", id: uuid(101) },
+  ]) {
+    await assert.rejects(service.saveMaintenanceItem(invalid), (error) => error.code === "validation_error");
+  }
+  assert.equal(client.control.calls.length, 0);
+});
+
+test("VEHICLES: Maintenance Item unknown outcome preserves generated IDs and full applicability for replay", async () => {
+  const { service, client } = setup();
+  client.control.rpcReject = Object.assign(new Error("response lost"), { code: "ETIMEDOUT" });
+  let unknown;
+  await assert.rejects(service.saveMaintenanceItem({
+    operation: "create",
+    displayName: "Synthetic retry item",
+    group: "fluids_drivetrain",
+    availabilityMode: "selected_assets",
+    selectedAssetIds: [uuid(112), uuid(111)],
+  }), (error) => {
+    unknown = error;
+    assert.equal(error.code, "unknown_outcome");
+    assert.match(error.retryDraft.id, /^[0-9a-f-]{36}$/i);
+    assert.match(error.retryDraft.requestId, /^[0-9a-f-]{36}$/i);
+    assert.deepEqual(asPlain(error.retryDraft.selectedAssetIds), [uuid(111), uuid(112)]);
+    return true;
+  });
+  const originalPayload = client.control.calls[0].payload;
+  client.control.rpcReject = null;
+  const request = originalPayload.p_request;
+  client.control.rpcResult = {
+    ok: true,
+    request_id: request.request_id,
+    operation: request.operation,
+    item_id: request.item_id,
+    replayed: true,
+    reconciled: false,
+    item: {
+      id: request.item_id,
+      display_name: request.display_name,
+      item_group: request.item_group,
+      availability_mode: request.availability_mode,
+      current_asset_id: null,
+      archived_at: null,
+      version: 1,
+      selected_asset_ids: request.selected_asset_ids,
+    },
+  };
+  const result = await service.saveMaintenanceItem(unknown.retryDraft);
+  assert.equal(result.replayed, true);
+  assert.deepEqual(asPlain(client.control.calls[1].payload), asPlain(originalPayload));
+});
+
+test("VEHICLES: Maintenance Item conflicts are mapped without exposing database details", async () => {
+  const { service, client } = setup();
+  client.control.rpcError = {
+    code: "P0001",
+    details: JSON.stringify({ code: "version_conflict", context: { item: "private" } }),
+    message: "private database detail",
+  };
+  await assert.rejects(service.saveMaintenanceItem({
+    operation: "update",
+    id: uuid(121),
+    requestId: uuid(122),
+    expectedVersion: 4,
+    displayName: "Synthetic update",
+    group: "routine",
+    availabilityMode: "all_assets",
+  }), (error) => {
+    assert.equal(error.code, "version_conflict");
+    assert.doesNotMatch(error.message, /private|database/);
+    assert.equal(error.requestId, uuid(122));
+    return true;
+  });
+});
+
 test("VEHICLES: list pagination is complete beyond the PostgREST page size", async () => {
   const rows = Array.from({ length: 510 }, (_, index) => makeAsset(uuid(index + 1), "none", `Asset ${index}`));
   const { service, client } = setup({ vehicles_assets: rows });
