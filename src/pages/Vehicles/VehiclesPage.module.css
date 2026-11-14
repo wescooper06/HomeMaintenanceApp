@@ -162,6 +162,71 @@
   box-shadow: var(--lm-shadow-overlay);
 }
 
+.assetsDialog {
+  width: min(58rem, calc(100vw - 32px));
+  max-height: min(48rem, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.assetManager {
+  display: grid;
+  grid-template-columns: minmax(13rem, 0.8fr) minmax(0, 1.2fr);
+  gap: var(--lm-space-6);
+  margin-top: var(--lm-space-5);
+}
+
+.managedAssetList {
+  display: grid;
+  max-height: 24rem;
+  overflow-y: auto;
+  margin-top: var(--lm-space-3);
+}
+
+.managedAsset {
+  display: grid;
+  min-height: var(--lm-control-desktop);
+  gap: var(--lm-space-1);
+  border: 0;
+  border-bottom: 1px solid var(--lm-color-border);
+  padding: var(--lm-space-3);
+  background: transparent;
+  color: var(--lm-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.managedAssetSelected {
+  border-inline-start: 3px solid var(--lm-color-primary);
+  background: var(--lm-color-surface-selected);
+}
+
+.managedAsset span {
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-secondary);
+}
+
+.managedAsset:focus-visible,
+.assetForm :focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
+.assetForm {
+  display: grid;
+  align-content: start;
+  gap: var(--lm-space-4);
+  min-width: 0;
+}
+
+.assetForm h3 {
+  margin: 0;
+}
+
+.assetForm .dialogActions {
+  margin-top: 0;
+}
+
 .dialog::backdrop {
   background: var(--lm-color-overlay);
 }
@@ -192,6 +257,10 @@
   }
 
   .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .assetManager {
     grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -49,20 +49,33 @@ function harness(overrides = {}) {
   const hookSlots = [];
   const refs = [];
   const effects = [];
-  const calls = { listAssets: 0, workspaces: [], templates: 0, saves: [] };
+  const calls = { listAssets: 0, workspaces: [], templates: 0, saves: [], creates: [] };
   let hookIndex = 0;
+  let refIndex = 0;
   let blockerPredicate;
   let nextRecordId = 900;
+  const assetStore = structuredClone(overrides.initialAssets ?? assets);
   let service = {
     listAssets: async () => {
       calls.listAssets += 1;
-      return assets;
+      return structuredClone(assetStore);
     },
     loadVehicleWorkspace: async (assetId) => {
       calls.workspaces.push(assetId);
-      return workspace(assets.find((asset) => asset.id === assetId), assetId === uuid(1)
+      return workspace(assetStore.find((asset) => asset.id === assetId), assetId === uuid(1)
         ? [record(12, "2026-02-01"), record(11, "2026-01-01")]
         : []);
+    },
+    createAsset: async (request) => {
+      calls.creates.push(structuredClone(request));
+      const created = {
+        id: request.id,
+        name: request.name,
+        usageUnit: request.usageUnit,
+        version: 1,
+      };
+      assetStore.push(created);
+      return { status: "created", requestId: request.requestId, asset: created };
     },
     createOngoingMaintenanceDraftTemplate: async (assetId) => {
       calls.templates += 1;
@@ -94,6 +107,11 @@ function harness(overrides = {}) {
     }),
     saveVehicleChanges: async (draft) => {
       calls.saves.push(structuredClone(draft));
+      if (draft.assetPatch && Object.keys(draft.assetPatch).length) {
+        const current = assetStore.find((asset) => asset.id === draft.assetId);
+        Object.assign(current, draft.assetPatch, { version: current.version + 1 });
+        return { status: "saved", assetVersion: current.version, entityVersions: {} };
+      }
       return { status: "saved", assetVersion: 5, entityVersions: { ongoing: {} } };
     },
     ...overrides,
@@ -103,14 +121,17 @@ function harness(overrides = {}) {
     reset() { blocker.state = "unblocked"; },
     proceed() { blocker.state = "unblocked"; blocker.proceeded = true; },
   };
-  const dialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };
+  const refObjects = [];
+  const dialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; }, focus() {} };
+  const manageDialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; }, focus() {} };
+  const focusCounts = { managedName: 0, manageButton: 0 };
   const context = {
-    element: (type, props, ...children) => ({
-      type,
-      props: props || {},
-      children: (children.length ? children : [props?.children]).flat(Infinity)
-        .filter((child) => child !== null && child !== undefined && child !== false),
-    }),
+    element: (type, props, ...children) => {
+      const renderedChildren = (children.length ? children : [props?.children]).flat(Infinity)
+        .filter((child) => child !== null && child !== undefined && child !== false);
+      if (typeof type === "function") return type({ ...props, children: renderedChildren });
+      return { type, props: props || {}, children: renderedChildren };
+    },
     fragment: "fragment",
     PageHeader: ({ id, title, subtitle, actions }) => ({
       type: "header", props: { id }, children: [title, subtitle, actions].filter(Boolean),
@@ -120,6 +141,7 @@ function harness(overrides = {}) {
     createVehicleChangesDraft: (...args) => service.createVehicleChangesDraft(...args),
     buildRecordDeleteOperation: (...args) => service.buildRecordDeleteOperation(...args),
     crypto: { randomUUID: () => uuid(nextRecordId++) },
+    document: { activeElement: { focus() {} } },
     window: { addEventListener() {}, removeEventListener() {} },
     useState(initial) {
       const index = hookIndex++;
@@ -129,8 +151,16 @@ function harness(overrides = {}) {
       }];
     },
     useRef(initial) {
-      const index = hookIndex++;
-      if (!(index in refs)) refs[index] = { current: initial === null ? dialog : initial };
+      hookIndex += 1;
+      const index = refIndex++;
+      if (!(index in refs)) {
+        const current = index === 1 ? dialog : index === 2 ? manageDialog
+          : index === 3 ? { focus() { focusCounts.managedName += 1; } }
+            : index === 4 ? { focus() { focusCounts.manageButton += 1; } }
+              : initial;
+        refs[index] = { current };
+        refObjects[index] = refs[index];
+      }
       return refs[index];
     },
     useEffect(effect, dependencies) {
@@ -152,6 +182,7 @@ function harness(overrides = {}) {
   let tree;
   function render() {
     hookIndex = 0;
+    refIndex = 0;
     tree = Page();
     effects.splice(0).forEach((run) => run());
     return tree;
@@ -179,6 +210,7 @@ function harness(overrides = {}) {
   render();
   return {
     render, settle, nodes, text: (node = tree) => text(node), find, button, input, calls, blocker, dialog,
+    manageDialog, focusCounts, assetStore,
     shouldBlock: () => blockerPredicate(),
     setService(next) { service = next; context.vehiclesService = next; },
   };
@@ -200,10 +232,11 @@ test("Vehicles route resolves by path and hash and renders the authenticated des
 });
 
 test("No assets renders a stable empty state without calling the workspace loader", async () => {
-  const ui = harness({ listAssets: async () => [] });
+  const ui = harness({ initialAssets: [] });
   await ui.settle();
   assert.match(ui.text(), /No vehicles yet/);
-  assert.match(ui.text(), /Asset management is not available in this phase/);
+  assert.match(ui.text(), /No vehicles yet/);
+  assert(ui.button("Manage Assets"));
   assert.equal(ui.calls.workspaces.length, 0);
   assert.equal(ui.button("Add Ongoing Record"), undefined);
 });
@@ -215,6 +248,303 @@ test("Asset loading failure is distinct from a legitimate empty asset list", asy
   assert.doesNotMatch(ui.text(), /private backend detail/);
   assert.doesNotMatch(ui.text(), /No vehicles yet/);
   assert(ui.button("Retry loading assets"));
+});
+
+test("Manage Assets is available in the empty state and opens an accessible create form", async () => {
+  const ui = harness({ initialAssets: [] });
+  await ui.settle();
+  assert(ui.button("Manage Assets"));
+  assert(ui.button("Add an asset"));
+  assert.match(ui.text(), /No vehicles yet/);
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.manageDialog.open, true);
+  assert.match(ui.text(), /Manage Assets/);
+  assert.match(ui.text(), /No saved assets yet/);
+  assert.equal(ui.input("vehicles-managed-asset-name").props["aria-invalid"], false);
+  assert(ui.nodes().some((node) => node.type === "label" && ui.text(node).includes("Asset name")));
+  assert(ui.nodes().some((node) => node.type === "label" && ui.text(node).includes("Usage Unit")));
+  assert(ui.focusCounts.managedName > 0);
+  assert.equal(ui.nodes().some((node) => ui.text(node) === "Delete Asset"), false);
+});
+
+test("Manage Assets lists persisted assets and focuses the selected editable asset", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Synthetic car");
+  assert.equal(ui.input("vehicles-managed-asset-unit").props.value, "miles");
+  const list = ui.find((node) => node.props.role === "list" && node.props["aria-label"] === "Saved assets");
+  assert(list);
+  assert.match(ui.text(list), /Synthetic car/);
+  assert.match(ui.text(list), /Synthetic truck/);
+  assert(ui.focusCounts.managedName > 0);
+});
+
+test("Create asset drafts preserve one UUID and request ID and select the confirmed asset", async () => {
+  const ui = harness({ initialAssets: [] });
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  const initialId = ui.input("vehicles-managed-asset-name");
+  assert.equal(ui.button("Save Asset").props.disabled, false);
+  initialId.props.onChange({ target: { value: "  Synthetic engine  " } });
+  ui.render();
+  ui.input("vehicles-managed-asset-unit").props.onChange({ target: { value: "hours" } });
+  ui.render();
+  const draftId = ui.input("vehicles-managed-asset-name").props.value;
+  assert.equal(draftId, "  Synthetic engine  ");
+  const form = ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm"));
+  await form.props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+  assert.equal(ui.calls.creates.length, 1);
+  assert.equal(ui.calls.creates[0].name, "Synthetic engine");
+  assert.equal(ui.calls.creates[0].usageUnit, "hours");
+  assert.match(ui.calls.creates[0].id, /^[0-9a-f-]{36}$/i);
+  assert.match(ui.calls.creates[0].requestId, /^[0-9a-f-]{36}$/i);
+  assert.equal(ui.manageDialog.open, false);
+  assert.equal(ui.input("vehicles-asset-select").props.value, ui.calls.creates[0].id);
+  assert.equal(ui.calls.workspaces.at(-1), ui.calls.creates[0].id);
+});
+
+test("Confirmed asset creation remains reconciled and reports a failed list refresh", async () => {
+  let listReads = 0;
+  let ui;
+  ui = harness({
+    initialAssets: [],
+    listAssets: async () => {
+      listReads += 1;
+      if (listReads > 1) throw new Error("private read failure");
+      return structuredClone(ui.assetStore);
+    },
+  });
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Reconciled engine" } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm"))
+    .props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+  assert.equal(ui.assetStore.length, 1);
+  assert.equal(ui.input("vehicles-asset-select").props.value, ui.assetStore[0].id);
+  assert.match(ui.text(), /asset was saved, but the asset list could not be refreshed/i);
+  assert(ui.button("Retry loading assets"));
+  assert.doesNotMatch(ui.text(), /private read failure/);
+});
+
+test("New asset accepts miles, hours, and none while cancel leaves persisted assets unchanged", async () => {
+  for (const [index, unit] of ["miles", "hours", "none"].entries()) {
+    const ui = harness({ initialAssets: [] });
+    await ui.settle();
+    ui.button("Manage Assets").props.onClick();
+    ui.render();
+    ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: `Draft engine ${index}` } });
+    ui.render();
+    ui.input("vehicles-managed-asset-unit").props.onChange({ target: { value: unit } });
+    ui.render();
+    if (index === 0) {
+      ui.button("Cancel").props.onClick();
+      ui.render();
+      assert.equal(ui.calls.creates.length, 0);
+      assert.equal(ui.assetStore.length, 0);
+      assert.match(ui.text(), /edits canceled/i);
+    } else {
+      await ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm"))
+        .props.onSubmit({ preventDefault() {} });
+      assert.equal(ui.calls.creates[0].usageUnit, unit);
+    }
+  }
+});
+
+test("Renaming or changing Usage Unit uses the atomic save path with the expected asset version", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "  Synthetic truck  " } });
+  ui.render();
+  ui.input("vehicles-managed-asset-unit").props.onChange({ target: { value: "none" } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm"))
+    .props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+  assert.equal(ui.calls.creates.length, 0);
+  assert.equal(ui.calls.saves.length, 1);
+  assert.equal(ui.calls.saves[0].assetId, uuid(1));
+  assert.equal(ui.calls.saves[0].expectedAssetVersion, 4);
+  assert.deepEqual(ui.calls.saves[0].assetPatch, { name: "Synthetic truck", usageUnit: "none" });
+  assert.equal(ui.assetStore.find((asset) => asset.id === uuid(1)).version, 5);
+  assert.equal(ui.assetStore.find((asset) => asset.id === uuid(1)).usageUnit, "none");
+  assert.equal(ui.assetStore.find((asset) => asset.id === uuid(1)).name, "Synthetic truck");
+});
+
+test("Asset version conflict preserves the draft and reports a safe conflict message", async () => {
+  const ui = harness({
+    saveVehicleChanges: async (draft) => {
+      ui.calls.saves.push(structuredClone(draft));
+      throw { code: "version_conflict", message: "private database detail" };
+    },
+  });
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Conflict edit" } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm"))
+    .props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.equal(ui.calls.saves.length, 1);
+  assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Conflict edit");
+  assert.match(ui.text(), /changed elsewhere/);
+  assert.doesNotMatch(ui.text(), /private database detail/);
+});
+
+test("Cancel restores persisted asset values and no-op Save never calls persistence", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Temporary name" } });
+  ui.render();
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Synthetic car");
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Blank asset names are announced and rejected before persistence", async () => {
+  const ui = harness({ listAssets: async () => [] });
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "   " } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm"))
+    .props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.equal(ui.calls.creates.length, 0);
+  assert.match(ui.text(), /nonblank asset name/i);
+  assert(ui.nodes().some((node) => node.props.role === "alert"));
+  assert.equal(ui.input("vehicles-managed-asset-name").props.maxLength, "120");
+});
+
+test("Opening Manage Assets protects a dirty Ongoing Maintenance session", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-05" } });
+  ui.render();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.manageDialog.open, false);
+  assert.match(ui.text(), /Discard Ongoing Maintenance edits and manage assets/);
+  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-05");
+  ui.button("Discard and continue").props.onClick();
+  ui.render();
+  assert.equal(ui.manageDialog.open, true);
+  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-01");
+});
+
+test("Dirty asset close requires explicit discard and returns focus to Manage Assets", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Unsaved rename" } });
+  ui.render();
+  ui.button("Close").props.onClick();
+  ui.render();
+  assert.equal(ui.manageDialog.open, true);
+  assert.match(ui.text(), /Discard asset edits/);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.manageDialog.open, true);
+  ui.button("Close").props.onClick();
+  ui.render();
+  ui.button("Discard and continue").props.onClick();
+  ui.render();
+  assert.equal(ui.manageDialog.open, false);
+  assert(ui.focusCounts.manageButton > 0);
+});
+
+test("Asset creation prevents duplicate submissions", async () => {
+  let release;
+  const ui = harness({
+    initialAssets: [],
+    createAsset: (request) => {
+      ui.calls.creates.push(structuredClone(request));
+      return new Promise((resolve) => {
+        release = () => resolve({ status: "created", asset: { ...request, version: 1 } });
+      });
+    },
+  });
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Pending engine" } });
+  ui.render();
+  const submit = ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm")).props.onSubmit;
+  const first = submit({ preventDefault() {} });
+  const second = submit({ preventDefault() {} });
+  await flush();
+  assert.equal(ui.calls.creates.length, 1);
+  release();
+  await first;
+  await second;
+});
+
+test("Create errors are safe and unknown or retryable outcomes retry the same IDs", async () => {
+  for (const code of ["asset_id_conflict", "request_id_payload_mismatch", "version_conflict",
+    "authorization_error", "not_found", "retryable_transport", "unknown_outcome"]) {
+    let attempts = 0;
+    const ui = harness({
+      initialAssets: [],
+      createAsset: async (request) => {
+        attempts += 1;
+        ui.calls.creates.push(structuredClone(request));
+        if (attempts === 1) throw { code, message: "private PostgreSQL detail",
+          retryDraft: { id: request.id, requestId: request.requestId, name: request.name, usageUnit: request.usageUnit } };
+        const asset = { id: request.id, name: request.name, usageUnit: request.usageUnit, version: 1 };
+        ui.assetStore.push(asset);
+        return { status: "created", asset };
+      },
+    });
+    await ui.settle();
+    ui.button("Manage Assets").props.onClick();
+    ui.render();
+    ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Retry engine" } });
+    ui.render();
+    const submit = () => ui.find((node) => node.type === "form" && node.props.className?.includes("assetForm"))
+      .props.onSubmit({ preventDefault() {} });
+    await submit();
+    ui.render();
+    const expectedMessage = {
+      unknown_outcome: /outcome is unknown/,
+      retryable_transport: /connection issue/,
+      asset_id_conflict: /already assigned/,
+      request_id_payload_mismatch: /already used for different asset data/,
+      version_conflict: /changed elsewhere/,
+      authorization_error: /session cannot save/,
+      not_found: /no longer available/,
+    }[code];
+    assert.match(ui.text(), expectedMessage);
+    assert.doesNotMatch(ui.text(), /private PostgreSQL detail/);
+    assert(ui.button("Retry same request"));
+    await ui.button("Retry same request").props.onClick();
+    await ui.settle();
+    assert.equal(ui.calls.creates.length, 2);
+    assert.equal(ui.calls.creates[0].id, ui.calls.creates[1].id);
+    assert.equal(ui.calls.creates[0].requestId, ui.calls.creates[1].requestId);
+  }
+});
+
+test("Manage Assets does not expose database writes or Delete Asset", () => {
+  const source = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx"), "utf8");
+  assert.doesNotMatch(source, /\.from\s*\(|\.insert\s*\(|\.update\s*\(|\.delete\s*\(|create_vehicle_asset/);
+  assert.doesNotMatch(source, />\s*Delete Asset\s*</);
 });
 
 test("Workspace selects newest history and preserves historical snapshots and true/false states", async () => {
@@ -229,7 +559,8 @@ test("Workspace selects newest history and preserves historical snapshots and tr
     ["Performed: Second snapshot", false],
   ]);
   assert.doesNotMatch(ui.text(), /Current applicable item/);
-  assert.equal(ui.find((node) => node.type === "dialog").props["aria-labelledby"], "vehicles-confirm-title");
+  assert.equal(ui.find((node) => node.type === "dialog" && node.props["aria-labelledby"] === "vehicles-confirm-title")
+    .props["aria-labelledby"], "vehicles-confirm-title");
 });
 
 test("Empty Ongoing list is shown when a loaded asset has no history", async () => {

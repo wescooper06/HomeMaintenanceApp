@@ -16,6 +16,8 @@ const serviceErrorMessages = {
   version_conflict: "Vehicles data changed elsewhere. Cancel or reload before saving again.",
   authorization_error: "Your session cannot save these changes. Sign in again.",
   not_found: "The asset or record is no longer available. Reload the workspace.",
+  asset_id_conflict: "This asset ID is already assigned to incompatible data. Keep this draft and contact support.",
+  request_id_payload_mismatch: "This request ID was already used for different asset data. Keep this draft and contact support.",
   item_archived_or_unavailable: "A Maintenance Item is no longer available for this asset. Reload the workspace.",
   retryable_transport: "The save could not be confirmed because of a connection issue.",
   unknown_outcome: "The save outcome is unknown. Retry the exact request before making more changes.",
@@ -52,6 +54,32 @@ function createDateToday() {
   return localDate.toISOString().slice(0, 10);
 }
 
+function assetErrorMessage(error) {
+  if (error?.code === "validation_error") return "Review the asset name and Usage Unit and try again.";
+  if (error?.code === "unknown_outcome") {
+    return "The create outcome is unknown. Retry the same request; its asset ID will be preserved.";
+  }
+  if (error?.code === "retryable_transport") {
+    return "The create request could not be completed because of a connection issue. Retry the same request.";
+  }
+  return serviceErrorMessages[error?.code] || "Asset changes could not be confirmed. Your draft is preserved.";
+}
+
+function persistedAssetDraft(asset) {
+  return { id: asset.id, name: asset.name, usageUnit: asset.usageUnit, version: asset.version, isNew: false };
+}
+
+function createAssetDraft() {
+  return {
+    id: crypto.randomUUID(),
+    requestId: crypto.randomUUID(),
+    name: "",
+    usageUnit: "miles",
+    version: 1,
+    isNew: true,
+  };
+}
+
 export default function VehiclesPage() {
   const [assets, setAssets] = useState(null);
   const [assetError, setAssetError] = useState("");
@@ -70,8 +98,19 @@ export default function VehiclesPage() {
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [retryDraft, setRetryDraft] = useState(null);
+  const [manageAssetsOpen, setManageAssetsOpen] = useState(false);
+  const [manageAssetId, setManageAssetId] = useState("");
+  const [manageDraft, setManageDraft] = useState(null);
+  const [manageRetryDraft, setManageRetryDraft] = useState(null);
+  const [manageSaving, setManageSaving] = useState(false);
+  const [manageError, setManageError] = useState("");
+  const [manageStatus, setManageStatus] = useState("");
   const saveLock = useRef(false);
   const dialogRef = useRef(null);
+  const assetsDialogRef = useRef(null);
+  const assetsNameRef = useRef(null);
+  const manageButtonRef = useRef(null);
+  const manageSaveLock = useRef(false);
 
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
   const dirty = deletedRecords.length > 0 || workingRecords.some((record) => (
@@ -124,6 +163,16 @@ export default function VehiclesPage() {
   }, [confirmation, blocker.state]);
 
   useEffect(() => {
+    const dialog = assetsDialogRef.current;
+    if (manageAssetsOpen) {
+      if (dialog && !dialog.open) dialog.showModal();
+      assetsNameRef.current?.focus();
+    } else if (dialog?.open) {
+      dialog.close();
+    }
+  }, [manageAssetsOpen, manageAssetId]);
+
+  useEffect(() => {
     if (!dirty && !saving && !saveUncertain) return undefined;
     const beforeUnload = (event) => {
       event.preventDefault();
@@ -164,6 +213,164 @@ export default function VehiclesPage() {
     setWorkspaceError("");
     setWorkspaceLoading(true);
     setWorkspaceAttempt((attempt) => attempt + 1);
+  }
+
+  function openManageAssets() {
+    if (saving || saveUncertain) return;
+    if (dirty) {
+      setConfirmation({ kind: "manage-assets-open" });
+      return;
+    }
+    beginManageAssets();
+  }
+
+  function beginManageAssets() {
+    setManageAssetId(assets?.[0]?.id || "");
+    setManageDraft(assets?.length ? persistedAssetDraft(assets[0]) : createAssetDraft());
+    setManageRetryDraft(null);
+    setManageError("");
+    setManageStatus("");
+    setManageAssetsOpen(true);
+  }
+
+  function manageDraftIsDirty() {
+    if (!manageDraft) return false;
+    if (manageDraft.isNew) return true;
+    const original = assets?.find((asset) => asset.id === manageDraft.id);
+    return !original || manageDraft.name !== original.name || manageDraft.usageUnit !== original.usageUnit;
+  }
+
+  function requestCloseManageAssets() {
+    if (manageSaving) return;
+    if (manageDraftIsDirty() || manageRetryDraft) {
+      setConfirmation({ kind: "manage-assets-close" });
+      return;
+    }
+    closeManageAssets();
+  }
+
+  function closeManageAssets() {
+    setManageAssetsOpen(false);
+    setManageDraft(null);
+    setManageRetryDraft(null);
+    setManageError("");
+    setManageStatus("");
+    manageButtonRef.current?.focus();
+  }
+
+  function chooseManageAsset(nextDraft) {
+    if (manageSaving || nextDraft.id === manageDraft?.id) return;
+    if (manageDraftIsDirty() || manageRetryDraft) {
+      setConfirmation({ kind: "manage-assets-switch", value: nextDraft });
+      return;
+    }
+    setManageAssetId(nextDraft.id);
+    setManageDraft(nextDraft);
+    setManageRetryDraft(null);
+    setManageError("");
+    setManageStatus("");
+  }
+
+  function editManagedAsset(update) {
+    setManageDraft((current) => current ? { ...current, ...update } : current);
+    setManageError("");
+    setManageStatus("");
+  }
+
+  async function refreshAssetsAfterSave(savedAsset) {
+    let refreshed;
+    let listRefreshed = true;
+    try {
+      refreshed = await vehiclesService.listAssets();
+      if (!refreshed.some((asset) => asset.id === savedAsset.id)) {
+        refreshed.push(savedAsset);
+        listRefreshed = false;
+      }
+    } catch {
+      refreshed = (assets || []).filter((asset) => asset.id !== savedAsset.id);
+      refreshed.push(savedAsset);
+      listRefreshed = false;
+    }
+    setAssets(refreshed);
+    if (selectedAssetId === savedAsset.id) {
+      try {
+        const freshWorkspace = await vehiclesService.loadVehicleWorkspace(savedAsset.id);
+        const records = copyRecords(freshWorkspace.ongoingMaintenanceRecords);
+        setWorkspace(freshWorkspace);
+        setBaselineRecords(records);
+        setWorkingRecords(copyRecords(records));
+        setDeletedRecords([]);
+        setSelectedRecordId(vehiclesService.newestRecord(records)?.id || "");
+        setWorkspaceError("");
+      } catch {
+        setWorkspace((current) => current?.asset.id === savedAsset.id
+          ? { ...current, asset: savedAsset } : current);
+        setWorkspaceError("Asset changes were saved. Reload the workspace to refresh its details.");
+      }
+    }
+    return listRefreshed;
+  }
+
+  async function saveManagedAsset(event) {
+    event?.preventDefault();
+    if (!manageDraft || manageSaveLock.current || manageSaving || !manageDraftIsDirty()) return;
+    const name = manageDraft.name.trim();
+    if (!name || [...name].length > 120 || !["miles", "hours", "none"].includes(manageDraft.usageUnit)) {
+      setManageError("Enter a nonblank asset name of 1–120 characters and choose a supported Usage Unit.");
+      return;
+    }
+    manageSaveLock.current = true;
+    setManageSaving(true);
+    setManageError("");
+    setManageStatus(manageDraft.isNew ? "Creating asset..." : "Saving asset changes...");
+    try {
+      let savedAsset;
+      if (manageDraft.isNew) {
+        const result = await vehiclesService.createAsset({
+          id: manageDraft.id,
+          requestId: manageRetryDraft?.requestId || manageDraft.requestId,
+          name,
+          usageUnit: manageDraft.usageUnit,
+        });
+        savedAsset = result.asset;
+      } else {
+        const current = assets?.find((asset) => asset.id === manageDraft.id);
+        if (!current) throw { code: "not_found" };
+        const draft = createVehicleChangesDraft({ asset: current });
+        draft.assetPatch = { name, usageUnit: manageDraft.usageUnit };
+        const retry = manageRetryDraft || draft;
+        const result = await vehiclesService.saveVehicleChanges(retry);
+        if (result.status !== "saved") {
+          setManageStatus("There are no asset changes to save.");
+          return;
+        }
+        savedAsset = { ...current, name, usageUnit: manageDraft.usageUnit, version: result.assetVersion };
+      }
+      const assetsRefreshed = await refreshAssetsAfterSave(savedAsset);
+      if (!assetsRefreshed) {
+        setAssetError("The asset was saved, but the asset list could not be refreshed. Retry loading assets.");
+      }
+      setManageStatus("Asset saved.");
+      if (manageDraft.isNew) {
+        setSelectedAssetId(savedAsset.id);
+        setWorkspace(null);
+        setWorkspaceLoading(true);
+        setWorkspaceError("");
+      }
+      closeManageAssets();
+    } catch (error) {
+      if (error?.retryDraft) setManageRetryDraft(error.retryDraft);
+      setManageError(assetErrorMessage(error));
+      setManageStatus("");
+    } finally {
+      manageSaveLock.current = false;
+      setManageSaving(false);
+    }
+  }
+
+  function retryManagedAsset() {
+    if (!manageRetryDraft || manageSaveLock.current) return;
+    saveManagedAsset();
   }
 
   function selectRecord(recordId) {
@@ -231,7 +438,18 @@ export default function VehiclesPage() {
     const action = confirmation;
     setConfirmation(null);
     if (!action) return;
-    if (action.kind === "asset") {
+    if (action.kind === "manage-assets-open") {
+      resetDraft();
+      beginManageAssets();
+    } else if (action.kind === "manage-assets-close") {
+      closeManageAssets();
+    } else if (action.kind === "manage-assets-switch") {
+      setManageAssetId(action.value.id);
+      setManageDraft(action.value);
+      setManageRetryDraft(null);
+      setManageError("");
+      setManageStatus("");
+    } else if (action.kind === "asset") {
       resetDraft();
       setWorkspace(null);
       setWorkspaceLoading(true);
@@ -370,7 +588,13 @@ export default function VehiclesPage() {
   const selectedRecord = workingRecords.find((record) => record.id === selectedRecordId);
   const confirmationTitle = confirmation?.kind === "delete"
     ? "Queue deletion of this Ongoing record?"
-    : confirmation?.kind === "asset"
+    : confirmation?.kind === "manage-assets-open"
+      ? "Discard Ongoing Maintenance edits and manage assets?"
+      : confirmation?.kind === "manage-assets-close"
+        ? "Discard asset edits?"
+        : confirmation?.kind === "manage-assets-switch"
+          ? "Discard asset edits and switch?"
+          : confirmation?.kind === "asset"
       ? "Discard changes and switch assets?"
       : confirmation?.kind === "record"
         ? "Discard changes and switch records?"
@@ -382,14 +606,17 @@ export default function VehiclesPage() {
     <main className={styles.page}>
       <PageHeader id="vehicles-page-title" title="Vehicles"
         subtitle="Ongoing Maintenance records for your vehicles."
-        actions={dirty && (
+        actions={(
           <>
-            <button type="button" className="lm-button lm-button--secondary"
+            <button ref={manageButtonRef} type="button" className="lm-button lm-button--secondary"
+              onClick={openManageAssets} disabled={saving || saveUncertain || manageSaving}>Manage Assets</button>
+            {dirty && <button type="button" className="lm-button lm-button--secondary"
               onClick={resetDraft} disabled={saving || saveUncertain}>Cancel Changes</button>
-            <button type="submit" form="vehicles-edit-form" className="lm-button lm-button--primary"
+            }
+            {dirty && <button type="submit" form="vehicles-edit-form" className="lm-button lm-button--primary"
               disabled={!dirty || saving || workspaceLoading || saveUncertain}>
               {saving ? "Saving..." : "Save Changes"}
-            </button>
+            </button>}
           </>
         )} />
 
@@ -414,7 +641,9 @@ export default function VehiclesPage() {
       {assets?.length === 0 && !assetError && <section className={`lm-surface ${styles.empty}`}
         aria-labelledby="vehicles-no-assets-title">
         <h2 id="vehicles-no-assets-title">No vehicles yet</h2>
-        <p>Vehicles will appear here when an asset is available. Asset management is not available in this phase.</p>
+        <p>Add a vehicle or small engine to begin its maintenance workspace.</p>
+        <button ref={manageButtonRef} type="button" className="lm-button lm-button--primary"
+          onClick={openManageAssets} disabled={saving || saveUncertain}>Add an asset</button>
       </section>}
 
       {assets?.length > 0 && (workspaceLoading || !workspace) && !workspaceError
@@ -553,6 +782,84 @@ export default function VehiclesPage() {
         </>
       )}
 
+      <dialog ref={assetsDialogRef} className={`${styles.dialog} ${styles.assetsDialog}`}
+        aria-labelledby="vehicles-manage-assets-title" onCancel={(event) => {
+          event.preventDefault();
+          requestCloseManageAssets();
+        }}>
+        <div className={styles.detailHeading}>
+          <div>
+            <h2 id="vehicles-manage-assets-title">Manage Assets</h2>
+            <p>Vehicles and small engines share the same asset list.</p>
+          </div>
+          <button type="button" className="lm-button lm-button--secondary" onClick={requestCloseManageAssets}
+            disabled={manageSaving} aria-label="Close Manage Assets">Close</button>
+        </div>
+        <div className={styles.assetManager}>
+          <section aria-label="Assets">
+            <div className={styles.sectionHeading}>
+              <h3>Assets</h3>
+              <button type="button" className="lm-button lm-button--secondary" onClick={() => {
+                chooseManageAsset(createAssetDraft());
+              }} disabled={manageSaving || Boolean(manageRetryDraft)}>Add Asset</button>
+            </div>
+            {assets?.length
+              ? <div className={styles.managedAssetList} role="list" aria-label="Saved assets">
+                {assets.map((asset) => <button key={asset.id} type="button" role="listitem"
+                  className={`${styles.managedAsset} ${manageAssetId === asset.id ? styles.managedAssetSelected : ""}`}
+                  aria-pressed={manageAssetId === asset.id}
+                  onClick={() => chooseManageAsset(persistedAssetDraft(asset))}
+                  disabled={manageSaving || Boolean(manageRetryDraft)}>
+                  <strong>{asset.name}</strong><span>{asset.usageUnit}</span>
+                </button>)}
+              </div>
+              : <p className="lm-empty-state">No saved assets yet.</p>}
+          </section>
+          {manageDraft && <form className={styles.assetForm} onSubmit={saveManagedAsset} noValidate>
+            <h3>{manageDraft.isNew ? "New Asset" : "Edit Asset"}</h3>
+            <label className="lm-form-field" htmlFor="vehicles-managed-asset-name">
+              <span className="lm-form-label">Asset name</span>
+              <input ref={assetsNameRef} id="vehicles-managed-asset-name" className="lm-form-control"
+                type="text" maxLength="120" required value={manageDraft.name}
+                aria-invalid={Boolean(manageError && (!manageDraft.name.trim() || [...manageDraft.name.trim()].length > 120))}
+                onChange={(event) => editManagedAsset({ name: event.target.value })}
+                disabled={manageSaving || Boolean(manageRetryDraft)} />
+            </label>
+            <label className="lm-form-field" htmlFor="vehicles-managed-asset-unit">
+              <span className="lm-form-label">Usage Unit</span>
+              <select id="vehicles-managed-asset-unit" className="lm-form-control"
+                value={manageDraft.usageUnit} onChange={(event) => editManagedAsset({ usageUnit: event.target.value })}
+                disabled={manageSaving || Boolean(manageRetryDraft)}>
+                <option value="miles">Miles</option>
+                <option value="hours">Hours</option>
+                <option value="none">None</option>
+              </select>
+            </label>
+            {manageError && <p className="lm-feedback lm-feedback--error" role="alert">{manageError}</p>}
+            {manageStatus && <p className="lm-feedback" role="status" aria-live="polite">{manageStatus}</p>}
+            <div className={styles.dialogActions}>
+              <button type="button" className="lm-button lm-button--secondary" onClick={() => {
+                if (manageDraft.isNew) {
+                  setManageDraft(assets?.length ? persistedAssetDraft(assets[0]) : createAssetDraft());
+                  setManageAssetId(assets?.[0]?.id || "");
+                } else {
+                  setManageDraft(persistedAssetDraft(assets.find((asset) => asset.id === manageDraft.id)));
+                }
+                setManageRetryDraft(null);
+                setManageError("");
+                setManageStatus("Asset edits canceled. Saved values are restored.");
+              }} disabled={manageSaving || Boolean(manageRetryDraft)}>Cancel</button>
+              {manageRetryDraft && <button type="button" className="lm-button lm-button--secondary"
+                onClick={retryManagedAsset} disabled={manageSaving}>Retry same request</button>}
+              <button type="submit" className="lm-button lm-button--primary"
+                disabled={manageSaving || Boolean(manageRetryDraft) || !manageDraftIsDirty()}>
+                {manageSaving ? "Saving..." : manageDraft.isNew ? "Save Asset" : "Save Changes"}
+              </button>
+            </div>
+          </form>}
+        </div>
+      </dialog>
+
       <dialog ref={dialogRef} className={styles.dialog} aria-labelledby="vehicles-confirm-title"
         onCancel={(event) => {
           event.preventDefault();
@@ -562,6 +869,8 @@ export default function VehiclesPage() {
         <h2 id="vehicles-confirm-title">{confirmationTitle}</h2>
         <p>{confirmation?.kind === "delete"
           ? "The record will be removed from the draft and deleted only after Save Changes."
+          : confirmation?.kind?.startsWith("manage-assets")
+            ? "Unsaved changes will be discarded only if you choose the discard action. No asset is removed from the account."
           : saveUncertain
             ? "Keep this request and its generated IDs unchanged. Retry the same save to confirm its outcome."
             : saving
