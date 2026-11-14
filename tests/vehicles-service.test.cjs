@@ -635,7 +635,10 @@ test("VEHICLES: change draft no-op avoids RPC and complex changes map explicitly
     }],
     recommendedOperations: [{ action: "create", id: uuid(73), serviceDate: "2026-11-02", usageReadingUnit: "none", description: "Synthetic recommendation" }],
     completedOperations: [{ action: "create", id: uuid(74), serviceDate: "2026-11-03", usageReadingUnit: "none", serviceDescription: "Synthetic completed" }],
-    intervalOperations: [{ action: "update", id: uuid(75), expectedVersion: 2, intervalValue: 50, intervalUnit: "hours" }],
+    intervalOperations: [{
+      action: "update", id: uuid(75), expectedVersion: 2, maintenanceItemId: uuid(79),
+      intervalValue: 50, intervalUnit: "hours", comments: "Synthetic interval",
+    }],
     keyInformationOperation: { action: "update", id: uuid(76), expectedVersion: 4, document: keyDocument },
     linkOperations: [{ action: "create", id: uuid(77), url: "https://example.test/manual", displayTitle: "Manual", sortOrder: 1 }],
     maintenanceItemOperations: [{ action: "create", id: uuid(78), displayName: "Synthetic catalog item", group: "routine", availabilityMode: "all_assets" }],
@@ -661,6 +664,10 @@ test("VEHICLES: change draft no-op avoids RPC and complex changes map explicitly
   assert.equal(rpc.payload.recommended_operations[0].service_date, "2026-11-02");
   assert.equal(rpc.payload.completed_operations[0].service_date, "2026-11-03");
   assert.equal(rpc.payload.interval_operations[0].expected_version, 2);
+  assert.equal(rpc.payload.interval_operations[0].maintenance_item_id, uuid(79));
+  assert.equal(rpc.payload.interval_operations[0].interval_value, 50);
+  assert.equal(rpc.payload.interval_operations[0].interval_unit, "hours");
+  assert.equal(rpc.payload.interval_operations[0].comments, "Synthetic interval");
   assert.equal(rpc.payload.key_information_operation.document.blocks[0].runs[0].text, "Synthetic");
   assert.equal(rpc.payload.link_operations[0].display_title, "Manual");
   assert.deepEqual(asPlain(rpc.payload.availability_operations[0]), {
@@ -674,6 +681,10 @@ test("VEHICLES: unknown save outcome preserves request and entity IDs for explic
   const draft = {
     assetId: uuid(1), expectedAssetVersion: 3,
     ongoingOperations: [{ action: "create", id: uuid(90), serviceDate: "2026-11-01", usageReadingUnit: "none", items: [] }],
+    intervalOperations: [{
+      action: "create", id: uuid(91), maintenanceItemId: uuid(92),
+      intervalValue: 5500, intervalUnit: "miles", comments: "Synthetic interval",
+    }],
   };
   client.control.rpcReject = Object.assign(new Error("network response lost"), { code: "ETIMEDOUT" });
   let unknown;
@@ -682,17 +693,28 @@ test("VEHICLES: unknown save outcome preserves request and entity IDs for explic
     assert.equal(error.code, "unknown_outcome");
     assert.equal(error.requestId, error.retryDraft.requestId);
     assert.equal(error.retryDraft.ongoingOperations[0].id, uuid(90));
+    assert.deepEqual(asPlain(error.retryDraft.intervalOperations[0]), {
+      action: "create",
+      id: uuid(91),
+      maintenanceItemId: uuid(92),
+      intervalValue: 5500,
+      intervalUnit: "miles",
+      comments: "Synthetic interval",
+    });
     return true;
   });
   client.control.rpcReject = null;
   client.control.rpcResult = {
     ok: true, request_id: unknown.requestId, replayed: true, asset_id: uuid(1), asset_version: 4,
-    entity_versions: {}, created_ids: { ongoing: [uuid(90)] }, deleted_ids: {}, affected_asset_versions: {},
+    entity_versions: { intervals: { [uuid(91)]: 1 } },
+    created_ids: { ongoing: [uuid(90)], intervals: [uuid(91)] }, deleted_ids: {}, affected_asset_versions: {},
   };
   const result = await service.saveVehicleChanges(unknown.retryDraft);
   assert.equal(result.replayed, true);
   assert.equal(client.control.calls[0].payload.request_id, client.control.calls[1].payload.request_id);
   assert.equal(client.control.calls[0].payload.ongoing_operations[0].id, client.control.calls[1].payload.ongoing_operations[0].id);
+  assert.deepEqual(asPlain(client.control.calls[0].payload.interval_operations),
+    asPlain(client.control.calls[1].payload.interval_operations));
 });
 
 test("VEHICLES: structured RPC conflicts are safe application errors, not unknown outcomes", async () => {

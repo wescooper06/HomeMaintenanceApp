@@ -174,6 +174,54 @@
   overflow: auto;
 }
 
+.maintenanceIntervalsDialog {
+  width: min(68rem, calc(100vw - 32px));
+  max-height: min(52rem, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.maintenanceIntervalManager {
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.2fr);
+  gap: var(--lm-space-6);
+  margin-top: var(--lm-space-5);
+}
+
+.maintenanceIntervalList {
+  display: grid;
+  max-height: 28rem;
+  overflow-y: auto;
+  margin: var(--lm-space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.maintenanceIntervalList li {
+  min-width: 0;
+}
+
+.maintenanceIntervalList button span {
+  overflow-wrap: anywhere;
+}
+
+.maintenanceIntervalForm {
+  display: grid;
+  align-content: start;
+  gap: var(--lm-space-4);
+  min-width: 0;
+}
+
+.maintenanceIntervalForm h3 {
+  margin: 0;
+}
+
+.maintenanceIntervalForm :focus-visible,
+.maintenanceIntervalList button:focus-visible,
+.maintenanceIntervalsDialog > .detailHeading button:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
 .maintenanceItemManager {
   display: grid;
   grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.2fr);
@@ -332,7 +380,8 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .maintenanceItemManager {
+  .maintenanceItemManager,
+  .maintenanceIntervalManager {
     grid-template-columns: minmax(0, 1fr);
   }
 }
