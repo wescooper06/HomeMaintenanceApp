@@ -12,6 +12,17 @@ const item = (id, name, performed) => ({
   groupSnapshot: "routine",
   isPerformed: performed,
 });
+const catalogItem = (id, overrides = {}) => ({
+  id: uuid(id),
+  displayName: `Synthetic Maintenance ${id}`,
+  group: "routine",
+  availabilityMode: "all_assets",
+  currentAssetId: null,
+  selectedAssetIds: [],
+  archivedAt: null,
+  version: 3,
+  ...overrides,
+});
 const record = (id, date, overrides = {}) => ({
   id: uuid(id),
   serviceDate: date,
@@ -49,12 +60,19 @@ function harness(overrides = {}) {
   const hookSlots = [];
   const refs = [];
   const effects = [];
-  const calls = { listAssets: 0, workspaces: [], templates: 0, saves: [], creates: [] };
+  const calls = {
+    listAssets: 0, workspaces: [], templates: 0, saves: [], creates: [], catalogReads: 0, catalogSaves: [],
+  };
   let hookIndex = 0;
   let refIndex = 0;
   let blockerPredicate;
   let nextRecordId = 900;
   const assetStore = structuredClone(overrides.initialAssets ?? assets);
+  const catalogStore = structuredClone(overrides.initialMaintenanceItems ?? [
+    catalogItem(301),
+    catalogItem(302, { availabilityMode: "selected_assets", selectedAssetIds: [uuid(1), uuid(2)] }),
+    catalogItem(303, { archivedAt: "2026-01-01T00:00:00Z" }),
+  ]);
   let service = {
     listAssets: async () => {
       calls.listAssets += 1;
@@ -65,6 +83,33 @@ function harness(overrides = {}) {
       return workspace(assetStore.find((asset) => asset.id === assetId), assetId === uuid(1)
         ? [record(12, "2026-02-01"), record(11, "2026-01-01")]
         : []);
+    },
+    listMaintenanceItems: async () => {
+      calls.catalogReads += 1;
+      return structuredClone(catalogStore);
+    },
+    saveMaintenanceItem: async (request) => {
+      calls.catalogSaves.push(structuredClone(request));
+      const current = catalogStore.find((entry) => entry.id === request.id);
+      const saved = {
+        ...(current || catalogItem(301, { id: request.id, version: 0 })),
+        id: request.id,
+        displayName: request.displayName ?? current?.displayName,
+        group: request.group ?? current?.group,
+        availabilityMode: request.availabilityMode ?? current?.availabilityMode,
+        currentAssetId: request.currentAssetId ?? null,
+        selectedAssetIds: [...(request.selectedAssetIds || [])],
+        archivedAt: request.operation === "archive" ? "2026-03-01T00:00:00Z" : null,
+        version: (current?.version || 0) + 1,
+      };
+      const index = catalogStore.findIndex((entry) => entry.id === request.id);
+      if (index >= 0) catalogStore[index] = saved;
+      else catalogStore.push(saved);
+      return {
+        status: request.operation === "create" ? "created" : request.operation === "archive" ? "archived" : "updated",
+        requestId: request.requestId,
+        item: structuredClone(saved),
+      };
     },
     createAsset: async (request) => {
       calls.creates.push(structuredClone(request));
@@ -124,7 +169,8 @@ function harness(overrides = {}) {
   const refObjects = [];
   const dialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; }, focus() {} };
   const manageDialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; }, focus() {} };
-  const focusCounts = { managedName: 0, manageButton: 0 };
+  const maintenanceDialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; }, focus() {} };
+  const focusCounts = { managedName: 0, manageButton: 0, maintenanceItemName: 0, maintenanceItemButton: 0 };
   const context = {
     element: (type, props, ...children) => {
       const renderedChildren = (children.length ? children : [props?.children]).flat(Infinity)
@@ -157,6 +203,10 @@ function harness(overrides = {}) {
         const current = index === 1 ? dialog : index === 2 ? manageDialog
           : index === 3 ? { focus() { focusCounts.managedName += 1; } }
             : index === 4 ? { focus() { focusCounts.manageButton += 1; } }
+              : index === 5 ? { focus() { focusCounts.maintenanceItemButton += 1; } }
+                : index === 6 ? maintenanceDialog
+                  : index === 7 ? { focus() { focusCounts.maintenanceItemName += 1; } }
+                    : index === 8 ? { focus() { focusCounts.maintenanceItemButton += 1; } }
               : initial;
         refs[index] = { current };
         refObjects[index] = refs[index];
@@ -210,7 +260,7 @@ function harness(overrides = {}) {
   render();
   return {
     render, settle, nodes, text: (node = tree) => text(node), find, button, input, calls, blocker, dialog,
-    manageDialog, focusCounts, assetStore,
+    manageDialog, maintenanceDialog, focusCounts, assetStore,
     shouldBlock: () => blockerPredicate(),
     setService(next) { service = next; context.vehiclesService = next; },
   };
@@ -541,10 +591,382 @@ test("Create errors are safe and unknown or retryable outcomes retry the same ID
   }
 });
 
+test("Manage Maintenance Items shows an empty catalog and creates a local All Assets draft through the service", async () => {
+  const ui = harness({ initialMaintenanceItems: [] });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  assert.equal(ui.maintenanceDialog.open, true);
+  assert.match(ui.text(), /No saved Maintenance Items yet/);
+  assert.equal(ui.calls.catalogReads, 1);
+  assert(ui.button("Add Maintenance Item"));
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic oil change" } });
+  ui.render();
+  const form = ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"));
+  await form.props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.equal(ui.calls.catalogSaves.length, 1);
+  const request = ui.calls.catalogSaves[0];
+  assert.equal(request.operation, "create");
+  assert.match(request.id, /^[0-9a-f-]{36}$/);
+  assert.match(request.requestId, /^[0-9a-f-]{36}$/);
+  assert.equal(request.displayName, "Synthetic oil change");
+  assert.equal(request.group, "routine");
+  assert.equal(request.availabilityMode, "all_assets");
+  assert.equal(request.currentAssetId, null);
+  assert.deepEqual(request.selectedAssetIds, []);
+  assert.match(ui.text(), /Synthetic oil change/);
+  assert.match(ui.text(), /Active/);
+});
+
+test("Manage Maintenance Items announces loading and retries catalog errors without exposing backend details", async () => {
+  let attempts = 0;
+  const ui = harness({
+    listMaintenanceItems: async () => {
+      attempts += 1;
+      if (attempts === 1) throw { code: "authorization_error", message: "private catalog detail" };
+      return [];
+    },
+  });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /Loading Maintenance Items/);
+  await ui.settle();
+  assert.match(ui.text(), /Maintenance Items could not be loaded/);
+  assert.doesNotMatch(ui.text(), /private catalog detail/);
+  await ui.button("Retry loading catalog").props.onClick();
+  ui.render();
+  await ui.settle();
+  assert.equal(attempts, 2);
+  assert.match(ui.text(), /No saved Maintenance Items yet/);
+});
+
+test("Manage Maintenance Items validates names and Selected Assets and supports multiple stable asset IDs", async () => {
+  const ui = harness({ initialMaintenanceItems: [] });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic selected item" } });
+  ui.render();
+  const applicability = ui.input("vehicles-maintenance-item-applicability");
+  applicability.props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  ui.input("vehicles-maintenance-item-group").props.onChange({ target: { value: "invalid" } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+    .props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.match(ui.text(), /choose a valid Group/);
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  ui.input("vehicles-maintenance-item-group").props.onChange({ target: { value: "routine" } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+    .props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.match(ui.text(), /Select one or more available assets/);
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: " " } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+    .props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.match(ui.text(), /nonblank Maintenance Item name/);
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic filter" } });
+  ui.render();
+  ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`).props.onChange({ target: { checked: true } });
+  ui.render();
+  ui.input(`vehicles-maintenance-item-asset-${uuid(2)}`).props.onChange({ target: { checked: true } });
+  ui.render();
+  ui.input("vehicles-maintenance-item-group").props.onChange({ target: { value: "components_other" } });
+  ui.render();
+  const form = ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"));
+  await form.props.onSubmit({ preventDefault() {} });
+  assert.equal(ui.calls.catalogSaves.length, 1);
+  assert.equal(ui.calls.catalogSaves[0].availabilityMode, "selected_assets");
+  assert.deepEqual(ui.calls.catalogSaves[0].selectedAssetIds, [uuid(1), uuid(2)]);
+  assert.equal(ui.calls.catalogSaves[0].group, "components_other");
+});
+
+test("Maintenance Item Current Asset Only updates preserve expected version and no-op Save does not persist", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  const savedItem = ui.find((node) => node.type === "button"
+    && node.props["aria-pressed"] === false && ui.text(node).includes("Synthetic Maintenance 301"));
+  savedItem.props.onClick();
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  const form = ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"));
+  await form.props.onSubmit({ preventDefault() {} });
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Updated synthetic item" } });
+  ui.render();
+  ui.input("vehicles-maintenance-item-group").props.onChange({ target: { value: "fluids_drivetrain" } });
+  ui.render();
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "current_asset_only" } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+    .props.onSubmit({ preventDefault() {} });
+  const request = ui.calls.catalogSaves[0];
+  assert.equal(request.operation, "update");
+  assert.equal(request.expectedVersion, 3);
+  assert.equal(request.displayName, "Updated synthetic item");
+  assert.equal(request.group, "fluids_drivetrain");
+  assert.equal(request.availabilityMode, "current_asset_only");
+  assert.equal(request.currentAssetId, uuid(1));
+  assert.deepEqual(request.selectedAssetIds, []);
+});
+
+test("Maintenance Item Cancel restores persisted values and Archive requires confirmation", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  const savedItem = ui.find((node) => node.type === "button"
+    && node.props["aria-pressed"] === false && ui.text(node).includes("Synthetic Maintenance 301"));
+  savedItem.props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Unsaved name" } });
+  ui.render();
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-name").props.value, "Synthetic Maintenance 301");
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  ui.button("Archive").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /Archive this Maintenance Item/);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  ui.button("Archive").props.onClick();
+  ui.render();
+  ui.button("Archive Maintenance Item").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.catalogSaves[0].operation, "archive");
+  assert.equal(ui.calls.catalogSaves[0].id, uuid(301));
+  assert.equal(ui.calls.catalogSaves[0].expectedVersion, 3);
+  assert.match(ui.text(), /Archived/);
+  assert.match(ui.text(), /unavailable to future Ongoing drafts/);
+  assert.doesNotMatch(ui.text(), /Delete Maintenance Item/);
+});
+
+test("Maintenance Item interval conflict is owner-readable and preserves the draft", async () => {
+  const ui = harness({
+    saveMaintenanceItem: async () => {
+      throw { code: "item_archived_or_unavailable", message: "private interval detail" };
+    },
+  });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  const savedItem = ui.find((node) => node.type === "button"
+    && node.props["aria-pressed"] === false && ui.text(node).includes("Synthetic Maintenance 301"));
+  savedItem.props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`).props.onChange({ target: { checked: true } });
+  ui.render();
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+    .props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.match(ui.text(), /interval still references this item/i);
+  assert.doesNotMatch(ui.text(), /private interval detail/);
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "selected_assets");
+  assert.equal(ui.button("Save Changes").props.disabled, false);
+});
+
+test("Maintenance Item version, availability, and request mismatches require a catalog reload", async () => {
+  for (const [code, expected] of [
+    ["version_conflict", /changed elsewhere/],
+    ["not_found", /no longer available/],
+    ["request_id_payload_mismatch", /used for different save values/],
+  ]) {
+    const ui = harness({
+      saveMaintenanceItem: async () => { throw { code, message: "private database detail" }; },
+    });
+    await ui.settle();
+    ui.button("Manage Maintenance Items").props.onClick();
+    ui.render();
+    await ui.settle();
+    ui.find((node) => node.type === "button" && node.props["aria-pressed"] === false
+      && ui.text(node).includes("Synthetic Maintenance 301")).props.onClick();
+    ui.render();
+    ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: `Changed ${code}` } });
+    ui.render();
+    await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+      .props.onSubmit({ preventDefault() {} });
+    ui.render();
+    assert.match(ui.text(), expected);
+    assert.doesNotMatch(ui.text(), /private database detail/);
+    assert(ui.button("Reload catalog"));
+    assert.equal(ui.input("vehicles-maintenance-item-name").props.disabled, true);
+    assert.equal(ui.button("Save Changes").props.disabled, true);
+  }
+});
+
+test("Maintenance Item unknown outcome retries the exact same request and prevents draft edits", async () => {
+  let attempts = 0;
+  const requests = [];
+  const ui = harness({
+    saveMaintenanceItem: async (request) => {
+      requests.push(structuredClone(request));
+      attempts += 1;
+      if (attempts === 1) throw {
+        code: "unknown_outcome",
+        message: "private backend detail",
+        retryDraft: structuredClone(request),
+      };
+      return {
+        status: "created",
+        requestId: request.requestId,
+        item: catalogItem(0, {
+          id: request.id, displayName: request.displayName, group: request.group,
+          availabilityMode: request.availabilityMode, currentAssetId: request.currentAssetId,
+          selectedAssetIds: request.selectedAssetIds, version: 1,
+        }),
+      };
+    },
+    initialMaintenanceItems: [],
+  });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Retry stable item" } });
+  ui.render();
+  const submit = () => ui.find((node) => node.type === "form"
+    && node.props.className?.includes("maintenanceItemForm")).props.onSubmit({ preventDefault() {} });
+  await submit();
+  ui.render();
+  assert.match(ui.text(), /outcome is unknown/);
+  assert.doesNotMatch(ui.text(), /private backend detail/);
+  assert.equal(ui.input("vehicles-maintenance-item-name").props.disabled, true);
+  await ui.button("Retry same request").props.onClick();
+  await ui.settle();
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0], requests[1]);
+  assert.match(ui.text(), /Retry stable item/);
+});
+
+test("Maintenance Item duplicate submissions are locked and dirty close requires confirmation", async () => {
+  let release;
+  let calls = 0;
+  const ui = harness({
+    initialMaintenanceItems: [],
+    saveMaintenanceItem: (request) => {
+      calls += 1;
+      return new Promise((resolve) => {
+        release = () => resolve({
+          status: "created",
+          requestId: request.requestId,
+          item: catalogItem(0, {
+            id: request.id, displayName: request.displayName, group: request.group,
+            availabilityMode: request.availabilityMode, currentAssetId: request.currentAssetId,
+            selectedAssetIds: request.selectedAssetIds, version: 1,
+          }),
+        });
+      });
+    },
+  });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Pending item" } });
+  ui.render();
+  const form = ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"));
+  const first = form.props.onSubmit({ preventDefault() {} });
+  const second = form.props.onSubmit({ preventDefault() {} });
+  await flush();
+  ui.render();
+  assert.equal(calls, 1);
+  const closeCatalog = () => ui.find((node) => node.props["aria-label"] === "Close Manage Maintenance Items");
+  assert.equal(closeCatalog().props.disabled, true);
+  release();
+  await first;
+  await second;
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Pending item edit" } });
+  ui.render();
+  closeCatalog().props.onClick();
+  ui.render();
+  assert.equal(ui.maintenanceDialog.open, true);
+  assert.match(ui.text(), /Discard Maintenance Item edits/);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.maintenanceDialog.open, true);
+  closeCatalog().props.onClick();
+  ui.render();
+  ui.button("Discard edits").props.onClick();
+  ui.render();
+  assert.equal(ui.maintenanceDialog.open, false);
+  assert(ui.focusCounts.maintenanceItemButton > 0);
+});
+
+test("Opening Manage Maintenance Items protects unsaved Ongoing and Asset editing sessions", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-05" } });
+  ui.render();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  assert.equal(ui.maintenanceDialog.open, false);
+  assert.match(ui.text(), /Discard Ongoing Maintenance edits and manage Maintenance Items/);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-05");
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  ui.button("Discard and continue").props.onClick();
+  ui.render();
+  assert.equal(ui.maintenanceDialog.open, true);
+  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-01");
+
+  const assetUi = harness();
+  await assetUi.settle();
+  assetUi.button("Manage Assets").props.onClick();
+  assetUi.render();
+  assetUi.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Unsaved asset" } });
+  assetUi.render();
+  assetUi.button("Manage Maintenance Items").props.onClick();
+  assetUi.render();
+  assert.equal(assetUi.maintenanceDialog.open, false);
+  assert.match(assetUi.text(), /Discard Asset edits and manage Maintenance Items/);
+  assetUi.button("Stay").props.onClick();
+  assetUi.render();
+  assert.equal(assetUi.manageDialog.open, true);
+  assetUi.button("Manage Maintenance Items").props.onClick();
+  assetUi.render();
+  assetUi.button("Discard and continue").props.onClick();
+  assetUi.render();
+  assert.equal(assetUi.manageDialog.open, false);
+  assert.equal(assetUi.maintenanceDialog.open, true);
+});
+
 test("Manage Assets does not expose database writes or Delete Asset", () => {
   const source = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx"), "utf8");
   assert.doesNotMatch(source, /\.from\s*\(|\.insert\s*\(|\.update\s*\(|\.delete\s*\(|create_vehicle_asset/);
   assert.doesNotMatch(source, />\s*Delete Asset\s*</);
+  assert.doesNotMatch(source, /\.from\s*\(|\.insert\s*\(|\.update\s*\(|\.delete\s*\(|save_maintenance_item/);
+  assert.doesNotMatch(source, />\s*Delete Maintenance Item\s*</);
+  assert.match(source, /vehiclesService\.saveMaintenanceItem/);
 });
 
 test("Workspace selects newest history and preserves historical snapshots and true/false states", async () => {

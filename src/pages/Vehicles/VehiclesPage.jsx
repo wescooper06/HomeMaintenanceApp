@@ -80,6 +80,54 @@ function createAssetDraft() {
   };
 }
 
+function makeMaintenanceItemDraft(item = null, currentAssetId = "") {
+  if (!item) {
+    return {
+      operation: "create",
+      id: crypto.randomUUID(),
+      requestId: crypto.randomUUID(),
+      expectedVersion: null,
+      displayName: "",
+      group: "routine",
+      availabilityMode: "all_assets",
+      currentAssetId,
+      selectedAssetIds: [],
+    };
+  }
+  return {
+    operation: "update",
+    id: item.id,
+    requestId: crypto.randomUUID(),
+    expectedVersion: item.version,
+    displayName: item.displayName,
+    group: item.group,
+    availabilityMode: item.availabilityMode,
+    currentAssetId: item.currentAssetId || "",
+    selectedAssetIds: [...item.selectedAssetIds].sort(),
+  };
+}
+
+function maintenanceItemErrorMessage(error) {
+  if (error?.code === "validation_error") return "Review the highlighted Maintenance Item details and try again.";
+  if (error?.code === "version_conflict") return "This Maintenance Item changed elsewhere. Reload the catalog before trying again.";
+  if (error?.code === "authorization_error") return "Your session cannot save this Maintenance Item. Sign in again.";
+  if (error?.code === "not_found") return "This Maintenance Item or one of its assets is no longer available. Reload the catalog.";
+  if (error?.code === "item_archived_or_unavailable") {
+    return "An interval still references this item for an asset that would become unavailable. No changes were saved; the draft is preserved.";
+  }
+  if (error?.code === "request_id_payload_mismatch") {
+    return "This request ID was used for different save values. Reload the catalog and select the item again; your draft is preserved.";
+  }
+  if (error?.code === "retryable_transport") {
+    return "The save could not be confirmed because of a connection issue. Retry the same request.";
+  }
+  if (error?.code === "unknown_outcome") {
+    return "The save outcome is unknown. Retry the exact request before making more changes.";
+  }
+  if (error?.code === "duplicate_active_item_name") return "An active Maintenance Item already uses this name.";
+  return "Maintenance Item changes could not be confirmed. Your draft is preserved.";
+}
+
 export default function VehiclesPage() {
   const [assets, setAssets] = useState(null);
   const [assetError, setAssetError] = useState("");
@@ -105,19 +153,52 @@ export default function VehiclesPage() {
   const [manageSaving, setManageSaving] = useState(false);
   const [manageError, setManageError] = useState("");
   const [manageStatus, setManageStatus] = useState("");
+  const [manageMaintenanceItemsOpen, setManageMaintenanceItemsOpen] = useState(false);
+  const [maintenanceItems, setMaintenanceItems] = useState(null);
+  const [maintenanceItemsLoading, setMaintenanceItemsLoading] = useState(false);
+  const [maintenanceItemsError, setMaintenanceItemsError] = useState("");
+  const [maintenanceItemsAttempt, setMaintenanceItemsAttempt] = useState(0);
+  const [selectedMaintenanceItemId, setSelectedMaintenanceItemId] = useState("");
+  const [maintenanceItemDraft, setMaintenanceItemDraft] = useState(null);
+  const [maintenanceItemRetryDraft, setMaintenanceItemRetryDraft] = useState(null);
+  const [maintenanceItemNeedsReload, setMaintenanceItemNeedsReload] = useState(false);
+  const [maintenanceItemSaving, setMaintenanceItemSaving] = useState(false);
+  const [maintenanceItemError, setMaintenanceItemError] = useState("");
+  const [maintenanceItemStatus, setMaintenanceItemStatus] = useState("");
   const saveLock = useRef(false);
   const dialogRef = useRef(null);
   const assetsDialogRef = useRef(null);
   const assetsNameRef = useRef(null);
   const manageButtonRef = useRef(null);
+  const manageMaintenanceItemsButtonRef = useRef(null);
+  const maintenanceItemsDialogRef = useRef(null);
+  const maintenanceItemNameRef = useRef(null);
+  const maintenanceItemsAddButtonRef = useRef(null);
   const manageSaveLock = useRef(false);
+  const maintenanceItemSaveLock = useRef(false);
 
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
+  const selectedMaintenanceItem = maintenanceItems?.find((item) => item.id === selectedMaintenanceItemId);
+  const maintenanceItemBaseline = maintenanceItems?.find((item) => item.id === maintenanceItemDraft?.id);
+  const maintenanceItemDirty = Boolean(maintenanceItemDraft && (
+    maintenanceItemDraft.operation === "create"
+    || !maintenanceItemBaseline
+    || maintenanceItemDraft.displayName !== maintenanceItemBaseline.displayName
+    || maintenanceItemDraft.group !== maintenanceItemBaseline.group
+    || maintenanceItemDraft.availabilityMode !== maintenanceItemBaseline.availabilityMode
+    || maintenanceItemDraft.currentAssetId !== (maintenanceItemBaseline.currentAssetId || "")
+    || JSON.stringify(maintenanceItemDraft.selectedAssetIds)
+      !== JSON.stringify([...maintenanceItemBaseline.selectedAssetIds].sort())
+  ));
   const dirty = deletedRecords.length > 0 || workingRecords.some((record) => (
     record.isNew || recordValue(record) !== recordValue(baselineById.get(record.id) || record)
   ));
   const saveUncertain = retryDraft !== null;
-  const blocker = useBlocker(() => dirty || saving || saveUncertain);
+  const manageAssetDraftDirty = manageDraftIsDirty();
+  const hasMaintenanceItemDraft = Boolean(maintenanceItemDraft);
+  const blocker = useBlocker(() => dirty || saving || saveUncertain
+    || maintenanceItemDirty || maintenanceItemSaving || maintenanceItemRetryDraft !== null
+    || (manageAssetsOpen && manageAssetDraftDirty) || manageSaving || manageRetryDraft !== null);
 
   useEffect(() => {
     let active = true;
@@ -173,14 +254,42 @@ export default function VehiclesPage() {
   }, [manageAssetsOpen, manageAssetId]);
 
   useEffect(() => {
-    if (!dirty && !saving && !saveUncertain) return undefined;
+    const dialog = maintenanceItemsDialogRef.current;
+    if (manageMaintenanceItemsOpen) {
+      if (dialog && !dialog.open) dialog.showModal();
+      if (hasMaintenanceItemDraft) maintenanceItemNameRef.current?.focus();
+      else maintenanceItemsAddButtonRef.current?.focus();
+    } else if (dialog?.open) {
+      dialog.close();
+    }
+  }, [manageMaintenanceItemsOpen, hasMaintenanceItemDraft, maintenanceItemDraft?.id]);
+
+  useEffect(() => {
+    if (!manageMaintenanceItemsOpen) return undefined;
+    let active = true;
+    vehiclesService.listMaintenanceItems().then((items) => {
+      if (!active) return;
+      setMaintenanceItems(items);
+    }).catch(() => {
+      if (active) setMaintenanceItemsError("Maintenance Items could not be loaded. Retry loading the catalog.");
+    }).finally(() => {
+      if (active) setMaintenanceItemsLoading(false);
+    });
+    return () => { active = false; };
+  }, [manageMaintenanceItemsOpen, maintenanceItemsAttempt]);
+
+  useEffect(() => {
+    if (!dirty && !saving && !saveUncertain && !maintenanceItemDirty
+      && !maintenanceItemSaving && !maintenanceItemRetryDraft
+      && !(manageAssetsOpen && manageAssetDraftDirty) && !manageSaving && !manageRetryDraft) return undefined;
     const beforeUnload = (event) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
-  }, [dirty, saving, saveUncertain]);
+  }, [dirty, saving, saveUncertain, maintenanceItemDirty, maintenanceItemSaving, maintenanceItemRetryDraft,
+    manageAssetsOpen, manageAssetDraftDirty, manageSaving, manageRetryDraft]);
 
   function resetDraft() {
     setWorkingRecords(copyRecords(baselineRecords));
@@ -222,6 +331,217 @@ export default function VehiclesPage() {
       return;
     }
     beginManageAssets();
+  }
+
+  function beginManageMaintenanceItems() {
+    setMaintenanceItems(null);
+    setMaintenanceItemsLoading(true);
+    setMaintenanceItemsError("");
+    setMaintenanceItemError("");
+    setMaintenanceItemStatus("");
+    setMaintenanceItemDraft(null);
+    setMaintenanceItemRetryDraft(null);
+    setMaintenanceItemNeedsReload(false);
+    setSelectedMaintenanceItemId("");
+    setManageMaintenanceItemsOpen(true);
+  }
+
+  function openManageMaintenanceItems() {
+    if (manageMaintenanceItemsOpen) return;
+    if (saving || saveUncertain || manageSaving || manageRetryDraft || maintenanceItemSaving) return;
+    if (manageAssetsOpen) {
+      if (manageDraftIsDirty()) {
+        setConfirmation({ kind: "manage-items-open-assets" });
+        return;
+      }
+      closeManageAssets();
+    }
+    if (dirty) {
+      setConfirmation({ kind: "manage-items-open" });
+      return;
+    }
+    beginManageMaintenanceItems();
+  }
+
+  function closeManageMaintenanceItems() {
+    if (maintenanceItemsDialogRef.current?.open) maintenanceItemsDialogRef.current.close();
+    setManageMaintenanceItemsOpen(false);
+    setMaintenanceItems(null);
+    setMaintenanceItemsLoading(false);
+    setMaintenanceItemsError("");
+    setMaintenanceItemError("");
+    setMaintenanceItemStatus("");
+    setMaintenanceItemDraft(null);
+    setMaintenanceItemRetryDraft(null);
+    setMaintenanceItemNeedsReload(false);
+    setSelectedMaintenanceItemId("");
+    manageMaintenanceItemsButtonRef.current?.focus();
+  }
+
+  function requestCloseManageMaintenanceItems() {
+    if (maintenanceItemSaving) return;
+    if (maintenanceItemRetryDraft) {
+      setMaintenanceItemError("Resolve the pending save by retrying the same request before closing.");
+      return;
+    }
+    if (maintenanceItemDirty) {
+      setConfirmation({ kind: "manage-items-close" });
+      return;
+    }
+    closeManageMaintenanceItems();
+  }
+
+  function selectMaintenanceItem(item) {
+    if (maintenanceItemSaving || maintenanceItemRetryDraft) return;
+    if (maintenanceItemDirty) {
+      setConfirmation({ kind: "manage-items-switch", value: item.id });
+      return;
+    }
+    setSelectedMaintenanceItemId(item.id);
+    setMaintenanceItemDraft(item.archivedAt ? null : makeMaintenanceItemDraft(item, selectedAssetId));
+    setMaintenanceItemNeedsReload(false);
+    setMaintenanceItemError("");
+    setMaintenanceItemStatus("");
+  }
+
+  function startNewMaintenanceItem() {
+    if (maintenanceItemDirty || maintenanceItemSaving || maintenanceItemRetryDraft) {
+      if (maintenanceItemDirty) setConfirmation({ kind: "manage-items-new" });
+      return;
+    }
+    setSelectedMaintenanceItemId("");
+    setMaintenanceItemDraft(makeMaintenanceItemDraft(null, selectedAssetId));
+    setMaintenanceItemNeedsReload(false);
+    setMaintenanceItemError("");
+    setMaintenanceItemStatus("");
+  }
+
+  function updateMaintenanceItemDraft(update) {
+    if (maintenanceItemNeedsReload || maintenanceItemRetryDraft || maintenanceItemSaving) return;
+    setMaintenanceItemDraft((current) => ({ ...current, ...update }));
+    setMaintenanceItemError("");
+    setMaintenanceItemStatus("");
+  }
+
+  function cancelMaintenanceItemDraft() {
+    if (!maintenanceItemDraft || maintenanceItemSaving || maintenanceItemRetryDraft) return;
+    if (maintenanceItemDraft.operation === "create") {
+      setMaintenanceItemDraft(null);
+      setSelectedMaintenanceItemId("");
+    } else {
+      const original = maintenanceItems?.find((item) => item.id === maintenanceItemDraft.id);
+      setMaintenanceItemDraft(original ? makeMaintenanceItemDraft(original, selectedAssetId) : null);
+      setSelectedMaintenanceItemId(original?.id || "");
+    }
+    setMaintenanceItemNeedsReload(false);
+    setMaintenanceItemError("");
+    setMaintenanceItemStatus("Changes canceled. Saved Maintenance Item values are restored.");
+  }
+
+  function validateMaintenanceItemDraft(draft) {
+    const name = draft.displayName.trim();
+    const validAssets = new Set((assets || []).map((asset) => asset.id));
+    if (!name || [...name].length > 100 || !["routine", "fluids_drivetrain", "components_other"].includes(draft.group)) {
+      setMaintenanceItemError("Enter a nonblank Maintenance Item name of 1-100 characters and choose a valid Group.");
+      return false;
+    }
+    if (!["all_assets", "current_asset_only", "selected_assets"].includes(draft.availabilityMode)) {
+      setMaintenanceItemError("Choose a valid applicability option.");
+      return false;
+    }
+    if (draft.availabilityMode === "current_asset_only" && !validAssets.has(draft.currentAssetId)) {
+      setMaintenanceItemError("Choose an available asset for Current Asset Only.");
+      return false;
+    }
+    if (draft.availabilityMode === "selected_assets"
+      && (!draft.selectedAssetIds.length || draft.selectedAssetIds.some((id) => !validAssets.has(id)))) {
+      setMaintenanceItemError("Select one or more available assets.");
+      return false;
+    }
+    return true;
+  }
+
+  function updateMaintenanceItemCatalog(item, message) {
+    setMaintenanceItems((current) => [...(current || []).filter((entry) => entry.id !== item.id), item]
+      .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id)));
+    setSelectedMaintenanceItemId(item.id);
+    setMaintenanceItemRetryDraft(null);
+    setMaintenanceItemNeedsReload(false);
+    setMaintenanceItemError("");
+    if (item.archivedAt) {
+      setMaintenanceItemDraft(null);
+    } else {
+      setMaintenanceItemDraft(makeMaintenanceItemDraft(item, selectedAssetId));
+    }
+    setMaintenanceItemStatus(message);
+  }
+
+  async function persistMaintenanceItem(request) {
+    if (maintenanceItemSaveLock.current || maintenanceItemSaving) return;
+    maintenanceItemSaveLock.current = true;
+    setMaintenanceItemSaving(true);
+    setMaintenanceItemError("");
+    setMaintenanceItemStatus("Saving Maintenance Item...");
+    try {
+      const result = await vehiclesService.saveMaintenanceItem(request);
+      if (!result?.item || !["created", "updated", "archived"].includes(result.status)) {
+        throw { code: "unknown_outcome", retryDraft: request };
+      }
+      const message = result.status === "created" ? "Maintenance Item created."
+        : result.status === "archived" ? "Maintenance Item archived."
+          : "Maintenance Item changes saved.";
+      updateMaintenanceItemCatalog(result.item, message);
+    } catch (error) {
+      if (error?.retryDraft) setMaintenanceItemRetryDraft(error.retryDraft);
+      if (["version_conflict", "not_found", "request_id_payload_mismatch"].includes(error?.code)) {
+        setMaintenanceItemNeedsReload(true);
+      }
+      setMaintenanceItemError(maintenanceItemErrorMessage(error));
+      setMaintenanceItemStatus("");
+    } finally {
+      maintenanceItemSaveLock.current = false;
+      setMaintenanceItemSaving(false);
+    }
+  }
+
+  async function saveMaintenanceItemChanges(event) {
+    event?.preventDefault();
+    const draft = maintenanceItemDraft;
+    if (!draft || maintenanceItemSaveLock.current || maintenanceItemSaving
+      || maintenanceItemRetryDraft || maintenanceItemNeedsReload || !maintenanceItemDirty) return;
+    if (!validateMaintenanceItemDraft(draft)) return;
+    await persistMaintenanceItem({
+      operation: draft.operation,
+      id: draft.id,
+      ...(draft.operation === "update" ? { expectedVersion: draft.expectedVersion } : {}),
+      displayName: draft.displayName.trim(),
+      group: draft.group,
+      availabilityMode: draft.availabilityMode,
+      currentAssetId: draft.availabilityMode === "current_asset_only" ? draft.currentAssetId : null,
+      selectedAssetIds: draft.availabilityMode === "selected_assets" ? [...draft.selectedAssetIds].sort() : [],
+      requestId: draft.requestId,
+    });
+  }
+
+  function archiveMaintenanceItem(item) {
+    if (!item || item.archivedAt || maintenanceItemSaving || maintenanceItemRetryDraft) return;
+    persistMaintenanceItem({
+      operation: "archive",
+      id: item.id,
+      expectedVersion: item.version,
+      requestId: crypto.randomUUID(),
+    });
+  }
+
+  function retryMaintenanceItemSave() {
+    if (!maintenanceItemRetryDraft || maintenanceItemSaveLock.current) return;
+    persistMaintenanceItem(maintenanceItemRetryDraft);
+  }
+
+  function reloadMaintenanceItems() {
+    setMaintenanceItemsLoading(true);
+    setMaintenanceItemsError("");
+    setMaintenanceItemsAttempt((attempt) => attempt + 1);
   }
 
   function beginManageAssets() {
@@ -441,6 +761,30 @@ export default function VehiclesPage() {
     if (action.kind === "manage-assets-open") {
       resetDraft();
       beginManageAssets();
+    } else if (action.kind === "manage-items-open") {
+      resetDraft();
+      beginManageMaintenanceItems();
+    } else if (action.kind === "manage-items-open-assets") {
+      closeManageAssets();
+      beginManageMaintenanceItems();
+    } else if (action.kind === "manage-items-close") {
+      closeManageMaintenanceItems();
+    } else if (action.kind === "manage-items-switch") {
+      const item = maintenanceItems?.find((entry) => entry.id === action.value);
+      setSelectedMaintenanceItemId(item?.id || "");
+      setMaintenanceItemDraft(item && !item.archivedAt
+        ? makeMaintenanceItemDraft(item, selectedAssetId) : null);
+      setMaintenanceItemNeedsReload(false);
+      setMaintenanceItemError("");
+      setMaintenanceItemStatus("");
+    } else if (action.kind === "manage-items-new") {
+      setSelectedMaintenanceItemId("");
+      setMaintenanceItemDraft(makeMaintenanceItemDraft(null, selectedAssetId));
+      setMaintenanceItemNeedsReload(false);
+      setMaintenanceItemError("");
+      setMaintenanceItemStatus("");
+    } else if (action.kind === "maintenance-item-archive") {
+      archiveMaintenanceItem(action.value);
     } else if (action.kind === "manage-assets-close") {
       closeManageAssets();
     } else if (action.kind === "manage-assets-switch") {
@@ -580,14 +924,28 @@ export default function VehiclesPage() {
   }
 
   function handleRouteDiscard() {
-    if (saveUncertain || saving) return;
+    if (saveUncertain || saving || maintenanceItemSaving || maintenanceItemRetryDraft) return;
     resetDraft();
+    if (maintenanceItemDirty) closeManageMaintenanceItems();
+    if (manageAssetsOpen && manageDraftIsDirty()) closeManageAssets();
     blocker.proceed();
   }
 
   const selectedRecord = workingRecords.find((record) => record.id === selectedRecordId);
   const confirmationTitle = confirmation?.kind === "delete"
     ? "Queue deletion of this Ongoing record?"
+    : confirmation?.kind === "maintenance-item-archive"
+      ? "Archive this Maintenance Item?"
+      : confirmation?.kind === "manage-items-close"
+        ? "Discard Maintenance Item edits?"
+        : confirmation?.kind === "manage-items-switch"
+          ? "Discard Maintenance Item edits and switch?"
+          : confirmation?.kind === "manage-items-new"
+            ? "Discard Maintenance Item edits and start a new item?"
+            : confirmation?.kind === "manage-items-open"
+              ? "Discard Ongoing Maintenance edits and manage Maintenance Items?"
+              : confirmation?.kind === "manage-items-open-assets"
+                ? "Discard Asset edits and manage Maintenance Items?"
     : confirmation?.kind === "manage-assets-open"
       ? "Discard Ongoing Maintenance edits and manage assets?"
       : confirmation?.kind === "manage-assets-close"
@@ -598,7 +956,11 @@ export default function VehiclesPage() {
       ? "Discard changes and switch assets?"
       : confirmation?.kind === "record"
         ? "Discard changes and switch records?"
-        : saveUncertain
+        : maintenanceItemRetryDraft
+          ? "Maintenance Item save outcome needs confirmation"
+          : maintenanceItemSaving
+            ? "Maintenance Item save is in progress"
+          : saveUncertain
           ? "Save outcome needs confirmation"
           : saving ? "Save is in progress" : "Discard unsaved Vehicles changes?";
 
@@ -609,7 +971,11 @@ export default function VehiclesPage() {
         actions={(
           <>
             <button ref={manageButtonRef} type="button" className="lm-button lm-button--secondary"
-              onClick={openManageAssets} disabled={saving || saveUncertain || manageSaving}>Manage Assets</button>
+              onClick={openManageAssets} disabled={saving || saveUncertain || manageSaving
+                || maintenanceItemSaving || manageMaintenanceItemsOpen}>Manage Assets</button>
+            <button ref={manageMaintenanceItemsButtonRef} type="button" className="lm-button lm-button--secondary"
+              onClick={openManageMaintenanceItems} disabled={saving || saveUncertain || manageSaving
+                || manageRetryDraft || maintenanceItemSaving}>Manage Maintenance Items</button>
             {dirty && <button type="button" className="lm-button lm-button--secondary"
               onClick={resetDraft} disabled={saving || saveUncertain}>Cancel Changes</button>
             }
@@ -860,6 +1226,179 @@ export default function VehiclesPage() {
         </div>
       </dialog>
 
+      <dialog ref={maintenanceItemsDialogRef} className={`${styles.dialog} ${styles.maintenanceItemsDialog}`}
+        aria-labelledby="vehicles-manage-items-title" onCancel={(event) => {
+          event.preventDefault();
+          requestCloseManageMaintenanceItems();
+        }}>
+        <div className={styles.detailHeading}>
+          <div>
+            <h2 id="vehicles-manage-items-title">Manage Maintenance Items</h2>
+            <p>Changes apply to future Ongoing drafts. Saved history keeps its captured item details.</p>
+          </div>
+          <button type="button" className="lm-button lm-button--secondary"
+            onClick={requestCloseManageMaintenanceItems} disabled={maintenanceItemSaving}
+            aria-label="Close Manage Maintenance Items">Close</button>
+        </div>
+
+        {maintenanceItemsLoading && <p className="lm-loading-state" role="status">Loading Maintenance Items...</p>}
+        {maintenanceItemsError && <div className="lm-feedback lm-feedback--error" role="alert">
+          <p>{maintenanceItemsError}</p>
+          <button type="button" className="lm-button lm-button--secondary" onClick={reloadMaintenanceItems}>
+            Retry loading catalog
+          </button>
+        </div>}
+
+        {!maintenanceItemsLoading && maintenanceItems && (!maintenanceItemsError || maintenanceItemDraft) && (
+          <div className={styles.maintenanceItemManager}>
+            <section aria-label="Maintenance Item catalog">
+              <div className={styles.sectionHeading}>
+                <h3>Catalog</h3>
+                <button ref={maintenanceItemsAddButtonRef} type="button" className="lm-button lm-button--secondary"
+                  onClick={startNewMaintenanceItem}
+                  disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft) || maintenanceItemNeedsReload}>
+                  Add Maintenance Item
+                </button>
+              </div>
+              {maintenanceItems.length === 0
+                ? <p className="lm-empty-state">No saved Maintenance Items yet.</p>
+                : <ul className={styles.maintenanceItemList} aria-label="Saved Maintenance Items">
+                  {[...maintenanceItems].sort((left, right) => left.displayName.localeCompare(right.displayName)
+                    || left.id.localeCompare(right.id)).map((item) => (
+                    <li key={item.id}>
+                      <button type="button"
+                        className={`${styles.managedAsset} ${selectedMaintenanceItemId === item.id
+                          ? styles.managedAssetSelected : ""}`}
+                        aria-pressed={selectedMaintenanceItemId === item.id}
+                        onClick={() => selectMaintenanceItem(item)}
+                        disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)}>
+                        <strong>{item.displayName}</strong>
+                        <span>{item.group.replaceAll("_", " ")} · {item.archivedAt ? "Archived" : "Active"}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>}
+            </section>
+
+            {maintenanceItemDraft ? (
+              <form className={styles.maintenanceItemForm} onSubmit={saveMaintenanceItemChanges} noValidate>
+                <h3>{maintenanceItemDraft.operation === "create" ? "New Maintenance Item" : "Edit Maintenance Item"}</h3>
+                <label className="lm-form-field" htmlFor="vehicles-maintenance-item-name">
+                  <span className="lm-form-label">Name</span>
+                  <input ref={maintenanceItemNameRef} id="vehicles-maintenance-item-name" className="lm-form-control"
+                    type="text" maxLength="100" required value={maintenanceItemDraft.displayName}
+                    aria-invalid={Boolean(maintenanceItemError && (!maintenanceItemDraft.displayName.trim()
+                      || [...maintenanceItemDraft.displayName.trim()].length > 100))}
+                    aria-describedby={maintenanceItemError ? "vehicles-maintenance-item-error" : undefined}
+                    onChange={(event) => updateMaintenanceItemDraft({ displayName: event.target.value })}
+                    disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft) || maintenanceItemNeedsReload} />
+                </label>
+                <label className="lm-form-field" htmlFor="vehicles-maintenance-item-group">
+                  <span className="lm-form-label">Group</span>
+                  <select id="vehicles-maintenance-item-group" className="lm-form-control"
+                    value={maintenanceItemDraft.group}
+                    aria-invalid={Boolean(maintenanceItemError
+                      && !["routine", "fluids_drivetrain", "components_other"].includes(maintenanceItemDraft.group))}
+                    aria-describedby={maintenanceItemError ? "vehicles-maintenance-item-error" : undefined}
+                    onChange={(event) => updateMaintenanceItemDraft({ group: event.target.value })}
+                    disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft) || maintenanceItemNeedsReload}>
+                    <option value="routine">Routine</option>
+                    <option value="fluids_drivetrain">Fluids &amp; drivetrain</option>
+                    <option value="components_other">Components &amp; other</option>
+                  </select>
+                </label>
+                <label className="lm-form-field" htmlFor="vehicles-maintenance-item-applicability">
+                  <span className="lm-form-label">Applicability</span>
+                  <select id="vehicles-maintenance-item-applicability" className="lm-form-control"
+                    value={maintenanceItemDraft.availabilityMode}
+                    aria-describedby={maintenanceItemError ? "vehicles-maintenance-item-error" : undefined}
+                    onChange={(event) => updateMaintenanceItemDraft({
+                      availabilityMode: event.target.value,
+                      currentAssetId: event.target.value === "current_asset_only" ? selectedAssetId : "",
+                    })}
+                    disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft) || maintenanceItemNeedsReload}>
+                    <option value="all_assets">All Assets</option>
+                    <option value="current_asset_only">Current Asset Only</option>
+                    <option value="selected_assets">Selected Assets</option>
+                  </select>
+                </label>
+                {maintenanceItemDraft.availabilityMode === "current_asset_only" && (
+                  <p className="lm-feedback" role="status">
+                    Current asset: {assets?.find((asset) => asset.id === maintenanceItemDraft.currentAssetId)?.name
+                      || "No asset is currently selected."}
+                  </p>
+                )}
+                {maintenanceItemDraft.availabilityMode === "selected_assets" && (
+                  <fieldset className={styles.maintenanceItemAssets}>
+                    <legend>Selected Assets</legend>
+                    {!assets?.length && <p>No assets are available to select.</p>}
+                    {assets?.map((asset) => (
+                      <label key={asset.id} className={styles.maintenanceItemAsset}>
+                        <input id={`vehicles-maintenance-item-asset-${asset.id}`} type="checkbox"
+                          checked={maintenanceItemDraft.selectedAssetIds.includes(asset.id)}
+                          onChange={(event) => {
+                            const selectedAssetIds = event.target.checked
+                              ? [...new Set([...maintenanceItemDraft.selectedAssetIds, asset.id])].sort()
+                              : maintenanceItemDraft.selectedAssetIds.filter((id) => id !== asset.id);
+                            updateMaintenanceItemDraft({ selectedAssetIds });
+                          }}
+                          disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft) || maintenanceItemNeedsReload} />
+                        <span>{asset.name}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+
+                {maintenanceItemError && <p id="vehicles-maintenance-item-error"
+                  className="lm-feedback lm-feedback--error" role="alert">{maintenanceItemError}</p>}
+                {maintenanceItemStatus && <p className="lm-feedback" role="status" aria-live="polite">
+                  {maintenanceItemStatus}
+                </p>}
+                {maintenanceItemNeedsReload && <div className="lm-feedback" role="status" aria-live="polite">
+                  <p>Refresh the catalog, then select an item again to safely resume editing.</p>
+                  <button type="button" className="lm-button lm-button--secondary" onClick={reloadMaintenanceItems}
+                    disabled={maintenanceItemsLoading}>Reload catalog</button>
+                </div>}
+                <div className={styles.dialogActions}>
+                  <button type="button" className="lm-button lm-button--secondary"
+                    onClick={cancelMaintenanceItemDraft}
+                    disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
+                      || maintenanceItemNeedsReload}>Cancel</button>
+                  {maintenanceItemRetryDraft && <button type="button" className="lm-button lm-button--secondary"
+                    onClick={retryMaintenanceItemSave} disabled={maintenanceItemSaving}>Retry same request</button>}
+                  <button type="submit" className="lm-button lm-button--primary"
+                    disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
+                      || maintenanceItemNeedsReload || !maintenanceItemDirty}>
+                    {maintenanceItemSaving ? "Saving..." : maintenanceItemDraft.operation === "create"
+                      ? "Save Maintenance Item" : "Save Changes"}
+                  </button>
+                  {maintenanceItemDraft.operation === "update" && !selectedMaintenanceItem?.archivedAt && (
+                    <button type="button" className={`lm-button lm-button--danger ${styles.archiveAction}`}
+                      aria-label="Archive"
+                      onClick={() => setConfirmation({ kind: "maintenance-item-archive", value: selectedMaintenanceItem })}
+                      disabled={maintenanceItemDirty || maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
+                        || maintenanceItemNeedsReload}>
+                      Archive
+                    </button>
+                  )}
+                </div>
+              </form>
+            ) : selectedMaintenanceItem?.archivedAt ? (
+              <section className={`lm-surface ${styles.maintenanceItemReadOnly}`} aria-label="Archived Maintenance Item">
+                <h3>{selectedMaintenanceItem.displayName}</h3>
+                <p>{selectedMaintenanceItem.group.replaceAll("_", " ")}</p>
+                <p><strong>Archived</strong> — unavailable to future Ongoing drafts.</p>
+              </section>
+            ) : (
+              <section className={`lm-surface ${styles.maintenanceItemReadOnly}`}>
+                <h3>{maintenanceItems.length ? "Select a Maintenance Item" : "Catalog is empty"}</h3>
+                <p>Maintenance Item edits affect future Ongoing drafts only. Existing history is not changed.</p>
+              </section>
+            )}
+          </div>
+        )}
+      </dialog>
+
       <dialog ref={dialogRef} className={styles.dialog} aria-labelledby="vehicles-confirm-title"
         onCancel={(event) => {
           event.preventDefault();
@@ -869,11 +1408,19 @@ export default function VehiclesPage() {
         <h2 id="vehicles-confirm-title">{confirmationTitle}</h2>
         <p>{confirmation?.kind === "delete"
           ? "The record will be removed from the draft and deleted only after Save Changes."
+          : confirmation?.kind === "maintenance-item-archive"
+            ? "The item will be archived, not deleted. It remains available to historical records and is excluded from future Ongoing drafts."
+          : confirmation?.kind === "manage-items-open"
+            ? "Unsaved Ongoing Maintenance edits will be discarded only if you choose the discard action. No item is saved automatically."
+          : confirmation?.kind === "manage-items-open-assets"
+            ? "Unsaved Asset edits will be discarded only if you choose the discard action. No asset is removed from the account."
+          : confirmation?.kind?.startsWith("manage-items")
+            ? "Unsaved Maintenance Item values will be discarded only if you choose the discard action. No item is saved automatically."
           : confirmation?.kind?.startsWith("manage-assets")
             ? "Unsaved changes will be discarded only if you choose the discard action. No asset is removed from the account."
           : saveUncertain
             ? "Keep this request and its generated IDs unchanged. Retry the same save to confirm its outcome."
-            : saving
+            : saving || maintenanceItemSaving
               ? "Wait for the current save to finish before leaving this page."
               : "Unsaved changes will be discarded. They will not be saved automatically."}</p>
         <div className={styles.dialogActions}>
@@ -882,13 +1429,21 @@ export default function VehiclesPage() {
               if (blocker.state === "blocked" && !confirmation) blocker.reset();
               else setConfirmation(null);
             }}>Stay</button>
-          {confirmation?.kind === "delete" && <button type="button" className="lm-button lm-button--danger"
-            onClick={finishConfirmation}>Queue Delete</button>}
+          {(confirmation?.kind === "delete" || confirmation?.kind === "maintenance-item-archive") && (
+            <button type="button" className={`lm-button lm-button--danger ${styles.archiveAction}`}
+              aria-label="Archive Maintenance Item" onClick={finishConfirmation}>
+              {confirmation.kind === "delete" ? "Queue Delete" : "Archive Maintenance Item"}
+            </button>
+          )}
           {confirmation && confirmation.kind !== "delete" && !saveUncertain && !saving
-            && <button type="button" className="lm-button lm-button--danger" onClick={finishConfirmation}>
-              Discard and continue
+            && !maintenanceItemSaving && !maintenanceItemRetryDraft
+            && confirmation.kind !== "maintenance-item-archive" && <button type="button"
+              className="lm-button lm-button--danger" onClick={finishConfirmation}>
+              {["manage-items-close", "manage-items-switch", "manage-items-new"].includes(confirmation.kind)
+                ? "Discard edits" : "Discard and continue"}
             </button>}
           {blocker.state === "blocked" && !confirmation && !saving && !saveUncertain
+            && !maintenanceItemSaving && !maintenanceItemRetryDraft
             && <button type="button" className="lm-button lm-button--danger" onClick={handleRouteDiscard}>
               Discard changes
             </button>}
