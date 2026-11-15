@@ -17,6 +17,14 @@ const ongoingItemGroups = [
   { group: "components_other", title: "Components & Other" },
 ];
 
+const vehicleSections = [
+  { id: "ongoing", label: "Ongoing Maintenance" },
+  { id: "recommended", label: "Recommended Service" },
+  { id: "completed", label: "Completed Service" },
+  { id: "intervals", label: "Maintenance Intervals" },
+  { id: "key-information", label: "Key Information" },
+];
+
 const serviceErrorMessages = {
   validation_error: "Review the highlighted service details and try again.",
   duplicate_service_date: "An Ongoing record already exists for that service date.",
@@ -207,6 +215,7 @@ export default function VehiclesPage() {
   const [deletedRecords, setDeletedRecords] = useState([]);
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [ongoingEditing, setOngoingEditing] = useState(false);
+  const [activeSection, setActiveSection] = useState("ongoing");
   const [confirmation, setConfirmation] = useState(null);
   const [saveError, setSaveError] = useState("");
   const [status, setStatus] = useState("");
@@ -1131,6 +1140,23 @@ export default function VehiclesPage() {
     setOngoingEditing(true);
   }
 
+  function handleVehicleSectionKeyDown(event) {
+    const currentIndex = vehicleSections.findIndex((section) => section.id === activeSection);
+    let nextIndex;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % vehicleSections.length;
+    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + vehicleSections.length) % vehicleSections.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = vehicleSections.length - 1;
+    else return;
+
+    event.preventDefault();
+    const nextSection = vehicleSections[nextIndex];
+    setActiveSection(nextSection.id);
+    event.currentTarget?.parentElement?.querySelector(
+      `[data-vehicles-section="${nextSection.id}"]`,
+    )?.focus();
+  }
+
   function queueDelete() {
     const record = workingRecords.find((entry) => entry.id === selectedRecordId);
     if (!record || saving || saveUncertain) return;
@@ -1351,6 +1377,12 @@ export default function VehiclesPage() {
   }
 
   const selectedRecord = workingRecords.find((record) => record.id === selectedRecordId);
+  const showUsageField = workspace?.asset?.usageUnit !== "none";
+  const usageLabelUnit = selectedRecord?.usageReadingUnit === "none"
+    ? workspace?.asset?.usageUnit : selectedRecord?.usageReadingUnit;
+  const usageLabel = usageLabelUnit === "hours" ? "Hours" : "Mileage";
+  const showUsageSummary = Boolean(selectedRecord && showUsageField
+    && selectedRecord.usageReadingUnit !== "none" && selectedRecord.usageReadingValue !== null);
   const selectedRecordGroups = ongoingItemGroups.map(({ group, title }) => ({
     group,
     title,
@@ -1418,80 +1450,77 @@ export default function VehiclesPage() {
           : saving ? "Save is in progress" : "Discard unsaved Vehicles changes?";
 
   return (
-    <main className={styles.page}>
-      <PageHeader id="vehicles-page-title" title="Vehicles"
-        subtitle="Ongoing Maintenance records for your vehicles."
-        actions={(
-          <>
-            <details className={`${styles.pageMoreActions} ${styles.pageManageActions}`}>
-              <summary ref={manageButtonRef} aria-label="Manage" title="Manage">Manage</summary>
+    <main className={`${styles.page} ${ongoingEditing ? styles.pageEditing : ""}`}>
+      <PageHeader id="vehicles-page-title" title="Vehicles" />
+      <div className={styles.vehicleContextRow}>
+        <div className={styles.assetRow}>
+          <label className="lm-form-field" htmlFor="vehicles-asset-select">
+            <span className="lm-form-label">Vehicle</span>
+            <select id="vehicles-asset-select" className="lm-form-control" value={selectedAssetId}
+              disabled={!assets?.length || saving || saveUncertain}
+              onChange={(event) => selectAsset(event.target.value)}>
+              {assets?.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className={styles.pageActions}>
+          <details className={`${styles.pageMoreActions} ${styles.pageManageActions}`}>
+            <summary ref={manageButtonRef} aria-label="Manage" title="Manage">Manage</summary>
+            <div className={styles.pageMoreActionsMenu}>
+              <button type="button" className="lm-button lm-button--secondary"
+                onClick={(event) => {
+                  event?.currentTarget?.closest("details")?.removeAttribute("open");
+                  openManageAssets();
+                }} disabled={saving || saveUncertain || manageSaving
+                  || maintenanceItemSaving || manageMaintenanceItemsOpen || manageMaintenanceIntervalsOpen}>
+                Manage Assets
+              </button>
+              <button ref={manageMaintenanceItemsButtonRef} type="button" className="lm-button lm-button--secondary"
+                onClick={(event) => {
+                  event?.currentTarget?.closest("details")?.removeAttribute("open");
+                  openManageMaintenanceItems();
+                }} disabled={saving || saveUncertain || manageSaving
+                  || manageRetryDraft || maintenanceItemSaving || manageMaintenanceIntervalsOpen}>
+                Manage Maintenance Items
+              </button>
+              <button ref={manageMaintenanceIntervalsButtonRef} type="button" className="lm-button lm-button--secondary"
+                onClick={(event) => {
+                  event?.currentTarget?.closest("details")?.removeAttribute("open");
+                  openManageMaintenanceIntervals();
+                }} disabled={!workspace || workspaceLoading || saving || saveUncertain || manageSaving || manageRetryDraft
+                  || maintenanceItemSaving || maintenanceItemRetryDraft || maintenanceIntervalSaving
+                  || manageMaintenanceIntervalsOpen}>
+                Manage Maintenance Intervals
+              </button>
+            </div>
+          </details>
+          {selectedRecord && !selectedRecord.isNew && !ongoingEditing && (
+            <button type="button" className="lm-button lm-button--secondary"
+              onClick={editSelectedRecord} disabled={saving || saveUncertain}>Edit</button>
+          )}
+          {workspace && !ongoingEditing && <button type="button" className="lm-button lm-button--primary"
+            onClick={addRecord} disabled={saving || saveUncertain}>Add Ongoing Record</button>}
+          {selectedRecord && !selectedRecord.isNew && !ongoingEditing && (
+            <details className={styles.pageMoreActions}>
+              <summary aria-label="More actions" title="More actions">
+                <MoreHorizontal aria-hidden="true" size={18} />
+              </summary>
               <div className={styles.pageMoreActionsMenu}>
-                <button type="button" className="lm-button lm-button--secondary"
+                <button type="button" className="lm-button lm-button--danger"
                   onClick={(event) => {
                     event?.currentTarget?.closest("details")?.removeAttribute("open");
-                    openManageAssets();
-                  }} disabled={saving || saveUncertain || manageSaving
-                    || maintenanceItemSaving || manageMaintenanceItemsOpen || manageMaintenanceIntervalsOpen}>
-                  Manage Assets
-                </button>
-                <button ref={manageMaintenanceItemsButtonRef} type="button" className="lm-button lm-button--secondary"
-                  onClick={(event) => {
-                    event?.currentTarget?.closest("details")?.removeAttribute("open");
-                    openManageMaintenanceItems();
-                  }} disabled={saving || saveUncertain || manageSaving
-                    || manageRetryDraft || maintenanceItemSaving || manageMaintenanceIntervalsOpen}>
-                  Manage Maintenance Items
-                </button>
-                <button ref={manageMaintenanceIntervalsButtonRef} type="button" className="lm-button lm-button--secondary"
-                  onClick={(event) => {
-                    event?.currentTarget?.closest("details")?.removeAttribute("open");
-                    openManageMaintenanceIntervals();
-                  }} disabled={!workspace || workspaceLoading || saving || saveUncertain || manageSaving || manageRetryDraft
-                    || maintenanceItemSaving || maintenanceItemRetryDraft || maintenanceIntervalSaving
-                    || manageMaintenanceIntervalsOpen}>
-                  Manage Maintenance Intervals
-                </button>
+                    queueDelete();
+                  }} disabled={saving || saveUncertain}>Delete Record</button>
               </div>
             </details>
-            {selectedRecord && !selectedRecord.isNew && !ongoingEditing && (
-              <button type="button" className="lm-button lm-button--secondary"
-                onClick={editSelectedRecord} disabled={saving || saveUncertain}>Edit</button>
-            )}
-            {workspace && !ongoingEditing && <button type="button" className="lm-button lm-button--primary"
-              onClick={addRecord} disabled={saving || saveUncertain}>Add Ongoing Record</button>}
-            {selectedRecord && !selectedRecord.isNew && !ongoingEditing && (
-              <details className={styles.pageMoreActions}>
-                <summary aria-label="More actions" title="More actions">
-                  <MoreHorizontal aria-hidden="true" size={18} />
-                </summary>
-                <div className={styles.pageMoreActionsMenu}>
-                  <button type="button" className="lm-button lm-button--danger"
-                    onClick={(event) => {
-                      event?.currentTarget?.closest("details")?.removeAttribute("open");
-                      queueDelete();
-                    }} disabled={saving || saveUncertain}>Delete Record</button>
-                </div>
-              </details>
-            )}
-            {ongoingEditing && <button type="button"
-              className={`lm-button lm-button--secondary ${styles.desktopSessionAction}`}
-              onClick={resetDraft} disabled={saving || saveUncertain}>Cancel Changes</button>
-            }
-            {ongoingEditing && <button type="button" className={`lm-button lm-button--primary ${styles.desktopSessionAction}`}
-              onClick={() => saveChanges({ preventDefault() {} })}
-              disabled={!dirty || saving || workspaceLoading || saveUncertain}>Save Changes</button>}
-          </>
-        )} />
-
-      <div className={styles.assetRow}>
-        <label className="lm-form-field" htmlFor="vehicles-asset-select">
-          <span className="lm-form-label">Vehicle</span>
-          <select id="vehicles-asset-select" className="lm-form-control" value={selectedAssetId}
-            disabled={!assets?.length || saving || saveUncertain}
-            onChange={(event) => selectAsset(event.target.value)}>
-            {assets?.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
-          </select>
-        </label>
+          )}
+          {ongoingEditing && <button type="button"
+            className={`lm-button lm-button--secondary ${styles.desktopSessionAction}`}
+            onClick={resetDraft} disabled={saving || saveUncertain}>Cancel Changes</button>}
+          {ongoingEditing && <button type="button" className={`lm-button lm-button--primary ${styles.desktopSessionAction}`}
+            onClick={() => saveChanges({ preventDefault() {} })}
+            disabled={!dirty || saving || workspaceLoading || saveUncertain}>Save Changes</button>}
+        </div>
       </div>
 
       {assets === null && !assetError && <p className="lm-loading-state" role="status">Loading Vehicles...</p>}
@@ -1508,7 +1537,6 @@ export default function VehiclesPage() {
         <button ref={manageButtonRef} type="button" className="lm-button lm-button--primary"
           onClick={openManageAssets} disabled={saving || saveUncertain}>Add an asset</button>
       </section>}
-
       {assets?.length > 0 && (workspaceLoading || !workspace) && !workspaceError
         && <p className="lm-loading-state" role="status">Loading vehicle maintenance...</p>}
       {workspaceError && <div className="lm-feedback lm-feedback--error" role="alert">
@@ -1521,25 +1549,60 @@ export default function VehiclesPage() {
 
       {workspace && workspace.asset.id === selectedAssetId && !workspaceLoading && !workspaceError && (
         <>
-          <div className={styles.sectionHeading}>
-            <div>
-              <h2>Ongoing Maintenance</h2>
-              <p>Service history is shown newest first. Existing item names and membership are preserved as captured.</p>
-            </div>
-          </div>
+          <nav className={styles.sectionTabs} role="tablist" aria-label="Vehicles sections">
+            {vehicleSections.map((section) => (
+              <button key={section.id} type="button" role="tab"
+                id={`vehicles-section-tab-${section.id}`}
+                data-vehicles-section={section.id}
+                aria-controls="vehicles-section-panel"
+                aria-selected={activeSection === section.id}
+                aria-label={dirty && section.id === "ongoing"
+                  ? `${section.label}, unsaved changes` : section.label}
+                tabIndex={activeSection === section.id ? 0 : -1}
+                className={`${styles.sectionTab} ${activeSection === section.id ? styles.sectionTabActive : ""}`}
+                onClick={() => setActiveSection(section.id)}
+                onKeyDown={handleVehicleSectionKeyDown}>
+                <span>{section.label}</span>
+                {dirty && section.id === "ongoing" && (
+                  <span className={styles.sectionDirtyIndicator} aria-hidden="true" />
+                )}
+              </button>
+            ))}
+          </nav>
+          <label className={styles.mobileSectionSelector} htmlFor="vehicles-section-select">
+            <span className="lm-form-label">Section</span>
+            <select id="vehicles-section-select" className="lm-form-control" value={activeSection}
+              onChange={(event) => setActiveSection(event.target.value)}>
+              {vehicleSections.map((section) => (
+                <option key={section.id} value={section.id}>{section.label}</option>
+              ))}
+            </select>
+          </label>
 
-          {saveError && <div className="lm-feedback lm-feedback--error" role="alert">
-            <p>{saveError}</p>
-            {saveUncertain
-              ? <button type="button" className="lm-button lm-button--secondary" onClick={retryUnknownSave}
-                disabled={saving}>Retry same save</button>
-              : <button type="button" className="lm-button lm-button--secondary"
-                onClick={retryWorkspaceLoad}
-                disabled={dirty || saving}>Reload workspace</button>}
-          </div>}
-          {status && <p className="lm-feedback" role="status" aria-live="polite">{status}</p>}
+          <div id="vehicles-section-panel" className={styles.sectionPanel} role="tabpanel"
+            aria-label={vehicleSections.find((section) => section.id === activeSection)?.label || "Vehicles section"}
+            aria-labelledby={`vehicles-section-tab-${activeSection}`}>
+            {activeSection === "ongoing" && (
+              <>
+                <div className={styles.sectionHeading}>
+                  <div>
+                    <h2>Ongoing Maintenance</h2>
+                  </div>
+                </div>
 
-          <div className={styles.workspace}>
+                {saveError && <div className="lm-feedback lm-feedback--error" role="alert">
+                  <p>{saveError}</p>
+                  {saveUncertain
+                    ? <button type="button" className="lm-button lm-button--secondary" onClick={retryUnknownSave}
+                      disabled={saving}>Retry same save</button>
+                    : <button type="button" className="lm-button lm-button--secondary"
+                      onClick={retryWorkspaceLoad}
+                      disabled={dirty || saving}>Reload workspace</button>}
+                </div>}
+                {status && <p className={`lm-feedback ${ongoingEditing && selectedRecord?.isNew ? styles.visuallyHidden : ""}`}
+                  role="status" aria-live="polite">{status}</p>}
+
+                <div className={styles.workspace}>
             <section className={`lm-surface ${styles.recordList}`} aria-labelledby="ongoing-record-list-title">
               <h3 id="ongoing-record-list-title">Service records</h3>
               {workingRecords.length === 0
@@ -1554,9 +1617,6 @@ export default function VehiclesPage() {
                       disabled={saving || saveUncertain}
                       onClick={() => selectRecord(record.id)}>
                       <strong>{record.serviceDate}</strong>
-                      <span>{record.usageReadingUnit === "none" || record.usageReadingValue === null
-                        ? "No usage reading"
-                        : `${record.usageReadingValue} ${record.usageReadingUnit}`}</span>
                       {record.isNew && <span className="lm-badge">New draft</span>}
                     </button>
                   ))}
@@ -1573,7 +1633,7 @@ export default function VehiclesPage() {
                   </div>
                 </div>
 
-                {ongoingEditing ? <div className={styles.fields}>
+                {ongoingEditing ? <div className={`${styles.fields} ${showUsageField ? "" : styles.fieldsWithoutUsage}`}>
                   <label className="lm-form-field" htmlFor="vehicles-service-date">
                     <span className="lm-form-label">Service date</span>
                     <input id="vehicles-service-date" className="lm-form-control" type="date" required
@@ -1581,37 +1641,43 @@ export default function VehiclesPage() {
                       aria-invalid={!selectedRecord.serviceDate}
                       onChange={(event) => updateRecord(selectedRecord.id, { serviceDate: event.target.value })} />
                   </label>
-                  <label className="lm-form-field" htmlFor="vehicles-usage-unit">
-                    <span className="lm-form-label">Historical usage unit</span>
-                    <select id="vehicles-usage-unit" className="lm-form-control"
-                      value={selectedRecord.usageReadingUnit} disabled={saving || saveUncertain}
-                      onChange={(event) => updateRecord(selectedRecord.id, {
-                        usageReadingUnit: event.target.value,
-                        usageReadingValue: event.target.value === "none" ? null : selectedRecord.usageReadingValue,
-                      })}>
-                      <option value="miles">Miles</option>
-                      <option value="hours">Hours</option>
-                      <option value="none">No usage reading</option>
-                    </select>
-                  </label>
-                  <label className="lm-form-field" htmlFor="vehicles-usage-value">
-                    <span className="lm-form-label">Historical usage value</span>
-                    <input id="vehicles-usage-value" className="lm-form-control" type="number" min="0" step="any"
-                      value={selectedRecord.usageReadingValue ?? ""}
-                      disabled={saving || saveUncertain || selectedRecord.usageReadingUnit === "none"}
-                      onChange={(event) => updateRecord(selectedRecord.id, {
-                        usageReadingValue: event.target.value === "" ? null : Number(event.target.value),
-                      })} />
-                  </label>
+                  {showUsageField && <div className={`lm-form-field ${styles.usageField}`}
+                    role="group" aria-labelledby="vehicles-usage-field-label">
+                    <span id="vehicles-usage-field-label" className="lm-form-label">{usageLabel}</span>
+                    <div className={styles.usageControls}>
+                      <label className={styles.usageControl} htmlFor="vehicles-usage-unit">
+                        <span className={styles.visuallyHidden}>Historical usage unit</span>
+                        <select id="vehicles-usage-unit" className="lm-form-control"
+                          value={selectedRecord.usageReadingUnit} disabled={saving || saveUncertain}
+                          onChange={(event) => updateRecord(selectedRecord.id, {
+                            usageReadingUnit: event.target.value,
+                            usageReadingValue: event.target.value === "none" ? null : selectedRecord.usageReadingValue,
+                          })}>
+                          <option value="miles">Miles</option>
+                          <option value="hours">Hours</option>
+                          <option value="none">No usage reading</option>
+                        </select>
+                      </label>
+                      <label className={styles.usageControl} htmlFor="vehicles-usage-value">
+                        <span className={styles.visuallyHidden}>{usageLabel} value</span>
+                        <input id="vehicles-usage-value" className="lm-form-control" type="number" min="0" step="any"
+                          value={selectedRecord.usageReadingValue ?? ""}
+                          disabled={saving || saveUncertain || selectedRecord.usageReadingUnit === "none"}
+                          onChange={(event) => updateRecord(selectedRecord.id, {
+                            usageReadingValue: event.target.value === "" ? null : Number(event.target.value),
+                          })} />
+                      </label>
+                    </div>
+                  </div>}
                   <label className="lm-form-field" htmlFor="vehicles-mechanic">
                     <span className="lm-form-label">Mechanic (optional)</span>
                     <input id="vehicles-mechanic" className="lm-form-control" type="text" maxLength="160"
                       value={selectedRecord.mechanic || ""} disabled={saving || saveUncertain}
                       onChange={(event) => updateRecord(selectedRecord.id, { mechanic: event.target.value || null })} />
                   </label>
-                </div> : <dl className={styles.recordSummary}>
+                </div> : <dl className={`${styles.recordSummary} ${showUsageSummary ? "" : styles.recordSummaryWithoutUsage}`}>
                   <div><dt>Service date</dt><dd>{selectedRecord.serviceDate}</dd></div>
-                  {selectedRecord.usageReadingUnit !== "none" && selectedRecord.usageReadingValue !== null && (
+                  {showUsageSummary && (
                     <div>
                       <dt>{selectedRecord.usageReadingUnit === "miles" ? "Mileage" : "Hours"}</dt>
                       <dd>{selectedRecord.usageReadingValue.toLocaleString()} {selectedRecord.usageReadingUnit}</dd>
@@ -1652,6 +1718,49 @@ export default function VehiclesPage() {
               <h3 id="ongoing-empty-title">Select or add an Ongoing record</h3>
               <p>This vehicle has no saved Ongoing records yet.</p>
             </section>}
+                </div>
+              </>
+            )}
+
+            {activeSection === "intervals" && (
+              <section className={styles.sectionContent} aria-labelledby="vehicles-intervals-section-title">
+                <div className={styles.sectionHeading}>
+                  <div>
+                    <h2 id="vehicles-intervals-section-title">Maintenance Intervals</h2>
+                    <p>Intervals are specific to {workspace.asset.name}.</p>
+                  </div>
+                  <button type="button" className="lm-button lm-button--secondary"
+                    onClick={openManageMaintenanceIntervals}
+                    disabled={workspaceLoading || saving || saveUncertain || manageSaving || manageRetryDraft
+                      || maintenanceItemSaving || maintenanceItemRetryDraft || maintenanceIntervalSaving
+                      || manageMaintenanceIntervalsOpen}>
+                    Manage Maintenance Intervals
+                  </button>
+                </div>
+                {maintenanceIntervals.length === 0
+                  ? <p className="lm-empty-state">No Maintenance Intervals are set for this asset.</p>
+                  : <ul className={styles.sectionIntervalList} aria-label="Maintenance Intervals for selected asset">
+                    {[...maintenanceIntervals].sort((left, right) =>
+                      left.maintenanceItemName.localeCompare(right.maintenanceItemName)
+                        || left.id.localeCompare(right.id)).map((interval) => (
+                      <li key={interval.id}>
+                        <strong>{interval.maintenanceItemName}</strong>
+                        <span>{interval.recommendedInterval.value} {interval.recommendedInterval.unit}</span>
+                        <span>{maintenanceIntervalSummary(interval)}</span>
+                      </li>
+                    ))}
+                  </ul>}
+              </section>
+            )}
+
+            {activeSection !== "ongoing" && activeSection !== "intervals" && (
+              <section className={styles.sectionContent} aria-labelledby="vehicles-unavailable-section-title">
+                <h2 id="vehicles-unavailable-section-title">
+                  {vehicleSections.find((section) => section.id === activeSection)?.label}
+                </h2>
+                <p>This section is not yet available in this Vehicles workspace.</p>
+              </section>
+            )}
           </div>
           {ongoingEditing && <div className={styles.mobileSessionActions} aria-label="Ongoing editing actions">
             <button type="button" className="lm-button lm-button--secondary"

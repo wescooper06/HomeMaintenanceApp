@@ -1040,9 +1040,8 @@ test("Manage Assets does not expose database writes or Delete Asset", () => {
 test("Vehicles page actions follow the canonical Manage, Edit, Add, More order", async () => {
   const ui = harness();
   await ui.settle();
-  const header = ui.find((node) => node.type === "header" && node.props.id === "vehicles-page-title");
-  const actionFragment = header.children[2];
-  const actions = actionFragment.children.map((node) => {
+  const actionContainer = ui.find((node) => node.props?.className === "pageActions");
+  const actions = actionContainer.children.map((node) => {
     if (node.type === "details") {
       const summary = node.children.find((child) => child.type === "summary");
       return summary.props["aria-label"] || ui.text(summary);
@@ -1050,7 +1049,133 @@ test("Vehicles page actions follow the canonical Manage, Edit, Add, More order",
     return node.type === "button" ? ui.text(node) : "";
   }).filter(Boolean);
   assert.deepEqual(actions, ["Manage", "Edit", "Add Ongoing Record", "More actions"]);
-  assert.equal(actionFragment.children.some((node) => node.type === "button" && ui.text(node) === "Delete Record"), false);
+  assert.equal(actionContainer.children.some((node) => node.type === "button" && ui.text(node) === "Delete Record"), false);
+});
+
+test("Vehicles shell exposes the canonical five sections in order above section content", async () => {
+  const ui = harness();
+  await ui.settle();
+
+  const sectionTabs = ui.find((node) => node.type === "nav" && node.props.role === "tablist");
+  const tabs = ui.nodes(sectionTabs).filter((node) => node.type === "button" && node.props.role === "tab");
+  const labels = [
+    "Ongoing Maintenance", "Recommended Service", "Completed Service", "Maintenance Intervals", "Key Information",
+  ];
+  assert.deepEqual(tabs.map((tab) => ui.text(tab)), labels);
+  assert.deepEqual(tabs.map((tab) => tab.props["aria-selected"]), [true, false, false, false, false]);
+
+  const mobileSelector = ui.input("vehicles-section-select");
+  assert.equal(mobileSelector.props.value, "ongoing");
+  assert.deepEqual(mobileSelector.children.map((option) => ui.text(option)), labels);
+
+  const sectionPanel = ui.find((node) => node.props?.id === "vehicles-section-panel");
+  const orderedNodes = ui.nodes();
+  const header = ui.find((node) => node.type === "header" && node.props.id === "vehicles-page-title");
+  const contextRow = ui.find((node) => node.props?.className === "vehicleContextRow");
+  const assetSelector = ui.find((node) => node.props?.className === "assetRow");
+  const actionContainer = ui.find((node) => node.props?.className === "pageActions");
+  assert(orderedNodes.indexOf(header) < orderedNodes.indexOf(assetSelector));
+  assert(contextRow.children.includes(assetSelector));
+  assert(contextRow.children.includes(actionContainer));
+  assert(orderedNodes.indexOf(contextRow) < orderedNodes.indexOf(sectionTabs));
+  assert(orderedNodes.indexOf(sectionTabs) < orderedNodes.indexOf(sectionPanel));
+  assert.equal(sectionPanel.props.role, "tabpanel");
+  assert.equal(sectionPanel.props["aria-label"], "Ongoing Maintenance");
+
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.sectionTabs\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(css, /\.sectionTabActive\s*\{[^}]*border-bottom-color:\s*var\(--lm-color-primary\)/s);
+  assert.match(css, /\.vehicleContextRow\s*\{[^}]*display:\s*flex/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.sectionTabs\s*\{[^}]*display:\s*none/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.vehicleContextRow\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.mobileSectionSelector\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.mobileSessionActions\s*\{[^}]*position:\s*sticky;[^}]*margin-top:\s*auto;[^}]*margin-bottom:\s*calc/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.pageEditing\s*\{[^}]*min-height:/);
+});
+
+test("Section switching preserves the asset and dirty Ongoing session without saving", async () => {
+  const ui = harness();
+  await ui.settle();
+  const assetId = ui.input("vehicles-asset-select").props.value;
+  const workspacesBefore = ui.calls.workspaces.length;
+
+  for (const [label, expectedId] of [
+    ["Recommended Service", "recommended"],
+    ["Completed Service", "completed"],
+    ["Key Information", "key-information"],
+  ]) {
+    ui.button(label).props.onClick();
+    ui.render();
+    const panel = ui.find((node) => node.props?.id === "vehicles-section-panel");
+    assert.equal(panel.props["aria-label"], label);
+    assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
+    assert.match(ui.text(panel), /not yet available/);
+    assert.equal(ui.calls.saves.length, 0);
+    assert.equal(ui.calls.workspaces.length, workspacesBefore);
+    assert.equal(ui.button("Discard and continue"), undefined);
+    assert.equal(ui.find((node) => node.props?.["data-vehicles-section"] === expectedId)
+      .props["aria-selected"], true);
+  }
+
+  ui.button("Ongoing Maintenance").props.onClick();
+  ui.render();
+  enterOngoingEdit(ui);
+  ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-04" } });
+  ui.render();
+  for (const [label, expectedId] of [
+    ["Recommended Service", "recommended"],
+    ["Completed Service", "completed"],
+    ["Maintenance Intervals", "intervals"],
+    ["Key Information", "key-information"],
+  ]) {
+    ui.button(label).props.onClick();
+    ui.render();
+    assert.equal(ui.find((node) => node.props?.id === "vehicles-section-panel").props["aria-label"], label);
+    assert.equal(ui.find((node) => node.props?.["data-vehicles-section"] === expectedId)
+      .props["aria-selected"], true);
+    assert.equal(ui.shouldBlock(), true);
+    assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
+    assert(ui.button("Cancel Changes"));
+    assert(ui.button("Save Changes"));
+    assert.equal(ui.button("Discard and continue"), undefined);
+    assert.equal(ui.calls.saves.length, 0);
+    assert.equal(ui.calls.workspaces.length, workspacesBefore);
+  }
+  const sectionPanel = ui.find((node) => node.props?.id === "vehicles-section-panel");
+  const mobileSessionActions = ui.find((node) => node.props?.className === "mobileSessionActions");
+  assert(mobileSessionActions);
+  assert.equal(ui.nodes(sectionPanel).includes(mobileSessionActions), false);
+
+  ui.button("Ongoing Maintenance").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-04");
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.calls.saves.length, 0);
+  assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
+});
+
+test("Maintenance Intervals section reads existing data and opens the existing manager", async () => {
+  const intervalEntry = interval(601, 301, {
+    assetId: uuid(1),
+    maintenanceItemName: "Oil Change",
+  });
+  const ui = harness({ initialIntervals: [intervalEntry] });
+  await ui.settle();
+  ui.button("Maintenance Intervals").props.onClick();
+  ui.render();
+
+  const panel = ui.find((node) => node.props?.id === "vehicles-section-panel");
+  assert.equal(panel.props["aria-label"], "Maintenance Intervals");
+  assert.match(ui.text(panel), /Oil Change/);
+  assert.match(ui.text(panel), /5000 miles/);
+  const managerButton = ui.nodes(panel).find((node) => node.type === "button"
+    && ui.text(node) === "Manage Maintenance Intervals");
+  assert(managerButton);
+  managerButton.props.onClick();
+  ui.render();
+  assert.equal(ui.intervalDialog.open, true);
+  assert.equal(ui.calls.saves.length, 0);
 });
 
 test("Workspace selects newest history and preserves historical snapshots and true/false states", async () => {
@@ -1206,14 +1331,126 @@ test("Ongoing checklist groups stored snapshots and preserves IDs, states, and p
   ]);
 });
 
-test("Ongoing checklist uses responsive grouped columns and a bounded desktop scroll region", () => {
+test("Ongoing layout has compact desktop rows, full grouped content, and unbounded checklist flow", async () => {
   const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(11rem,\s*0\.45fr\)\s+minmax\(0,\s*3\.55fr\)/s);
+  assert.match(css, /\.fields\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(css, /\.recordSummary\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
   assert.match(css, /\.itemGroups\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
   assert.match(css, /@media\s*\(max-width:\s*900px\)[\s\S]*?\.itemGroups\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.itemGroups\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(css, /\.itemToggle\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(css, /@media\s*\(max-width:\s*900px\)[\s\S]*?\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.fields\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.recordSummary\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.itemToggle\s*\{[^}]*min-height:\s*36px/s);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.itemToggle\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);
   assert.match(css, /\.itemToggle\s+:global\(\.lm-checkbox\):focus-visible\s*~\s*\.switchTrack\s*\{[^}]*outline:/s);
-  assert.match(css, /\.items\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:\s*auto/s);
+  const checklistRule = css.match(/\.items\s*\{([^}]*)\}/s)?.[1] || "";
+  assert.doesNotMatch(checklistRule, /max-height|overflow-y:\s*auto/);
+  assert.doesNotMatch(css, /\.itemGroup(List)?\s*\{[^}]*overflow-y:\s*auto/s);
+
+  const fordAsset = { ...assets[0], name: "Ford Expedition", usageUnit: "miles" };
+  const fordItems = [
+    ["routine", ["Air Filter", "Cabin Filter", "Fuel Filter", "Oil Change", "Oil Filter", "Tire Rotation", "Tires", "Wiper Refills"]],
+    ["fluids_drivetrain", ["A/C Refrigerant", "Brake Fluid", "Coolant", "Front Differential", "P/S Fluid", "Rear Differential", "Trans Fluid & Filter", "Transfer Case"]],
+    ["components_other", ["Battery", "MAF", "PCV Valve", "Spark Plugs", "T-Body"]],
+  ].flatMap(([group, names], groupIndex) => names.map((name, itemIndex) => item(
+    400 + groupIndex * 20 + itemIndex,
+    name,
+    ["Fuel Filter", "Oil Change", "Oil Filter", "Tire Rotation", "Spark Plugs"].includes(name),
+    group,
+  )));
+  const ui = harness({
+    initialAssets: [fordAsset],
+    loadVehicleWorkspace: async () => workspace(fordAsset, [record(12, "2023-02-27", {
+      usageReadingValue: 81513,
+      mechanic: "G&L Automotive",
+      capturedItems: fordItems,
+    })]),
+    createOngoingMaintenanceDraftTemplate: async (assetId) => ({
+      assetId,
+      usageReadingUnit: "miles",
+      items: fordItems.map((entry) => ({ ...entry, isPerformed: false })),
+    }),
+  });
+  await ui.settle();
+
+  const summary = ui.find((node) => node.type === "dl" && String(node.props.className).includes("recordSummary"));
+  assert.equal(summary.children.length, 3);
+  assert.match(ui.text(summary), /2023-02-27/);
+  assert.match(ui.text(summary), /81,513 miles/);
+  assert.match(ui.text(summary), /G&L Automotive/);
+  const recordList = ui.find((node) => node.props?.["aria-label"] === "Ongoing Maintenance records");
+  const navigationEntries = ui.nodes(recordList).filter((node) => node.type === "button"
+    && String(node.props.className).includes("recordButton"));
+  assert.deepEqual(navigationEntries.map((node) => ui.text(node)), ["2023-02-27"]);
+  assert.doesNotMatch(ui.text(navigationEntries[0]), /81513|miles|hours|G&L Automotive/i);
+  const groupNodes = ui.nodes().filter((node) => node.type === "section" && node.props.className === "itemGroup");
+  assert.deepEqual(groupNodes.map((group) => ui.text(ui.nodes(group).find((node) => node.type === "h4"))), [
+    "Routine", "Fluids & Drivetrain", "Components & Other",
+  ]);
+  const savedSwitches = ui.nodes().filter((node) => node.type === "input" && node.props.role === "switch");
+  assert.equal(savedSwitches.length, 21);
+  assert.equal(new Set(savedSwitches.map((node) => node.props["aria-label"])).size, 21);
+  assert.equal(savedSwitches.filter((node) => node.props.checked).length, 5);
+
+  enterOngoingEdit(ui);
+  const form = ui.find((node) => node.type === "form" && node.props.id === "vehicles-edit-form");
+  const editRow = form.children.find((node) => node.type === "div"
+    && String(node.props.className).split(/\s+/).includes("fields"));
+  assert.equal(editRow.children.length, 3);
+  assert.equal(editRow.children[0].props.htmlFor, "vehicles-service-date");
+  assert.equal(editRow.children[1].props.role, "group");
+  assert.equal(editRow.children[2].props.htmlFor, "vehicles-mechanic");
+  assert(ui.input("vehicles-usage-unit"));
+  assert(ui.input("vehicles-usage-value"));
+  assert.equal(ui.nodes().filter((node) => node.type === "input" && node.props.role === "switch").length, 21);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.calls.saves.length, 0);
+
+  await ui.button("Add Ongoing Record").props.onClick();
+  ui.render();
+  const addStatus = ui.find((node) => node.props?.role === "status" && ui.text(node).includes("New Ongoing record"));
+  assert(addStatus);
+  assert.match(addStatus.props.className, /visuallyHidden/);
+  const addForm = ui.find((node) => node.type === "form" && node.props.id === "vehicles-edit-form");
+  const addRow = addForm.children.find((node) => node.type === "div"
+    && String(node.props.className).split(/\s+/).includes("fields"));
+  assert.equal(addRow.children.length, 3);
+  assert.equal(ui.nodes().filter((node) => node.type === "input" && node.props.role === "switch").length, 21);
+  assert.equal(ui.calls.saves.length, 0);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.calls.saves.length, 0);
+
+  const noUsageAsset = { ...fordAsset, usageUnit: "none" };
+  const noUsageUi = harness({
+    initialAssets: [noUsageAsset],
+    loadVehicleWorkspace: async () => workspace(noUsageAsset, [record(13, "2026-02-01", {
+      usageReadingValue: null,
+      usageReadingUnit: "none",
+      mechanic: "No Usage Shop",
+    })]),
+    createOngoingMaintenanceDraftTemplate: async (assetId) => ({
+      assetId,
+      usageReadingUnit: "none",
+      items: [item(500, "Engine Oil", false)],
+    }),
+  });
+  await noUsageUi.settle();
+  const noUsageSummary = noUsageUi.find((node) => node.type === "dl"
+    && String(node.props.className).includes("recordSummary"));
+  assert.equal(noUsageSummary.children.length, 2);
+  await noUsageUi.button("Add Ongoing Record").props.onClick();
+  noUsageUi.render();
+  const noUsageForm = noUsageUi.find((node) => node.type === "form" && node.props.id === "vehicles-edit-form");
+  const noUsageRow = noUsageForm.children.find((node) => node.type === "div"
+    && String(node.props.className).split(/\s+/).includes("fields"));
+  assert.equal(noUsageRow.children.length, 2);
+  assert.equal(noUsageUi.input("vehicles-usage-unit"), undefined);
+  assert.equal(noUsageUi.input("vehicles-usage-value"), undefined);
+  assert.equal(noUsageUi.calls.saves.length, 0);
 });
 
 test("Edit marks the session dirty; Cancel restores persisted values without an RPC", async () => {
