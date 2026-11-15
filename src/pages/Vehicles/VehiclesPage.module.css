@@ -1,9 +1,13 @@
 .page {
   display: grid;
-  gap: var(--lm-space-4);
+  gap: var(--lm-space-2);
   min-width: 0;
-  padding: var(--lm-space-6);
+  padding: var(--lm-space-4);
   color: var(--lm-color-text);
+}
+
+.page > :global(.lm-page-header) {
+  margin-bottom: var(--lm-space-3);
 }
 
 .assetRow {
@@ -107,33 +111,39 @@
 
 .detail {
   display: grid;
-  gap: var(--lm-space-4);
+  gap: var(--lm-space-2);
 }
 
 .fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--lm-space-4);
+  gap: var(--lm-space-2);
 }
 
 .items {
-  display: grid;
+  display: block;
+  max-height: min(15rem, calc(100vh - 40rem));
+  min-height: 0;
   min-width: 0;
   gap: var(--lm-space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--lm-color-border);
   border-radius: var(--lm-radius-control);
   padding: var(--lm-space-4);
 }
 
 .items legend {
+  margin-bottom: var(--lm-space-2);
   padding-inline: var(--lm-space-2);
   font-weight: 700;
 }
 
 .itemToggle {
+  position: relative;
   display: grid;
-  min-height: var(--lm-control-desktop);
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: var(--lm-control-mobile);
+  grid-template-columns: minmax(0, 1fr) 44px;
   align-items: center;
   gap: var(--lm-space-3);
   border-bottom: 1px solid var(--lm-color-border);
@@ -145,12 +155,65 @@
   border-bottom: 0;
 }
 
-.inlineActions,
 .dialogActions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--lm-space-2);
+}
+
+.pageMoreActions {
+  position: relative;
+}
+
+.pageMoreActions > summary {
+  display: grid;
+  width: var(--lm-control-desktop);
+  height: var(--lm-control-desktop);
+  place-items: center;
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.pageMoreActions > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pageManageActions > summary {
+  width: auto;
+  min-width: var(--lm-control-desktop);
+  padding-inline: var(--lm-space-3);
+  font-weight: 600;
+}
+
+.pageMoreActions > summary:focus-visible,
+.pageMoreActionsMenu button:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
+.pageMoreActionsMenu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + var(--lm-space-1));
+  inset-inline-end: 0;
+  display: grid;
+  min-width: 14rem;
+  gap: var(--lm-space-2);
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  padding: var(--lm-space-2);
+  background: var(--lm-color-surface);
+  box-shadow: var(--lm-shadow-overlay);
+}
+
+.pageMoreActionsMenu button {
+  width: 100%;
+  text-align: left;
 }
 
 .dialog {
@@ -160,6 +223,41 @@
   padding: var(--lm-space-6);
   color: var(--lm-color-text);
   box-shadow: var(--lm-shadow-overlay);
+}
+
+.itemGroups {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--lm-space-3);
+}
+
+.itemGroup {
+  min-width: 0;
+}
+
+.itemGroupTitle {
+  margin: 0 0 var(--lm-space-2);
+  border-bottom: 1px solid var(--lm-color-border);
+  padding: var(--lm-space-2);
+  background: var(--lm-color-surface-subtle);
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-label);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.itemGroupList {
+  display: grid;
+  min-width: 0;
+}
+
+.emptyItemGroup {
+  margin: 0;
+  padding: var(--lm-space-2);
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-secondary);
 }
 
 .assetsDialog {
@@ -178,6 +276,63 @@
   width: min(68rem, calc(100vw - 32px));
   max-height: min(52rem, calc(100vh - 32px));
   overflow: auto;
+}
+
+.itemLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.itemToggle :global(.lm-checkbox) {
+  position: absolute;
+  inset-inline-end: var(--lm-space-2);
+  top: 50%;
+  z-index: 1;
+  width: 44px;
+  min-width: 44px;
+  height: 24px;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.switchTrack {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border: 1px solid var(--lm-color-border-strong);
+  border-radius: var(--lm-radius-pill);
+  background: var(--lm-color-disabled-surface);
+  pointer-events: none;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.switchTrack::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--lm-radius-pill);
+  background: var(--lm-color-surface);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 20%);
+  content: "";
+  transition: transform 120ms ease;
+}
+
+.itemToggle :global(.lm-checkbox):checked ~ .switchTrack {
+  border-color: var(--lm-color-primary);
+  background: var(--lm-color-primary);
+}
+
+.itemToggle :global(.lm-checkbox):focus-visible ~ .switchTrack {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 3px;
+}
+
+.itemToggle :global(.lm-checkbox):checked ~ .switchTrack::after {
+  transform: translateX(20px);
 }
 
 .maintenanceIntervalManager {
@@ -375,6 +530,10 @@
   margin-top: var(--lm-space-6);
 }
 
+.mobileSessionActions {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
@@ -391,6 +550,27 @@
     padding: var(--lm-space-4);
   }
 
+  .desktopSessionAction {
+    display: none;
+  }
+
+  .mobileSessionActions {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--lm-space-2);
+    margin: 0 calc(-1 * var(--lm-space-4));
+    border-top: 1px solid var(--lm-color-border);
+    padding: var(--lm-space-3) var(--lm-space-4);
+    background: var(--lm-color-canvas);
+  }
+
+  .itemGroups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .sectionHeading,
   .detailHeading {
     align-items: stretch;
@@ -398,6 +578,15 @@
   }
 
   .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .items {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .itemGroups {
     grid-template-columns: minmax(0, 1fr);
   }
 

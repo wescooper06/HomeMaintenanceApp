@@ -6,10 +6,10 @@ const vm = require("node:vm");
 
 const root = path.join(__dirname, "..");
 const uuid = (number) => `10000000-0000-4000-8000-${String(number).padStart(12, "0")}`;
-const item = (id, name, performed) => ({
+const item = (id, name, performed, group = "routine") => ({
   maintenanceItemId: uuid(id),
   displayNameSnapshot: name,
-  groupSnapshot: "routine",
+  groupSnapshot: group,
   isPerformed: performed,
 });
 const catalogItem = (id, overrides = {}) => ({
@@ -232,6 +232,7 @@ function harness(overrides = {}) {
     PageHeader: ({ id, title, subtitle, actions }) => ({
       type: "header", props: { id }, children: [title, subtitle, actions].filter(Boolean),
     }),
+    MoreHorizontal: (props) => ({ type: "svg", props: props || {}, children: [] }),
     styles: new Proxy({}, { get: (_target, key) => String(key) }),
     vehiclesService: service,
     createVehicleChangesDraft: (...args) => service.createVehicleChangesDraft(...args),
@@ -319,6 +320,14 @@ function harness(overrides = {}) {
     shouldBlock: () => blockerPredicate(),
     setService(next) { service = next; context.vehiclesService = next; },
   };
+}
+
+function enterOngoingEdit(ui) {
+  const edit = ui.button("Edit");
+  assert(edit, "saved Ongoing records expose a page-level Edit action");
+  edit.props.onClick();
+  ui.render();
+  assert(ui.button("Cancel Changes"), "Edit enters the page-level Ongoing editing session");
 }
 
 test("Vehicles route resolves by path and hash and renders the authenticated desktop navigation entry", () => {
@@ -540,6 +549,7 @@ test("Blank asset names are announced and rejected before persistence", async ()
 test("Opening Manage Assets protects a dirty Ongoing Maintenance session", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-05" } });
   ui.render();
   ui.button("Manage Assets").props.onClick();
@@ -550,7 +560,8 @@ test("Opening Manage Assets protects a dirty Ongoing Maintenance session", async
   ui.button("Discard and continue").props.onClick();
   ui.render();
   assert.equal(ui.manageDialog.open, true);
-  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-01");
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert.match(ui.text(), /2026-02-01/);
 });
 
 test("Dirty asset close requires explicit discard and returns focus to Manage Assets", async () => {
@@ -978,6 +989,7 @@ test("Maintenance Item duplicate submissions are locked and dirty close requires
 test("Opening Manage Maintenance Items protects unsaved Ongoing and Asset editing sessions", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-05" } });
   ui.render();
   ui.button("Manage Maintenance Items").props.onClick();
@@ -992,7 +1004,8 @@ test("Opening Manage Maintenance Items protects unsaved Ongoing and Asset editin
   ui.button("Discard and continue").props.onClick();
   ui.render();
   assert.equal(ui.maintenanceDialog.open, true);
-  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-01");
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert.match(ui.text(), /2026-02-01/);
 
   const assetUi = harness();
   await assetUi.settle();
@@ -1024,12 +1037,29 @@ test("Manage Assets does not expose database writes or Delete Asset", () => {
   assert.match(source, /vehiclesService\.saveMaintenanceItem/);
 });
 
+test("Vehicles page actions follow the canonical Manage, Edit, Add, More order", async () => {
+  const ui = harness();
+  await ui.settle();
+  const header = ui.find((node) => node.type === "header" && node.props.id === "vehicles-page-title");
+  const actionFragment = header.children[2];
+  const actions = actionFragment.children.map((node) => {
+    if (node.type === "details") {
+      const summary = node.children.find((child) => child.type === "summary");
+      return summary.props["aria-label"] || ui.text(summary);
+    }
+    return node.type === "button" ? ui.text(node) : "";
+  }).filter(Boolean);
+  assert.deepEqual(actions, ["Manage", "Edit", "Add Ongoing Record", "More actions"]);
+  assert.equal(actionFragment.children.some((node) => node.type === "button" && ui.text(node) === "Delete Record"), false);
+});
+
 test("Workspace selects newest history and preserves historical snapshots and true/false states", async () => {
   const ui = harness();
   await ui.settle();
   assert.equal(ui.calls.workspaces[0], uuid(1));
-  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-01");
-  assert(ui.input("vehicles-service-date"));
+  assert.match(ui.text(), /2026-02-01/);
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert(ui.button("Edit"));
   const checkboxes = ui.nodes().filter((node) => node.type === "input" && node.props.type === "checkbox");
   assert.deepEqual(checkboxes.map((node) => [node.props["aria-label"], node.props.checked]), [
     ["Performed: Historical item", true],
@@ -1061,6 +1091,7 @@ test("Workspace load failure is not presented as an empty history", async () => 
 test("Add draft uses the service template, false states and asset usage unit without persisting", async () => {
   const ui = harness();
   await ui.settle();
+  assert(ui.button("Add Ongoing Record"));
   await ui.button("Add Ongoing Record").props.onClick();
   ui.render();
   assert.equal(ui.calls.templates, 1);
@@ -1074,16 +1105,129 @@ test("Add draft uses the service template, false states and asset usage unit wit
   assert.match(ui.text(), /New draft/);
 });
 
+test("Edit renders historical checklist groups from captured snapshots without catalog matching", async () => {
+  const capturedItems = [
+    item(212, "Renamed Oil", true, "routine"),
+    item(214, "Legacy Plug", false, "components_other"),
+    item(213, "Brake Fluid", false, "fluids_drivetrain"),
+    item(211, "Zinc Filter", false, "routine"),
+  ];
+  const ui = harness({
+    loadVehicleWorkspace: async (assetId) => workspace(
+      assets.find((asset) => asset.id === assetId),
+      [record(12, "2026-02-01", { capturedItems })],
+      [],
+    ),
+  });
+  await ui.settle();
+
+  const groups = ui.nodes().filter((node) => node.type === "section"
+    && node.props.className === "itemGroup");
+  assert.deepEqual(groups.map((group) => ui.text(ui.nodes(group).find((node) => node.type === "h4"))), [
+    "Routine", "Fluids & Drivetrain", "Components & Other",
+  ]);
+  const groupItems = groups.map((group) => ui.nodes(group)
+    .filter((node) => node.type === "input" && node.props.role === "switch")
+    .map((node) => ({
+      name: node.props["aria-label"].replace("Performed: ", ""),
+      performed: node.props.checked,
+    })));
+  assert.deepEqual(groupItems, [
+    [{ name: "Renamed Oil", performed: true }, { name: "Zinc Filter", performed: false }],
+    [{ name: "Brake Fluid", performed: false }],
+    [{ name: "Legacy Plug", performed: false }],
+  ]);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Ongoing checklist groups stored snapshots and preserves IDs, states, and payload in Add mode", async () => {
+  const templateItems = [
+    item(204, "Spark Plugs", false, "components_other"),
+    item(203, "Oil Filter", false, "routine"),
+    item(202, "Brake Fluid", false, "fluids_drivetrain"),
+    item(201, "Oil Change", false, "routine"),
+  ];
+  const ui = harness({
+    createOngoingMaintenanceDraftTemplate: async (assetId) => ({
+      assetId,
+      usageReadingUnit: "miles",
+      items: structuredClone(templateItems),
+    }),
+  });
+  await ui.settle();
+  assert(ui.button("Add Ongoing Record"));
+  await ui.button("Add Ongoing Record").props.onClick();
+  ui.render();
+
+  const groups = ui.nodes().filter((node) => node.type === "section"
+    && node.props.className === "itemGroup");
+  assert.deepEqual(groups.map((group) => ui.text(ui.nodes(group).find((node) => node.type === "h4"))), [
+    "Routine", "Fluids & Drivetrain", "Components & Other",
+  ]);
+  const itemsByGroup = groups.map((group) => ui.nodes(group)
+    .filter((node) => node.type === "input" && node.props.role === "switch")
+    .map((node) => ({
+      name: node.props["aria-label"].replace("Performed: ", ""),
+      id: node.props["aria-label"],
+      performed: node.props.checked,
+    })));
+  assert.deepEqual(itemsByGroup.map((group) => group.map((entry) => entry.name)), [
+    ["Oil Change", "Oil Filter"], ["Brake Fluid"], ["Spark Plugs"],
+  ]);
+  assert.equal(new Set(itemsByGroup.flat().map((entry) => entry.name)).size, templateItems.length);
+  assert(itemsByGroup.flat().every((entry) => entry.performed === false));
+
+  const oilFilter = ui.nodes().find((node) => node.type === "input"
+    && node.props["aria-label"] === "Performed: Oil Filter");
+  oilFilter.props.onChange({ target: { checked: true } });
+  ui.render();
+  const form = ui.find((node) => node.type === "form" && node.props.id === "vehicles-edit-form");
+  await form.props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+
+  assert.equal(ui.calls.saves.length, 1);
+  assert.deepEqual(ui.calls.saves[0].ongoingOperations[0].items, [
+    {
+      maintenanceItemId: uuid(204), isPerformed: false,
+      displayNameSnapshot: "Spark Plugs", groupSnapshot: "components_other",
+    },
+    {
+      maintenanceItemId: uuid(203), isPerformed: true,
+      displayNameSnapshot: "Oil Filter", groupSnapshot: "routine",
+    },
+    {
+      maintenanceItemId: uuid(202), isPerformed: false,
+      displayNameSnapshot: "Brake Fluid", groupSnapshot: "fluids_drivetrain",
+    },
+    {
+      maintenanceItemId: uuid(201), isPerformed: false,
+      displayNameSnapshot: "Oil Change", groupSnapshot: "routine",
+    },
+  ]);
+});
+
+test("Ongoing checklist uses responsive grouped columns and a bounded desktop scroll region", () => {
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.itemGroups\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(css, /@media\s*\(max-width:\s*900px\)[\s\S]*?\.itemGroups\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.itemGroups\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.itemToggle\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(css, /\.itemToggle\s+:global\(\.lm-checkbox\):focus-visible\s*~\s*\.switchTrack\s*\{[^}]*outline:/s);
+  assert.match(css, /\.items\s*\{[^}]*max-height:[^;]+;[^}]*overflow-y:\s*auto/s);
+});
+
 test("Edit marks the session dirty; Cancel restores persisted values without an RPC", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-03" } });
   ui.render();
   assert(ui.button("Cancel Changes"));
   assert.equal(ui.shouldBlock(), true);
   ui.button("Cancel Changes").props.onClick();
   ui.render();
-  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-01");
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert.match(ui.text(), /2026-02-01/);
   assert.equal(ui.calls.saves.length, 0);
   assert.equal(ui.shouldBlock(), false);
 });
@@ -1091,6 +1235,7 @@ test("Edit marks the session dirty; Cancel restores persisted values without an 
 test("Save sends only changed Ongoing operations once and reconciles confirmed versions", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-03" } });
   ui.render();
   const form = ui.find((node) => node.type === "form");
@@ -1112,6 +1257,7 @@ test("Duplicate Save submissions are locked while the first request is pending",
     },
   });
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-03" } });
   ui.render();
   const submit = ui.find((node) => node.type === "form").props.onSubmit;
@@ -1141,9 +1287,36 @@ test("Delete requires confirmation and queues a versioned operation until Save C
   ]);
 });
 
+test("Deleting the sole Ongoing record keeps the page-level Save action available", async () => {
+  let ui;
+  ui = harness({
+    loadVehicleWorkspace: async (assetId) => workspace(
+      assets.find((asset) => asset.id === assetId),
+      [record(12, "2026-02-01")],
+    ),
+    saveVehicleChanges: async (draft) => {
+      ui.calls.saves.push(structuredClone(draft));
+      return { status: "saved", assetVersion: 5, entityVersions: { ongoing: { [uuid(12)]: 2 } } };
+    },
+  });
+  await ui.settle();
+  ui.button("Delete Record").props.onClick();
+  ui.render();
+  ui.button("Queue Delete").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert(ui.button("Cancel Changes"));
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].ongoingOperations, [
+    { action: "delete", id: uuid(12), expectedVersion: 14 },
+  ]);
+});
+
 test("Switching assets with unsaved edits requires explicit discard", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-04" } });
   ui.render();
   const selector = ui.input("vehicles-asset-select");
@@ -1160,6 +1333,7 @@ test("Switching assets with unsaved edits requires explicit discard", async () =
 test("Switching records with unsaved edits requires explicit discard", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-04" } });
   ui.render();
   const previousRecord = ui.nodes().find((node) => node.type === "button"
@@ -1171,7 +1345,8 @@ test("Switching records with unsaved edits requires explicit discard", async () 
   assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-04");
   ui.button("Discard and continue").props.onClick();
   ui.render();
-  assert.equal(ui.input("vehicles-service-date").props.value, "2026-01-01");
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert.match(ui.text(), /2026-01-01/);
   assert.equal(ui.button("Cancel Changes"), undefined);
   assert.equal(ui.calls.saves.length, 0);
 });
@@ -1187,6 +1362,7 @@ test("Validation and conflict failures keep drafts and use safe user-facing mess
       saveVehicleChanges: async () => { throw { code, message: "raw PostgreSQL detail must not appear" }; },
     });
     await ui.settle();
+    enterOngoingEdit(ui);
     ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-05" } });
     ui.render();
     await ui.find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
@@ -1230,6 +1406,7 @@ test("Unknown outcome preserves request and client IDs and retry reuses the exac
 test("Unsaved record changes block route navigation and require explicit discard", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-06" } });
   ui.render();
   assert.equal(ui.shouldBlock(), true);
@@ -1525,6 +1702,7 @@ test("Maintenance Interval delete requires confirmation and sends one versioned 
 test("Maintenance Interval dirty-close and competing Ongoing edits require explicit discard", async () => {
   const ui = harness();
   await ui.settle();
+  enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-05" } });
   ui.render();
   ui.button("Manage Maintenance Intervals").props.onClick();
