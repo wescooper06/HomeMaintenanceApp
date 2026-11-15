@@ -733,6 +733,58 @@ test("VEHICLES: interval create uses the named save RPC argument and maps its re
   assert.equal(client.control.calls.some((call) => call.table === "vehicle_maintenance_intervals"), false);
 });
 
+test("VEHICLES: three interval creates use one named RPC request and map all returned IDs", async () => {
+  const { service, client } = setup();
+  const requestId = uuid(84);
+  const assetId = uuid(85);
+  const intervalIds = [uuid(86), uuid(87), uuid(88)];
+  assert.equal(new Set(intervalIds).size, 3);
+  const maintenanceItemIds = [uuid(89), uuid(90), uuid(91)];
+  const operations = [
+    { action: "create", id: intervalIds[0], maintenanceItemId: maintenanceItemIds[0], intervalValue: 10000, intervalUnit: "miles", comments: null },
+    { action: "create", id: intervalIds[1], maintenanceItemId: maintenanceItemIds[1], intervalValue: 12, intervalUnit: "months", comments: "annual cadence" },
+    { action: "create", id: intervalIds[2], maintenanceItemId: maintenanceItemIds[2], intervalValue: 25.5, intervalUnit: "hours", comments: "engine-hour interval" },
+  ];
+  client.control.rpcResult = {
+    ok: true,
+    request_id: requestId,
+    replayed: false,
+    asset_id: assetId,
+    asset_version: 4,
+    entity_versions: { intervals: Object.fromEntries(intervalIds.map((id) => [id, 1])) },
+    created_ids: { intervals: intervalIds },
+    deleted_ids: {},
+    affected_asset_versions: { [assetId]: 4 },
+  };
+
+  const result = await service.saveVehicleChanges({
+    assetId,
+    expectedAssetVersion: 3,
+    requestId,
+    intervalOperations: operations,
+  });
+
+  assert.equal(result.status, "saved");
+  assert.equal(result.requestId, requestId);
+  assert.equal(result.assetId, assetId);
+  assert.equal(result.assetVersion, 4);
+  assert.deepEqual(result.createdIds.intervals, intervalIds);
+  assert.deepEqual(result.entityVersions.intervals, Object.fromEntries(intervalIds.map((id) => [id, 1])));
+  assert.deepEqual(client.control.calls.map((call) => call.rpc), ["save_vehicles_changes"]);
+  assert.deepEqual(Object.keys(client.control.calls[0].payload), ["p_request"]);
+  assert.deepEqual(asPlain(client.control.calls[0].payload.p_request), {
+    request_id: requestId,
+    asset_id: assetId,
+    expected_asset_version: 3,
+    interval_operations: [
+      { action: "create", id: intervalIds[0], maintenance_item_id: maintenanceItemIds[0], interval_value: 10000, interval_unit: "miles", comments: null },
+      { action: "create", id: intervalIds[1], maintenance_item_id: maintenanceItemIds[1], interval_value: 12, interval_unit: "months", comments: "annual cadence" },
+      { action: "create", id: intervalIds[2], maintenance_item_id: maintenanceItemIds[2], interval_value: 25.5, interval_unit: "hours", comments: "engine-hour interval" },
+    ],
+  });
+  assert.equal(client.control.calls.some((call) => call.table === "vehicle_maintenance_intervals"), false);
+});
+
 test("VEHICLES: unknown save outcome preserves request and entity IDs for explicit retry", async () => {
   const { service, client } = setup();
   const draft = {

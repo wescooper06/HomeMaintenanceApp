@@ -889,6 +889,87 @@ test("interval validation and versioning cover decimal usage, whole months, uniq
   }), "item_archived_or_unavailable");
 });
 
+test("same-asset interval batches create atomically and replay without duplicates", async () => {
+  const assetId = await asset();
+  const itemIds = [
+    await catalogItem(ownerA, "Synthetic batch miles"),
+    await catalogItem(ownerA, "Synthetic batch months"),
+    await catalogItem(ownerA, "Synthetic batch hours"),
+  ];
+  const intervalIds = [uuid(), uuid(), uuid()];
+  assert.equal(new Set(intervalIds).size, 3);
+  const requestId = uuid();
+  const operations = [
+    {
+      action: "create", id: intervalIds[0], maintenance_item_id: itemIds[0],
+      interval_value: 10000, interval_unit: "miles", comments: null,
+    },
+    {
+      action: "create", id: intervalIds[1], maintenance_item_id: itemIds[1],
+      interval_value: 12, interval_unit: "months", comments: "annual cadence",
+    },
+    {
+      action: "create", id: intervalIds[2], maintenance_item_id: itemIds[2],
+      interval_value: 25.5, interval_unit: "hours", comments: "engine-hour interval",
+    },
+  ];
+  const payload = request(assetId, { request_id: requestId, interval_operations: operations });
+  const created = await save(payload);
+
+  assert.equal(created.replayed, false);
+  assert.equal(created.asset_version, 2);
+  assert.deepEqual(created.affected_asset_versions, { [assetId]: 2 });
+  assert.deepEqual(created.created_ids.intervals, intervalIds);
+  assert.deepEqual(created.entity_versions.intervals, Object.fromEntries(intervalIds.map((id) => [id, 1])));
+  const persisted = await rows(`select id,asset_id,maintenance_item_id,interval_value::text as interval_value,
+    interval_unit,comments from public.vehicle_maintenance_intervals where asset_id=$1
+    order by public.vehicle_maintenance_intervals.interval_value`, [assetId]);
+  assert.deepEqual(persisted, [
+    {
+      id: intervalIds[1], asset_id: assetId, maintenance_item_id: itemIds[1],
+      interval_value: "12.00", interval_unit: "months", comments: "annual cadence",
+    },
+    {
+      id: intervalIds[2], asset_id: assetId, maintenance_item_id: itemIds[2],
+      interval_value: "25.50", interval_unit: "hours", comments: "engine-hour interval",
+    },
+    {
+      id: intervalIds[0], asset_id: assetId, maintenance_item_id: itemIds[0],
+      interval_value: "10000.00", interval_unit: "miles", comments: null,
+    },
+  ]);
+
+  const replay = await save(payload);
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.created_ids.intervals, intervalIds);
+  assert.deepEqual(replay.entity_versions.intervals, Object.fromEntries(intervalIds.map((id) => [id, 1])));
+  assert.equal(await scalar("select count(*) from public.vehicle_maintenance_intervals where asset_id=$1", [assetId]), 3);
+  assert.equal(await scalar("select version from public.vehicles_assets where id=$1", [assetId]), 2);
+  assert.equal(await scalar("select count(*) from public.vehicles_save_requests where request_id=$1", [requestId]), 1);
+
+  const rollbackItemId = await catalogItem(ownerA, "Synthetic batch rollback");
+  const rollbackIntervalId = uuid();
+  const failedRequestId = uuid();
+  await expectCode(request(assetId, {
+    request_id: failedRequestId,
+    expected_asset_version: 2,
+    interval_operations: [
+      {
+        action: "create", id: rollbackIntervalId, maintenance_item_id: rollbackItemId,
+        interval_value: 50, interval_unit: "hours", comments: "must roll back",
+      },
+      {
+        action: "create", id: uuid(), maintenance_item_id: itemIds[0],
+        interval_value: 1, interval_unit: "months", comments: "duplicate pair",
+      },
+    ],
+  }), "duplicate_interval");
+  assert.equal(await scalar("select count(*) from public.vehicle_maintenance_intervals where asset_id=$1", [assetId]), 3);
+  assert.equal(await scalar("select count(*) from public.vehicle_maintenance_intervals where id=$1", [rollbackIntervalId]), 0);
+  assert.equal(await scalar("select version from public.vehicles_assets where id=$1", [assetId]), 2);
+  assert.equal(await scalar("select count(*) from public.vehicles_save_requests where request_id=$1", [failedRequestId]), 0);
+});
+
 test("Key Information validates supported structured text, size, clear and versions", async () => {
   const assetId = await asset();
   const keyId = uuid();
