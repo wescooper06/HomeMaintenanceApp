@@ -1066,6 +1066,7 @@ test("Add draft uses the service template, false states and asset usage unit wit
   assert.equal(ui.calls.templates, 1);
   assert.equal(ui.calls.saves.length, 0);
   assert.equal(ui.input("vehicles-usage-unit").props.value, "hours");
+  assert.equal(ui.input("vehicles-mechanic").props.maxLength, "160");
   assert.deepEqual(ui.nodes().filter((node) => node.type === "input" && node.props.type === "checkbox")
     .map((node) => [node.props["aria-label"], node.props.checked]), [
       ["Performed: Current applicable item", false],

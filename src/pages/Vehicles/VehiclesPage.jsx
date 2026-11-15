@@ -1549,7 +1549,7 @@ export default function VehiclesPage() {
                   </label>
                   <label className="lm-form-field" htmlFor="vehicles-mechanic">
                     <span className="lm-form-label">Mechanic (optional)</span>
-                    <input id="vehicles-mechanic" className="lm-form-control" type="text" maxLength="200"
+                    <input id="vehicles-mechanic" className="lm-form-control" type="text" maxLength="160"
                       value={selectedRecord.mechanic || ""} disabled={saving || saveUncertain}
                       onChange={(event) => updateRecord(selectedRecord.id, { mechanic: event.target.value || null })} />
                   </label>
