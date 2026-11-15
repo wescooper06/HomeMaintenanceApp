@@ -657,23 +657,80 @@ test("VEHICLES: change draft no-op avoids RPC and complex changes map explicitly
   assert.equal(result.assetVersion, 4);
   const rpc = client.control.calls.find((call) => call.rpc);
   assert.equal(rpc.rpc, "save_vehicles_changes");
-  assert.equal(Object.hasOwn(rpc.payload, "owner_id"), false);
-  assert.equal(rpc.payload.request_id, requestId);
-  assert.equal(rpc.payload.expected_asset_version, 3);
-  assert.equal(rpc.payload.ongoing_operations[0].items[0].maintenance_item_id, uuid(72));
-  assert.equal(rpc.payload.recommended_operations[0].service_date, "2026-11-02");
-  assert.equal(rpc.payload.completed_operations[0].service_date, "2026-11-03");
-  assert.equal(rpc.payload.interval_operations[0].expected_version, 2);
-  assert.equal(rpc.payload.interval_operations[0].maintenance_item_id, uuid(79));
-  assert.equal(rpc.payload.interval_operations[0].interval_value, 50);
-  assert.equal(rpc.payload.interval_operations[0].interval_unit, "hours");
-  assert.equal(rpc.payload.interval_operations[0].comments, "Synthetic interval");
-  assert.equal(rpc.payload.key_information_operation.document.blocks[0].runs[0].text, "Synthetic");
-  assert.equal(rpc.payload.link_operations[0].display_title, "Manual");
-  assert.deepEqual(asPlain(rpc.payload.availability_operations[0]), {
+  assert.deepEqual(Object.keys(rpc.payload), ["p_request"]);
+  const rpcRequest = rpc.payload.p_request;
+  assert.equal(Object.hasOwn(rpcRequest, "owner_id"), false);
+  assert.equal(rpcRequest.request_id, requestId);
+  assert.equal(rpcRequest.asset_id, uuid(1));
+  assert.equal(rpcRequest.expected_asset_version, 3);
+  assert.equal(rpcRequest.ongoing_operations[0].items[0].maintenance_item_id, uuid(72));
+  assert.equal(rpcRequest.recommended_operations[0].service_date, "2026-11-02");
+  assert.equal(rpcRequest.completed_operations[0].service_date, "2026-11-03");
+  assert.equal(rpcRequest.interval_operations[0].expected_version, 2);
+  assert.equal(rpcRequest.interval_operations[0].maintenance_item_id, uuid(79));
+  assert.equal(rpcRequest.interval_operations[0].interval_value, 50);
+  assert.equal(rpcRequest.interval_operations[0].interval_unit, "hours");
+  assert.equal(rpcRequest.interval_operations[0].comments, "Synthetic interval");
+  assert.equal(rpcRequest.key_information_operation.document.blocks[0].runs[0].text, "Synthetic");
+  assert.equal(rpcRequest.link_operations[0].display_title, "Manual");
+  assert.deepEqual(asPlain(rpcRequest.availability_operations[0]), {
     maintenance_item_id: uuid(78), expected_version: 1, add_asset_ids: [uuid(1)], remove_asset_ids: [],
   });
-  assert.equal(Object.hasOwn(rpc.payload.availability_operations[0], "action"), false);
+  assert.equal(Object.hasOwn(rpcRequest.availability_operations[0], "action"), false);
+});
+
+test("VEHICLES: interval create uses the named save RPC argument and maps its response", async () => {
+  const { service, client } = setup();
+  const requestId = uuid(80);
+  const intervalId = uuid(81);
+  const assetId = uuid(82);
+  const maintenanceItemId = uuid(83);
+  client.control.rpcResult = {
+    ok: true,
+    request_id: requestId,
+    replayed: false,
+    asset_id: assetId,
+    asset_version: 4,
+    entity_versions: { intervals: { [intervalId]: 1 } },
+    created_ids: { intervals: [intervalId] },
+    deleted_ids: {},
+    affected_asset_versions: {},
+  };
+
+  const result = await service.saveVehicleChanges({
+    assetId,
+    expectedAssetVersion: 3,
+    requestId,
+    intervalOperations: [{
+      action: "create",
+      id: intervalId,
+      maintenanceItemId,
+      intervalValue: 10000,
+      intervalUnit: "miles",
+      comments: null,
+    }],
+  });
+
+  assert.equal(result.status, "saved");
+  assert.equal(result.requestId, requestId);
+  assert.equal(result.entityVersions.intervals[intervalId], 1);
+  assert.deepEqual(client.control.calls.map((call) => call.rpc), ["save_vehicles_changes"]);
+  const rpc = client.control.calls[0];
+  assert.deepEqual(Object.keys(rpc.payload), ["p_request"]);
+  assert.deepEqual(asPlain(rpc.payload.p_request), {
+    request_id: requestId,
+    asset_id: assetId,
+    expected_asset_version: 3,
+    interval_operations: [{
+      action: "create",
+      id: intervalId,
+      maintenance_item_id: maintenanceItemId,
+      interval_value: 10000,
+      interval_unit: "miles",
+      comments: null,
+    }],
+  });
+  assert.equal(client.control.calls.some((call) => call.table === "vehicle_maintenance_intervals"), false);
 });
 
 test("VEHICLES: unknown save outcome preserves request and entity IDs for explicit retry", async () => {
@@ -711,10 +768,12 @@ test("VEHICLES: unknown save outcome preserves request and entity IDs for explic
   };
   const result = await service.saveVehicleChanges(unknown.retryDraft);
   assert.equal(result.replayed, true);
-  assert.equal(client.control.calls[0].payload.request_id, client.control.calls[1].payload.request_id);
-  assert.equal(client.control.calls[0].payload.ongoing_operations[0].id, client.control.calls[1].payload.ongoing_operations[0].id);
-  assert.deepEqual(asPlain(client.control.calls[0].payload.interval_operations),
-    asPlain(client.control.calls[1].payload.interval_operations));
+  assert.equal(client.control.calls[0].payload.p_request.request_id,
+    client.control.calls[1].payload.p_request.request_id);
+  assert.equal(client.control.calls[0].payload.p_request.ongoing_operations[0].id,
+    client.control.calls[1].payload.p_request.ongoing_operations[0].id);
+  assert.deepEqual(asPlain(client.control.calls[0].payload.p_request.interval_operations),
+    asPlain(client.control.calls[1].payload.p_request.interval_operations));
 });
 
 test("VEHICLES: structured RPC conflicts are safe application errors, not unknown outcomes", async () => {
@@ -727,7 +786,7 @@ test("VEHICLES: structured RPC conflicts are safe application errors, not unknow
     assetId: uuid(1), expectedAssetVersion: 1, assetPatch: { name: "Changed" },
   }), (error) => {
     assert.equal(error.code, "version_conflict");
-    assert.equal(error.requestId, client.control.calls[0].payload.request_id);
+    assert.equal(error.requestId, client.control.calls[0].payload.p_request.request_id);
     assert.equal("cause" in error, false);
     return true;
   });

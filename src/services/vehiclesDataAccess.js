@@ -175,7 +175,7 @@ export function createVehiclesDataAccess(client) {
     async saveChanges(request) {
       let response;
       try {
-        response = assertResponse(await client.rpc("save_vehicles_changes", request), "save");
+        response = assertResponse(await client.rpc("save_vehicles_changes", { p_request: request }), "save");
       } catch (error) {
         if (error instanceof VehiclesDataAccessError) throw error;
         throw new VehiclesDataAccessError("save", error);
