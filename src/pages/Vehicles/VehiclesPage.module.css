@@ -120,6 +120,98 @@
   margin: 0;
 }
 
+.recommendedSection {
+  display: flex;
+  min-width: 0;
+  height: max(20rem, calc(100dvh - 23rem));
+  flex-direction: column;
+  gap: var(--lm-space-2);
+}
+
+.recommendedForm {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: var(--lm-space-4);
+}
+
+.recommendedDate {
+  width: min(100%, 16rem);
+}
+
+.recommendedFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 40rem;
+  gap: var(--lm-space-4);
+}
+
+.recommendedFields dl {
+  margin: 0;
+}
+
+.recommendedFields dt {
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-label);
+}
+
+.recommendedFields dd {
+  margin: var(--lm-space-2) 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.recommendedDescription {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--lm-space-2);
+}
+
+.descriptionLabelRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lm-space-2);
+}
+
+.descriptionBullets {
+  min-height: 32px;
+  padding: var(--lm-space-1) var(--lm-space-2);
+  font-size: var(--lm-font-secondary);
+}
+
+.recommendedDescription textarea,
+.recommendedText {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
+  border: 1px solid var(--lm-color-border);
+  padding: var(--lm-space-3);
+  background: var(--lm-color-surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  resize: none;
+}
+
+.recommendedText:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
+.recommendedEmpty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  text-align: center;
+  color: var(--lm-color-text-secondary);
+}
+
 .sectionIntervalList {
   display: grid;
   min-width: 0;
@@ -748,6 +840,36 @@
 }
 
 @media (max-width: 600px) {
+  .descriptionBullets {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .recommendedSection {
+    height: auto;
+    min-height: 24rem;
+  }
+
+  .recommendedForm {
+    grid-template-rows: auto auto auto;
+  }
+
+  .recommendedDate {
+    width: 100%;
+  }
+
+  .recommendedFields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recommendedDescription textarea {
+    min-height: 18rem;
+  }
+
+  .recommendedText {
+    min-height: 18rem;
+    overflow-y: visible;
+  }
+
   .page {
     padding: var(--lm-space-4);
   }

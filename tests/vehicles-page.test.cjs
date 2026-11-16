@@ -58,6 +58,7 @@ const workspace = (asset, records = [], maintenanceItems = [], maintenanceInterv
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 let compiled;
+let bulletTransform;
 test.before(async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
   const file = path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx");
@@ -67,6 +68,7 @@ test.before(async () => {
   compiled = (await transformWithOxc(source, file, {
     jsx: { runtime: "classic", pragma: "element", pragmaFrag: "fragment" },
   })).code;
+  bulletTransform = vm.runInNewContext(`(() => { ${compiled}; return toggleDescriptionBullets; })()`);
 });
 
 function harness(overrides = {}) {
@@ -224,6 +226,13 @@ function harness(overrides = {}) {
   };
   const mockDocument = {
     activeElement: { focus() {} },
+    execCommand(command, _showUi, value) {
+      assert.equal(command, "insertText");
+      const editor = this.activeElement;
+      editor.value = editor.value.slice(0, editor.selectionStart) + value + editor.value.slice(editor.selectionEnd);
+      editor.insertions += 1;
+      return true;
+    },
     addEventListener(type, listener) {
       const listeners = documentListeners.get(type) || [];
       listeners.push(listener);
@@ -248,6 +257,7 @@ function harness(overrides = {}) {
       type: "header", props: { id }, children: [title, subtitle, actions].filter(Boolean),
     }),
     MoreHorizontal: (props) => ({ type: "svg", props: props || {}, children: [] }),
+    List: (props) => ({ type: "svg", props: props || {}, children: [] }),
     styles: new Proxy({}, { get: (_target, key) => String(key) }),
     vehiclesService: service,
     createVehicleChangesDraft: (...args) => service.createVehicleChangesDraft(...args),
@@ -341,6 +351,21 @@ function harness(overrides = {}) {
     render, settle, nodes, text: (node = tree) => text(node), find, button, input, calls, blocker, dialog,
     manageDialog, maintenanceDialog, intervalDialog, focusCounts, assetStore,
     intervalStore,
+    attachDescriptionEditor(start, end = start) {
+      const node = input("vehicles-recommended-description");
+      const editor = {
+        value: node.props.value, disabled: node.props.disabled,
+        selectionStart: start, selectionEnd: end, selectionDirection: "forward", scrollTop: 25, insertions: 0,
+        focus() { mockDocument.activeElement = editor; },
+        setSelectionRange(first, last, direction = "forward") {
+          editor.selectionStart = first;
+          editor.selectionEnd = last;
+          editor.selectionDirection = direction;
+        },
+      };
+      node.props.ref.current = editor;
+      return editor;
+    },
     dispatchDocumentEvent(type, event) {
       for (const listener of [...(documentListeners.get(type) || [])]) listener(event);
     },
@@ -1244,7 +1269,8 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
     const panel = ui.find((node) => node.props?.id === "vehicles-section-panel");
     assert.equal(panel.props["aria-label"], label);
     assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
-    assert.match(ui.text(panel), /not yet available/);
+    assert.match(ui.text(panel), expectedId === "recommended"
+      ? /No recommended service recorded for this asset/ : /not yet available/);
     assert.equal(ui.calls.saves.length, 0);
     assert.equal(ui.calls.workspaces.length, workspacesBefore);
     assert.equal(ui.button("Discard and continue"), undefined);
@@ -1288,6 +1314,490 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
   ui.render();
   assert.equal(ui.calls.saves.length, 0);
   assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
+});
+
+function recommendedHarness(records = [], overrides = {}) {
+  return harness({
+    loadVehicleWorkspace: async () => ({ ...workspace(assets[0], [record(12, "2023-02-27")]),
+      recommendedServiceRecords: records }),
+    ...overrides,
+  });
+}
+
+function openRecommended(ui) {
+  ui.find((node) => node.props?.["data-vehicles-section"] === "recommended").props.onClick();
+  ui.render();
+}
+
+const recommendation = (id = 501, overrides = {}) => ({
+  id: uuid(id), serviceDate: "2026-01-20", usageReadingValue: 103100,
+  usageReadingUnit: "miles", mechanic: "Synthetic Dealer", description: "Inspect front brake pads.",
+  version: 3, ...overrides,
+});
+
+test("Recommended Service has an empty state and canonical independent date navigation without catalog controls", async () => {
+  const empty = recommendedHarness();
+  await empty.settle();
+  openRecommended(empty);
+  assert.match(empty.text(), /No recommended service recorded for this asset/);
+  assert(empty.button("Add Recommended Service"));
+  assert.equal(empty.input("vehicles-recommended-description"), undefined);
+  assert.equal(empty.button("Edit"), undefined);
+  assert.equal(empty.button("Delete Record"), undefined);
+
+  const ui = recommendedHarness([recommendation(), recommendation(502, { serviceDate: "2025-01-01" })]);
+  await ui.settle();
+  openRecommended(ui);
+  assert.equal(ui.input("vehicles-recommended-record").props.value, uuid(501));
+  assert.match(ui.text(), /Inspect front brake pads/);
+  assert.equal(ui.nodes().filter((node) => node.props?.role === "switch").length, 0);
+  ui.input("vehicles-recommended-record").props.onChange({ target: { value: uuid(502) } });
+  ui.render();
+  assert.equal(ui.input("vehicles-recommended-record").props.value, uuid(502));
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Recommended Add draft survives all sections, locks its asset, and cancels without saving", async () => {
+  const ui = recommendedHarness();
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Add Recommended Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Synthetic recommendation" } });
+  ui.render();
+  const date = ui.input("vehicles-recommended-date").props.value;
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.button("Delete Record"), undefined);
+  for (const section of ["ongoing", "completed", "intervals", "key-information", "recommended"]) {
+    ui.find((node) => node.props?.["data-vehicles-section"] === section).props.onClick();
+    ui.render();
+  }
+  assert.equal(ui.input("vehicles-recommended-description").props.value, "Synthetic recommendation");
+  assert.equal(ui.input("vehicles-recommended-date").props.value, date);
+  assert.equal(ui.calls.saves.length, 0);
+  assert.equal(ui.shouldBlock(), true);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /No recommended service recorded/);
+  assert.equal(ui.calls.saves.length, 0);
+  assert.equal(ui.shouldBlock(), false);
+});
+
+test("Recommended Edit emits only changed fields with record and asset versions through the shared save", async () => {
+  const ui = recommendedHarness([recommendation()]);
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Recheck synthetic brake pads." } });
+  ui.render();
+  await ui.find((node) => node.props?.id === "vehicles-recommended-form").props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+  const saved = ui.calls.saves[0];
+  assert.equal(saved.assetId, uuid(1));
+  assert.equal(saved.expectedAssetVersion, 4);
+  assert.deepEqual(saved.recommendedOperations, [{ action: "update", id: uuid(501), expectedVersion: 3,
+    description: "Recheck synthetic brake pads." }]);
+  assert.deepEqual(saved.ongoingOperations, []);
+  assert.deepEqual(saved.completedOperations, []);
+  assert.deepEqual(saved.intervalOperations, []);
+});
+
+test("Recommended invalid Description and readings never reach persistence", async () => {
+  const ui = recommendedHarness();
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Add Recommended Service").props.onClick();
+  ui.render();
+  const submit = async () => {
+    await ui.find((node) => node.props?.id === "vehicles-recommended-form").props.onSubmit({ preventDefault() {} });
+    await ui.settle();
+  };
+  await submit();
+  assert.match(ui.text(), /Review Recommended Service/);
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Synthetic work" } });
+  ui.input("vehicles-recommended-usage").props.onChange({ target: { value: "-1" } });
+  ui.render();
+  await submit();
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Recommended create uses stable identity, exact asset scope, and no catalog or interval operations", async () => {
+  const ui = recommendedHarness();
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Add Recommended Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-date").props.onChange({ target: { value: "2026-03-04" } });
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Synthetic inspection" } });
+  ui.input("vehicles-recommended-usage").props.onChange({ target: { value: "100.25" } });
+  ui.render();
+  await ui.find((node) => node.props?.id === "vehicles-recommended-form").props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+  const saved = ui.calls.saves[0];
+  assert.equal(saved.assetId, uuid(1));
+  assert.deepEqual(saved.recommendedOperations, [{ action: "create", id: uuid(900),
+    serviceDate: "2026-03-04", usageReadingValue: 100.25, usageReadingUnit: "miles",
+    mechanic: null, description: "Synthetic inspection" }]);
+  for (const field of ["ongoingOperations", "completedOperations", "intervalOperations", "maintenanceItemOperations"]) {
+    assert.deepEqual(saved[field], []);
+  }
+  assert.equal(ui.calls.templates, 0);
+  assert.equal(ui.calls.catalogReads, 0);
+});
+
+test("Recommended and Ongoing edits share one atomic vehicle save without losing either draft", async () => {
+  const ui = recommendedHarness([recommendation()]);
+  await ui.settle();
+  enterOngoingEdit(ui);
+  ui.input("vehicles-mechanic").props.onChange({ target: { value: "Synthetic mechanic" } });
+  ui.render();
+  openRecommended(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Combined synthetic inspection" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+  assert.equal(ui.calls.saves[0].ongoingOperations[0].mechanic, "Synthetic mechanic");
+  assert.equal(ui.calls.saves[0].recommendedOperations[0].description, "Combined synthetic inspection");
+  assert.deepEqual(ui.calls.saves[0].completedOperations, []);
+  assert.deepEqual(ui.calls.saves[0].intervalOperations, []);
+});
+
+test("Recommended deletion confirms and queues the committed versioned delete; Cancel restores history", async () => {
+  const ui = recommendedHarness([recommendation()]);
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Delete Record").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /Queue deletion of this Recommended Service record/);
+  assert.equal(ui.calls.saves.length, 0);
+  assert.equal(ui.button("Queue Delete").props["aria-label"], "Queue Delete");
+  ui.button("Queue Delete").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /All Recommended Service records are queued/);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-recommended-record").props.value, uuid(501));
+  ui.button("Delete Record").props.onClick();
+  ui.render();
+  ui.button("Queue Delete").props.onClick();
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].recommendedOperations, [{ action: "delete", id: uuid(501), expectedVersion: 3 }]);
+  assert.deepEqual(ui.calls.saves[0].ongoingOperations, []);
+});
+
+test("Recommended conflicts retain values, duplicate dates and malformed fields block saving", async () => {
+  const ui = recommendedHarness([recommendation()], {
+    saveVehicleChanges: async () => { throw { code: "version_conflict" }; },
+  });
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Preserved synthetic work" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.match(ui.text(), /changed elsewhere/);
+  assert.equal(ui.input("vehicles-recommended-description").props.value, "Preserved synthetic work");
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  ui.button("Add Recommended Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Duplicate date" } });
+  ui.input("vehicles-recommended-date").props.onChange({ target: { value: "2026-01-20" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.match(ui.text(), /unique valid date/);
+});
+
+test("Recommended unknown-outcome retry uses the exact request and locks edits; submits cannot duplicate", async () => {
+  let release;
+  let attempts = 0;
+  let retryDraft;
+  const requests = [];
+  const ui = recommendedHarness([recommendation()], {
+    saveVehicleChanges: async (draft) => {
+      requests.push(structuredClone(draft));
+      attempts += 1;
+      if (attempts === 1) {
+        await new Promise((resolve) => { release = resolve; });
+        retryDraft = { ...structuredClone(draft), requestId: uuid(990) };
+        throw { code: "unknown_outcome", retryDraft };
+      }
+      return { status: "saved", assetVersion: 5, entityVersions: { recommended: { [uuid(501)]: 4 } } };
+    },
+  });
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Stable synthetic retry" } });
+  ui.render();
+  const submit = ui.button("Save Changes").props.onClick;
+  const first = submit();
+  await submit();
+  assert.equal(attempts, 1);
+  release();
+  await first;
+  await ui.settle();
+  assert.equal(ui.input("vehicles-recommended-description").props.disabled, true);
+  assert.equal(ui.button("Cancel Changes").props.disabled, true);
+  await ui.button("Retry same save").props.onClick();
+  await ui.settle();
+  assert.deepEqual(requests[1], retryDraft);
+  assert.equal(requests[0].recommendedOperations[0].id, uuid(501));
+});
+
+test("Recommended uses its historical units without Maintenance Item applicability rules", async () => {
+  for (const unit of ["hours", "none"]) {
+    const asset = { ...assets[0], usageUnit: unit };
+    const ui = recommendedHarness([recommendation(501, { usageReadingUnit: unit,
+      usageReadingValue: unit === "none" ? null : 12 })], {
+      loadVehicleWorkspace: async () => ({ ...workspace(asset, []), recommendedServiceRecords: [recommendation(501, {
+        usageReadingUnit: unit, usageReadingValue: unit === "none" ? null : 12,
+      })] }),
+    });
+    await ui.settle();
+    openRecommended(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    assert.equal(Boolean(ui.input("vehicles-recommended-usage")), unit !== "none");
+    assert.equal(ui.input("vehicles-recommended-description").props.maxLength, "10000");
+    assert.equal(ui.input("vehicles-recommended-mechanic").props.maxLength, "160");
+    assert.equal(ui.calls.catalogReads, 0);
+  }
+});
+
+test("Recommended validates canonical dates, precision, text bounds, and whitespace before saving", async () => {
+  for (const [field, value] of [
+    ["vehicles-recommended-date", "2026-02-30"],
+    ["vehicles-recommended-description", " padded text "],
+    ["vehicles-recommended-description", " \\n "],
+    ["vehicles-recommended-description", "X".repeat(10001)],
+    ["vehicles-recommended-mechanic", "X".repeat(161)],
+    ["vehicles-recommended-usage", "1.001"],
+    ["vehicles-recommended-usage", "10000000000"],
+  ]) {
+    const ui = recommendedHarness([recommendation()]);
+    await ui.settle();
+    openRecommended(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    ui.input(field).props.onChange({ target: { value } });
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.equal(ui.calls.saves.length, 0, field);
+    assert.match(ui.text(), /Review Recommended Service/);
+  }
+});
+
+test("Recommended confirmed save survives a failed refresh and uses returned optimistic versions next time", async () => {
+  let loads = 0;
+  const ui = recommendedHarness([recommendation()], {
+    loadVehicleWorkspace: async () => {
+      loads += 1;
+      if (loads > 1) throw Error("Synthetic reload failure");
+      return { ...workspace(assets[0], []), recommendedServiceRecords: [recommendation()] };
+    },
+    saveVehicleChanges: async (draft) => {
+      ui.calls.saves.push(structuredClone(draft));
+      return { status: "saved", assetVersion: 5, entityVersions: { recommended: { [uuid(501)]: 4 } } };
+    },
+  });
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Confirmed synthetic work" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.match(ui.text(), /saved, but the latest workspace could not be reloaded/);
+  assert.match(ui.text(), /Confirmed synthetic work/);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  ui.input("vehicles-recommended-mechanic").props.onChange({ target: { value: "Synthetic shop" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves[1].expectedAssetVersion, 5);
+  assert.equal(ui.calls.saves[1].recommendedOperations[0].expectedVersion, 4);
+});
+
+test("Recommended layout keeps Date above paired fields and bounded desktop Description with stacked mobile flow", () => {
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.recommendedForm\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\)/s);
+  assert.match(css, /\.recommendedFields\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
+  assert.match(css, /\.recommendedDescription textarea,\s*\.recommendedText\s*\{[^}]*overflow-y:\s*auto/s);
+  const mobile = css.slice(css.indexOf("@media (max-width: 600px)"));
+  assert.match(mobile, /\.recommendedFields\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(mobile, /\.recommendedText\s*\{[^}]*overflow-y:\s*visible/s);
+});
+
+test("Recommended bullet toggle handles the current line, empty line, and relative caret", () => {
+  const added = bulletTransform("Inspect tires", 4, 4);
+  assert.equal(added.text, "\u2022 Inspect tires");
+  assert.equal(added.selectionStart, 6);
+  assert.equal(added.selectionEnd, 6);
+  const removed = bulletTransform(added.text, added.selectionStart, added.selectionEnd);
+  assert.equal(removed.text, "Inspect tires");
+  assert.equal(removed.selectionStart, 4);
+  assert.equal(bulletTransform("", 0, 0).text, "\u2022 ");
+  assert.equal(bulletTransform("First\nSecond", 7, 7).text, "First\n\u2022 Second");
+  assert.equal(bulletTransform("\nSecond", 0, 0).text, "\u2022 \nSecond");
+});
+
+test("Recommended multiline bullets preserve blank lines and never duplicate mixed prefixes", () => {
+  const text = "Inspect tires\n\nCheck balance\n  \nInspect suspension";
+  const added = bulletTransform(text, 0, text.length);
+  assert.equal(added.text, "\u2022 Inspect tires\n\n\u2022 Check balance\n  \n\u2022 Inspect suspension");
+  const removed = bulletTransform(added.text, added.selectionStart, added.selectionEnd);
+  assert.equal(removed.text, text);
+  assert.equal(removed.selectionStart, 0);
+  assert.equal(removed.selectionEnd, text.length);
+  const mixed = "\u2022 Inspect tires\nCheck balance\n\u2022 Inspect suspension";
+  assert.equal(bulletTransform(mixed, 0, mixed.length).text,
+    "\u2022 Inspect tires\n\u2022 Check balance\n\u2022 Inspect suspension");
+  assert.equal(bulletTransform("\n  \n", 0, 4).text, "\n  \n");
+  assert.equal(bulletTransform("First\nSecond", 0, 6).text, "\u2022 First\nSecond");
+});
+
+test("Recommended Bullets action preserves selection, textarea focus, text, and native insertion boundary", async () => {
+  const description = "Customer reports vibration.\n\nInspect tires\nCheck balance";
+  const ui = recommendedHarness([recommendation(501, { description })]);
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  const start = description.indexOf("Inspect");
+  const editor = ui.attachDescriptionEditor(start, description.length);
+  const button = ui.button("Bullets");
+  assert.equal(button.props.type, "button");
+  assert.equal(button.props["aria-label"], "Toggle bullets");
+  button.props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-recommended-description").props.value,
+    "Customer reports vibration.\n\n\u2022 Inspect tires\n\u2022 Check balance");
+  assert.equal(editor.insertions, 1);
+  assert.equal(editor.selectionStart, start + 2);
+  assert.equal(editor.selectionEnd, description.length + 4);
+  assert.equal(editor.scrollTop, 25);
+  assert.equal(ui.input("vehicles-recommended-description").props.onKeyDown, undefined);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /Customer reports vibration/);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-recommended-description").props.value, description);
+});
+
+test("Recommended bullet prefixes count toward the limit and reject over-limit changes atomically", async () => {
+  for (const [description, accepted] of [["X".repeat(9998), true], ["X".repeat(9999), false],
+    ["X".repeat(9996) + "\nY", false]]) {
+    const ui = recommendedHarness([recommendation(501, { description })]);
+    await ui.settle();
+    openRecommended(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    const editor = ui.attachDescriptionEditor(0, description.length);
+    ui.button("Bullets").props.onClick();
+    ui.render();
+    const value = ui.input("vehicles-recommended-description").props.value;
+    assert.equal(value, accepted ? "\u2022 " + description : description);
+    assert.equal(editor.insertions, accepted ? 1 : 0);
+    if (!accepted) {
+      assert(ui.nodes().some((node) => node.props?.role === "alert" && ui.text(node).includes("10,000-character")));
+      assert.equal(editor.selectionStart, 0);
+      assert.equal(editor.selectionEnd, description.length);
+      assert.equal(ui.button("Save Changes").props.disabled, true);
+    }
+  }
+});
+
+test("Recommended bullet text is preserved through Add save mapping, reload, traversal, and Cancel", async () => {
+  const description = "Customer reports vibration at highway speed.\n\n\u2022 Inspect tires\n\u2022 Check wheel balance\n\u2022 Inspect front suspension";
+  const ui = recommendedHarness();
+  await ui.settle();
+  openRecommended(ui);
+  ui.button("Add Recommended Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: description } });
+  ui.render();
+  const date = ui.input("vehicles-recommended-date").props.value;
+  for (const section of ["ongoing", "completed", "intervals", "key-information", "recommended"]) {
+    ui.find((node) => node.props?.["data-vehicles-section"] === section).props.onClick();
+    ui.render();
+  }
+  assert.equal(ui.input("vehicles-recommended-description").props.value, description);
+  assert.equal(ui.input("vehicles-recommended-date").props.value, date);
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.equal(ui.calls.saves.length, 0);
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  const operation = ui.calls.saves[0].recommendedOperations[0];
+  assert.equal(operation.description, description);
+  assert.deepEqual(Object.keys(operation).sort(), ["action", "description", "id", "mechanic", "serviceDate", "usageReadingUnit", "usageReadingValue"].sort());
+
+  const reloaded = recommendedHarness([recommendation(501, { description })]);
+  await reloaded.settle();
+  openRecommended(reloaded);
+  const content = reloaded.find((node) => node.props?.["aria-label"] === "Recommended Service Description");
+  assert.equal(reloaded.text(content), description);
+  assert.equal(content.props.dangerouslySetInnerHTML, undefined);
+  reloaded.button("Edit").props.onClick();
+  reloaded.render();
+  assert.equal(reloaded.input("vehicles-recommended-description").props.value, description);
+  assert.equal(reloaded.button("Save Changes").props.disabled, true);
+  reloaded.attachDescriptionEditor(description.indexOf("\u2022"), description.length);
+  reloaded.button("Bullets").props.onClick();
+  reloaded.render();
+  reloaded.button("Cancel Changes").props.onClick();
+  reloaded.render();
+  assert.equal(reloaded.text(reloaded.find((node) => node.props?.["aria-label"] === "Recommended Service Description")), description);
+});
+
+test("Recommended Description safely displays HTML-like bullet text and keeps wrapping and mobile targets", async () => {
+  const description = "\u2022 <script>alert('not HTML')</script>\n\nParagraph";
+  const ui = recommendedHarness([recommendation(501, { description })]);
+  await ui.settle();
+  openRecommended(ui);
+  const content = ui.find((node) => node.props?.["aria-label"] === "Recommended Service Description");
+  assert.equal(ui.text(content), description);
+  assert.equal(ui.nodes(content).some((node) => node.type === "script"), false);
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.recommendedText\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css.slice(css.indexOf("@media (max-width: 600px)")), /\.descriptionBullets\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+});
+
+test("Recommended actual service read/save mappers preserve exact bullet strings without a new field", () => {
+  const loadSource = (file) => fs.readFileSync(path.join(root, file), "utf8")
+    .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
+  const { parseDateOnly } = vm.runInNewContext(`(() => {
+    ${loadSource("src/services/vehiclesMaintenanceIntervalEngine.js")}; return { parseDateOnly };
+  })()`);
+  const { mapHistoryRow, mapSaveRequest } = vm.runInNewContext(`(() => {
+    ${loadSource("src/services/vehiclesService.js")}; return { mapHistoryRow, mapSaveRequest };
+  })()`, { parseDateOnly, getSupabaseClient: () => { throw Error("No production client in mapper tests"); } });
+  const description = "Customer reports vibration.\n\n\u2022 Inspect  tires\n\u2022 Check balance\n\nParagraph after list.";
+  const mapped = mapHistoryRow({ id: uuid(501), service_date: "2026-01-20", usage_reading_unit: "miles",
+    usage_reading_value: 103100, mechanic: null, version: 3, description }, "recommended");
+  assert.equal(mapped.description, description);
+  const request = mapSaveRequest({ assetId: uuid(1), expectedAssetVersion: 4,
+    recommendedOperations: [{ action: "update", id: mapped.id, expectedVersion: mapped.version, description: mapped.description }],
+  }, uuid(999));
+  assert.equal(request.recommended_operations[0].description, description);
+  assert.deepEqual(Object.keys(request.recommended_operations[0]).sort(), ["action", "description", "expected_version", "id"]);
 });
 
 test("Maintenance Intervals section reads existing data and opens the existing manager", async () => {

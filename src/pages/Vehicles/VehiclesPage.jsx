@@ -1,3 +1,4 @@
+import { List } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useBlocker } from "react-router-dom";
 
@@ -52,6 +53,45 @@ function recordValue(record) {
     mechanic: record.mechanic,
     capturedItems: record.capturedItems,
   });
+}
+
+function recommendedValue(record) {
+  return JSON.stringify([record.serviceDate, record.usageReadingValue,
+    record.usageReadingUnit, record.mechanic, record.description]);
+}
+
+function toggleDescriptionBullets(text, selectionStart, selectionEnd) {
+  const start = selectionStart === 0 ? 0 : text.lastIndexOf("\n", selectionStart - 1) + 1;
+  const lastSelected = selectionEnd > selectionStart ? selectionEnd - 1 : selectionEnd;
+  const nextBreak = text.indexOf("\n", lastSelected);
+  const end = nextBreak === -1 ? text.length : nextBreak;
+  const lines = text.slice(start, end).split("\n");
+  const nonblank = lines.filter((line) => line.trim());
+  const remove = nonblank.length > 0 && nonblank.every((line) => line.startsWith("\u2022 "));
+  const changes = [];
+  let offset = start;
+  const replacement = lines.map((line) => {
+    let updated = line;
+    if (lines.length === 1 || line.trim()) {
+      if (remove && line.startsWith("\u2022 ")) {
+        updated = line.slice(2);
+        changes.push({ offset, removed: 2, added: 0 });
+      } else if (!remove && !line.startsWith("\u2022 ")) {
+        updated = `\u2022 ${line}`;
+        changes.push({ offset, removed: 0, added: 2 });
+      }
+    }
+    offset += line.length + 1;
+    return updated;
+  }).join("\n");
+  const positionAfter = (position) => changes.reduce((result, change) => (
+    position < change.offset ? result
+      : result + change.added - Math.min(change.removed, position - change.offset)
+  ), position);
+  return {
+    text: text.slice(0, start) + replacement + text.slice(end), start, end, replacement,
+    selectionStart: positionAfter(selectionStart), selectionEnd: positionAfter(selectionEnd),
+  };
 }
 
 function getErrorMessage(error) {
@@ -212,6 +252,11 @@ export default function VehiclesPage() {
   const [baselineRecords, setBaselineRecords] = useState([]);
   const [workingRecords, setWorkingRecords] = useState([]);
   const [deletedRecords, setDeletedRecords] = useState([]);
+  const [recommendedBaseline, setRecommendedBaseline] = useState([]);
+  const [recommendedRecords, setRecommendedRecords] = useState([]);
+  const [recommendedDeleted, setRecommendedDeleted] = useState([]);
+  const [recommendedRecordId, setRecommendedRecordId] = useState("");
+  const [recommendedEditing, setRecommendedEditing] = useState(false);
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [ongoingEditing, setOngoingEditing] = useState(false);
   const [activeSection, setActiveSection] = useState("ongoing");
@@ -266,6 +311,7 @@ export default function VehiclesPage() {
   const maintenanceItemSaveLock = useRef(false);
   const maintenanceIntervalSaveLock = useRef(false);
   const manageDetailsRef = useRef(null);
+  const recommendedDescriptionRef = useRef(null);
 
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
   const selectedMaintenanceItem = maintenanceItems?.find((item) => item.id === selectedMaintenanceItemId);
@@ -294,9 +340,15 @@ export default function VehiclesPage() {
     || JSON.stringify(maintenanceItemDraft.selectedAssetIds)
       !== JSON.stringify([...maintenanceItemBaseline.selectedAssetIds].sort())
   ));
-  const dirty = deletedRecords.length > 0 || workingRecords.some((record) => (
+  const recommendedDirty = recommendedDeleted.length > 0 || recommendedRecords.some((record) => (
+    record.isNew || recommendedValue(record) !== recommendedValue(
+      recommendedBaseline.find((entry) => entry.id === record.id) || record)
+  ));
+  const ongoingDirty = deletedRecords.length > 0 || workingRecords.some((record) => (
     record.isNew || recordValue(record) !== recordValue(baselineById.get(record.id) || record)
   ));
+  const dirty = ongoingDirty || recommendedDirty;
+  const sessionEditing = ongoingEditing || recommendedEditing;
   const saveUncertain = retryDraft !== null;
   const manageAssetDraftDirty = manageDraftIsDirty();
   const hasMaintenanceItemDraft = Boolean(maintenanceItemDraft);
@@ -352,6 +404,7 @@ export default function VehiclesPage() {
       setWorkingRecords(copyRecords(records));
       setDeletedRecords([]);
       setSelectedRecordId(vehiclesService.newestRecord(records)?.id || "");
+      loadRecommendedState(result);
       setRetryDraft(null);
     }).catch(() => {
       if (active) setWorkspaceError("The Vehicles workspace could not be loaded. Retry loading it.");
@@ -436,9 +489,70 @@ export default function VehiclesPage() {
     setDeletedRecords([]);
     setSelectedRecordId(vehiclesService.newestRecord(baselineRecords)?.id || "");
     setOngoingEditing(false);
+    setRecommendedRecords(recommendedBaseline.map((record) => ({ ...record })));
+    setRecommendedDeleted([]);
+    setRecommendedRecordId(vehiclesService.newestRecord(recommendedBaseline)?.id || "");
+    setRecommendedEditing(false);
     setRetryDraft(null);
     setSaveError("");
     setStatus("Changes canceled. The last saved records are restored.");
+  }
+
+  function loadRecommendedState(source) {
+    const records = (source.recommendedServiceRecords || []).map((record) => ({ ...record }));
+    setRecommendedBaseline(records);
+    setRecommendedRecords(records.map((record) => ({ ...record })));
+    setRecommendedDeleted([]);
+    setRecommendedRecordId(vehiclesService.newestRecord(records)?.id || "");
+    setRecommendedEditing(false);
+  }
+
+  function updateRecommended(update) {
+    setRecommendedRecords((records) => records.map((record) => record.id === recommendedRecordId
+      ? { ...record, ...update } : record));
+    setSaveError("");
+    setStatus("");
+  }
+
+  function toggleRecommendedBullets() {
+    const textarea = recommendedDescriptionRef.current;
+    if (!textarea || textarea.disabled) return;
+    const { selectionStart, selectionEnd, selectionDirection, scrollTop } = textarea;
+    const updated = toggleDescriptionBullets(textarea.value, selectionStart, selectionEnd);
+    textarea.focus({ preventScroll: true });
+    if (updated.text.length > 10000) {
+      setSaveError("Bullets would exceed the 10,000-character Description limit. No text was changed.");
+      return;
+    }
+    if (updated.text === textarea.value) return;
+    textarea.setSelectionRange(updated.start, updated.end);
+    const inserted = document.execCommand?.("insertText", false, updated.replacement);
+    if (!inserted) {
+      textarea.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
+      setSaveError("The browser could not apply bullets. No text was changed.");
+      return;
+    }
+    updateRecommended({ description: textarea.value });
+    textarea.setSelectionRange(updated.selectionStart, updated.selectionEnd, selectionDirection);
+    textarea.scrollTop = scrollTop;
+  }
+
+  function addRecommended() {
+    if (!workspace || saving || saveUncertain) return;
+    const record = {
+      id: crypto.randomUUID(), serviceDate: createDateToday(), usageReadingValue: null,
+      usageReadingUnit: workspace.asset.usageUnit, mechanic: null, description: "", version: 1, isNew: true,
+    };
+    setRecommendedRecords((records) => [...records, record]);
+    setRecommendedRecordId(record.id);
+    setRecommendedEditing(true);
+    setSaveError("");
+    setStatus("");
+  }
+
+  function selectRecommended(recordId) {
+    if (saving || saveUncertain) return;
+    setRecommendedRecordId(recordId);
   }
 
   function selectAsset(assetId) {
@@ -1190,7 +1304,14 @@ export default function VehiclesPage() {
     const action = confirmation;
     setConfirmation(null);
     if (!action) return;
-    if (action.kind === "manage-assets-open") {
+    if (action.kind === "recommended-delete") {
+      setRecommendedRecords((records) => records.filter((record) => record.id !== action.record.id));
+      setRecommendedDeleted((records) => [...records, action.record]);
+      setRecommendedRecordId(vehiclesService.newestRecord(
+        recommendedRecords.filter((record) => record.id !== action.record.id))?.id || "");
+      setRecommendedEditing(true);
+      setStatus("Record deletion queued. It will take effect only after Save Changes.");
+    } else if (action.kind === "manage-assets-open") {
       resetDraft();
       beginManageAssets();
     } else if (action.kind === "manage-items-open") {
@@ -1309,6 +1430,19 @@ export default function VehiclesPage() {
     draft.ongoingOperations.push(...deletedRecords.map((record) => (
       buildRecordDeleteOperation("ongoing", record, workspace.asset.id).operation
     )));
+    for (const record of recommendedRecords) {
+      const original = recommendedBaseline.find((entry) => entry.id === record.id);
+      if (!record.isNew && (!original || recommendedValue(record) === recommendedValue(original))) continue;
+      const operation = { action: record.isNew ? "create" : "update", id: record.id };
+      if (!record.isNew) operation.expectedVersion = original.version;
+      for (const field of ["serviceDate", "usageReadingValue", "usageReadingUnit", "mechanic", "description"]) {
+        if (record.isNew || record[field] !== original[field]) operation[field] = record[field];
+      }
+      draft.recommendedOperations.push(operation);
+    }
+    draft.recommendedOperations.push(...recommendedDeleted.map((record) => (
+      buildRecordDeleteOperation("recommended", record, workspace.asset.id).operation
+    )));
     return draft;
   }
 
@@ -1322,6 +1456,7 @@ export default function VehiclesPage() {
       setDeletedRecords([]);
       setSelectedRecordId(vehiclesService.newestRecord(records)?.id || "");
       setOngoingEditing(false);
+      loadRecommendedState(fresh);
       setStatus("Changes saved.");
     } catch {
       const records = workingRecords.map((record) => ({
@@ -1337,6 +1472,13 @@ export default function VehiclesPage() {
       setWorkingRecords(copyRecords(records));
       setDeletedRecords([]);
       setOngoingEditing(false);
+      const recommended = recommendedRecords.map((record) => ({
+        ...record, isNew: false, version: result.entityVersions?.recommended?.[record.id] || record.version,
+      }));
+      setRecommendedBaseline(recommended);
+      setRecommendedRecords(recommended.map((record) => ({ ...record })));
+      setRecommendedDeleted([]);
+      setRecommendedEditing(false);
       setStatus("Changes were saved, but the latest workspace could not be reloaded. Retry loading before further edits.");
     }
   }
@@ -1344,6 +1486,24 @@ export default function VehiclesPage() {
   async function saveChanges(event) {
     event?.preventDefault();
     if (!workspace || saveLock.current || !dirty || saving || workspaceLoading || saveUncertain) return;
+    const invalidRecommended = recommendedRecords.some((record) => {
+      const original = recommendedBaseline.find((entry) => entry.id === record.id);
+      if (!record.isNew && original && recommendedValue(record) === recommendedValue(original)) return false;
+      const reading = record.usageReadingValue;
+      return !/^\d{4}-\d{2}-\d{2}$/.test(record.serviceDate)
+        || Number.isNaN(Date.parse(`${record.serviceDate}T00:00:00Z`))
+        || new Date(`${record.serviceDate}T00:00:00Z`).toISOString().slice(0, 10) !== record.serviceDate
+        || !record.description.trim() || record.description !== record.description.trim()
+        || record.description.length > 10000 || (record.mechanic || "").length > 160
+        || (reading !== null && (!Number.isFinite(reading) || reading < 0 || reading > 9999999999.99
+          || Math.abs(reading * 100 - Math.round(reading * 100)) > 0.0001))
+        || (record.usageReadingUnit === "none" && reading !== null)
+        || recommendedRecords.some((entry) => entry.id !== record.id && entry.serviceDate === record.serviceDate);
+    });
+    if (invalidRecommended) {
+      setSaveError("Review Recommended Service: use a unique valid date, a nonnegative reading with at most two decimals, and a trimmed Description (1-10,000 characters).");
+      return;
+    }
     saveLock.current = true;
     setSaving(true);
     setSaveError("");
@@ -1356,6 +1516,8 @@ export default function VehiclesPage() {
         setStatus("There are no changes to save.");
         setBaselineRecords(copyRecords(workingRecords));
         setDeletedRecords([]);
+        setRecommendedBaseline(recommendedRecords.map((record) => ({ ...record })));
+        setRecommendedDeleted([]);
       }
     } catch (error) {
       if (error?.code === "unknown_outcome" && error.retryDraft) {
@@ -1400,6 +1562,12 @@ export default function VehiclesPage() {
   }
 
   const selectedRecord = workingRecords.find((record) => record.id === selectedRecordId);
+  const recommendedRecord = recommendedRecords.find((record) => record.id === recommendedRecordId);
+  const recommendedActive = activeSection === "recommended";
+  const ongoingActive = activeSection === "ongoing";
+  const activeRecord = recommendedActive ? recommendedRecord : ongoingActive ? selectedRecord : null;
+  const sectionDirty = (sectionId) => sectionId === "ongoing" ? ongoingDirty
+    : sectionId === "recommended" ? recommendedDirty : false;
   const showUsageField = workspace?.asset?.usageUnit !== "none";
   const usageLabelUnit = selectedRecord?.usageReadingUnit === "none"
     ? workspace?.asset?.usageUnit : selectedRecord?.usageReadingUnit;
@@ -1420,7 +1588,9 @@ export default function VehiclesPage() {
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
   const intervalDraftItemAvailable = Boolean(workspace?.maintenanceItems?.some((item) =>
     item.id === maintenanceIntervalDraft?.maintenanceItemId && !item.archivedAt));
-  const confirmationTitle = confirmation?.kind === "delete"
+  const confirmationTitle = confirmation?.kind === "recommended-delete"
+    ? "Queue deletion of this Recommended Service record?"
+    : confirmation?.kind === "delete"
     ? "Queue deletion of this Ongoing record?"
     : confirmation?.kind === "maintenance-interval-delete"
       ? "Delete this Maintenance Interval?"
@@ -1473,7 +1643,7 @@ export default function VehiclesPage() {
           : saving ? "Save is in progress" : "Discard unsaved Vehicles changes?";
 
   return (
-    <main className={`${styles.page} ${ongoingEditing ? styles.pageEditing : ""}`}>
+    <main className={`${styles.page} ${sessionEditing ? styles.pageEditing : ""}`}>
       <PageHeader id="vehicles-page-title" title="Vehicles" />
       <div className={styles.vehicleContextRow}>
         <div className={styles.assetRow}>
@@ -1481,7 +1651,7 @@ export default function VehiclesPage() {
             <span className="lm-form-label">Vehicle</span>
             <select id="vehicles-asset-select" className={`lm-form-control ${styles.assetSelectorControl}`}
               value={selectedAssetId}
-              disabled={!assets?.length || saving || saveUncertain}
+              disabled={!assets?.length || saving || saveUncertain || recommendedDirty}
               onChange={(event) => selectAsset(event.target.value)}>
               {assets?.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
             </select>
@@ -1524,20 +1694,23 @@ export default function VehiclesPage() {
               </button>
             </div>
           </details>
-          {selectedRecord && !selectedRecord.isNew && !ongoingEditing && (
+          {activeRecord && !activeRecord.isNew && !(recommendedActive ? recommendedEditing : ongoingEditing) && (
             <button type="button" className="lm-button lm-button--secondary"
-              onClick={editSelectedRecord} disabled={saving || saveUncertain}>Edit</button>
+              onClick={recommendedActive ? () => setRecommendedEditing(true) : editSelectedRecord}
+              disabled={saving || saveUncertain}>Edit</button>
           )}
-          {workspace && !ongoingEditing && <button type="button" className="lm-button lm-button--primary"
-            onClick={addRecord} disabled={saving || saveUncertain}>Add Ongoing Record</button>}
-          {selectedRecord && !selectedRecord.isNew && !ongoingEditing && (
+          {workspace && (ongoingActive || recommendedActive) && !(recommendedActive ? recommendedEditing : ongoingEditing) && <button type="button" className="lm-button lm-button--primary"
+            onClick={recommendedActive ? addRecommended : addRecord} disabled={saving || saveUncertain}>
+            {recommendedActive ? "Add Recommended Service" : "Add Ongoing Record"}</button>}
+          {activeRecord && !activeRecord.isNew && !sessionEditing && (
             <button type="button" className={`lm-button lm-button--danger ${styles.recordDeleteAction}`}
-              onClick={queueDelete} disabled={saving || saveUncertain}>Delete Record</button>
+              onClick={recommendedActive ? () => setConfirmation({ kind: "recommended-delete", record: activeRecord }) : queueDelete}
+              disabled={saving || saveUncertain}>Delete Record</button>
           )}
-          {ongoingEditing && <button type="button"
+          {sessionEditing && <button type="button"
             className={`lm-button lm-button--secondary ${styles.desktopSessionAction}`}
             onClick={resetDraft} disabled={saving || saveUncertain}>Cancel Changes</button>}
-          {ongoingEditing && <button type="button" className={`lm-button lm-button--primary ${styles.desktopSessionAction}`}
+          {sessionEditing && <button type="button" className={`lm-button lm-button--primary ${styles.desktopSessionAction}`}
             onClick={() => saveChanges({ preventDefault() {} })}
             disabled={!dirty || saving || workspaceLoading || saveUncertain}>Save Changes</button>}
         </div>
@@ -1576,14 +1749,14 @@ export default function VehiclesPage() {
                 data-vehicles-section={section.id}
                 aria-controls="vehicles-section-panel"
                 aria-selected={activeSection === section.id}
-                aria-label={dirty && section.id === "ongoing"
+                aria-label={sectionDirty(section.id)
                   ? `${section.label}, unsaved changes` : section.label}
                 tabIndex={activeSection === section.id ? 0 : -1}
                 className={`${styles.sectionTab} ${activeSection === section.id ? styles.sectionTabActive : ""}`}
                 onClick={() => setActiveSection(section.id)}
                 onKeyDown={handleVehicleSectionKeyDown}>
                 <span>{section.label}</span>
-                {dirty && section.id === "ongoing" && (
+                {sectionDirty(section.id) && (
                   <span className={styles.sectionDirtyIndicator} aria-hidden="true" />
                 )}
               </button>
@@ -1594,7 +1767,9 @@ export default function VehiclesPage() {
             <select id="vehicles-section-select" className="lm-form-control" value={activeSection}
               onChange={(event) => setActiveSection(event.target.value)}>
               {vehicleSections.map((section) => (
-                <option key={section.id} value={section.id}>{section.label}</option>
+                <option key={section.id} value={section.id}>
+                  {section.label}{sectionDirty(section.id) ? " *" : ""}
+                </option>
               ))}
             </select>
           </label>
@@ -1742,6 +1917,78 @@ export default function VehiclesPage() {
               </>
             )}
 
+            {recommendedActive && (
+              <section className={styles.recommendedSection} aria-labelledby="vehicles-recommended-title">
+                <h2 id="vehicles-recommended-title" className={styles.visuallyHidden}>Recommended Service</h2>
+                {saveError && <div className="lm-feedback lm-feedback--error" role="alert">
+                  <p>{saveError}</p>
+                  {saveUncertain && <button type="button" className="lm-button lm-button--secondary"
+                    onClick={retryUnknownSave} disabled={saving}>Retry same save</button>}
+                </div>}
+                {status && <p role="status" aria-live="polite">{status}</p>}
+                {recommendedRecord ? <form id="vehicles-recommended-form" className={styles.recommendedForm}
+                  onSubmit={saveChanges} noValidate>
+                  {recommendedEditing ? <label className={`lm-form-field ${styles.recommendedDate}`} htmlFor="vehicles-recommended-date">
+                    <span className="lm-form-label">Date</span>
+                    <input id="vehicles-recommended-date" className="lm-form-control" type="date" required
+                      value={recommendedRecord.serviceDate} disabled={saving || saveUncertain}
+                      onChange={(event) => updateRecommended({ serviceDate: event.target.value })} />
+                  </label> : <label className={`lm-form-field ${styles.recommendedDate}`} htmlFor="vehicles-recommended-record">
+                    <span className="lm-form-label">Date</span>
+                    <select id="vehicles-recommended-record" className="lm-form-control" value={recommendedRecordId}
+                      disabled={saving || saveUncertain} onChange={(event) => selectRecommended(event.target.value)}>
+                      {[...recommendedRecords].sort((left, right) => right.serviceDate.localeCompare(left.serviceDate)
+                        || left.id.localeCompare(right.id)).map((record) => (
+                        <option key={record.id} value={record.id}>{record.serviceDate}</option>
+                      ))}
+                    </select>
+                  </label>}
+                  <div className={styles.recommendedFields}>
+                    {workspace.asset.usageUnit !== "none" && (recommendedEditing
+                      ? <label className="lm-form-field" htmlFor="vehicles-recommended-usage">
+                        <span className="lm-form-label">{workspace.asset.usageUnit === "hours" ? "Hours" : "Mileage"}</span>
+                        <input id="vehicles-recommended-usage" className="lm-form-control" type="number" min="0" step="0.01"
+                          value={recommendedRecord.usageReadingValue ?? ""} disabled={saving || saveUncertain}
+                          onChange={(event) => updateRecommended({
+                            usageReadingValue: event.target.value === "" ? null : Number(event.target.value),
+                            usageReadingUnit: workspace.asset.usageUnit,
+                          })} />
+                      </label>
+                      : <dl><dt>{workspace.asset.usageUnit === "hours" ? "Hours" : "Mileage"}</dt>
+                        <dd>{recommendedRecord.usageReadingValue?.toLocaleString() ?? "Not recorded"}</dd></dl>)}
+                    {recommendedEditing ? <label className="lm-form-field" htmlFor="vehicles-recommended-mechanic">
+                      <span className="lm-form-label">Mechanic</span>
+                      <input id="vehicles-recommended-mechanic" className="lm-form-control" maxLength="160"
+                        value={recommendedRecord.mechanic || ""} disabled={saving || saveUncertain}
+                        onChange={(event) => updateRecommended({ mechanic: event.target.value || null })} />
+                    </label> : <dl><dt>Mechanic</dt><dd>{recommendedRecord.mechanic || "Not recorded"}</dd></dl>}
+                  </div>
+                  <div className={styles.recommendedDescription}>
+                    <div className={styles.descriptionLabelRow}>
+                      <label className="lm-form-label" htmlFor={recommendedEditing ? "vehicles-recommended-description" : undefined}>Description</label>
+                      {recommendedEditing && <button type="button"
+                        className={`lm-button lm-button--secondary ${styles.descriptionBullets}`}
+                        aria-label="Toggle bullets" title="Toggle bullets on selected lines"
+                        disabled={saving || saveUncertain} onMouseDown={(event) => event.preventDefault()}
+                        onClick={toggleRecommendedBullets}>
+                        <List size={16} aria-hidden="true" />Bullets
+                      </button>}
+                    </div>
+                    {recommendedEditing ? <textarea ref={recommendedDescriptionRef}
+                      id="vehicles-recommended-description" className="lm-form-control"
+                      required maxLength="10000" value={recommendedRecord.description} disabled={saving || saveUncertain}
+                      onChange={(event) => updateRecommended({ description: event.target.value })} />
+                      : <div className={styles.recommendedText} tabIndex={0} role="region" aria-label="Recommended Service Description">
+                        {recommendedRecord.description}
+                      </div>}
+                  </div>
+                </form> : <div className={styles.recommendedEmpty}>
+                  <p>{recommendedDeleted.length ? "All Recommended Service records are queued for deletion."
+                    : "No recommended service recorded for this asset."}</p>
+                </div>}
+              </section>
+            )}
+
             {activeSection === "intervals" && (
               <section className={styles.sectionContent} aria-labelledby="vehicles-intervals-section-title">
                 <div className={styles.sectionHeading}>
@@ -1773,7 +2020,7 @@ export default function VehiclesPage() {
               </section>
             )}
 
-            {activeSection !== "ongoing" && activeSection !== "intervals" && (
+            {activeSection !== "ongoing" && activeSection !== "intervals" && !recommendedActive && (
               <section className={styles.sectionContent} aria-labelledby="vehicles-unavailable-section-title">
                 <h2 id="vehicles-unavailable-section-title">
                   {vehicleSections.find((section) => section.id === activeSection)?.label}
@@ -1782,7 +2029,7 @@ export default function VehiclesPage() {
               </section>
             )}
           </div>
-          {ongoingEditing && <div className={styles.mobileSessionActions} aria-label="Ongoing editing actions">
+          {sessionEditing && <div className={styles.mobileSessionActions} aria-label="Vehicle editing actions">
             <button type="button" className="lm-button lm-button--secondary"
               onClick={resetDraft} disabled={saving || saveUncertain}>Cancel Changes</button>
             <button type="button" className="lm-button lm-button--primary"
@@ -2242,7 +2489,7 @@ export default function VehiclesPage() {
           else setConfirmation(null);
         }}>
         <h2 id="vehicles-confirm-title">{confirmationTitle}</h2>
-        <p>{confirmation?.kind === "delete"
+        <p>{["delete", "recommended-delete"].includes(confirmation?.kind)
           ? "The record will be removed from the draft and deleted only after Save Changes."
           : confirmation?.kind === "maintenance-item-archive"
             ? "The item will be archived, not deleted. It remains available to historical records and is excluded from future Ongoing drafts."
@@ -2271,18 +2518,19 @@ export default function VehiclesPage() {
               if (blocker.state === "blocked" && !confirmation) blocker.reset();
               else setConfirmation(null);
             }}>Stay</button>
-          {(confirmation?.kind === "delete" || confirmation?.kind === "maintenance-item-archive"
+          {(["delete", "recommended-delete"].includes(confirmation?.kind) || confirmation?.kind === "maintenance-item-archive"
             || confirmation?.kind === "maintenance-interval-delete") && (
             <button type="button" className={`lm-button lm-button--danger ${styles.archiveAction}`}
-              aria-label={confirmation.kind === "maintenance-interval-delete"
-                ? "Delete Maintenance Interval" : "Archive Maintenance Item"}
+              aria-label={["delete", "recommended-delete"].includes(confirmation.kind) ? "Queue Delete"
+                : confirmation.kind === "maintenance-interval-delete"
+                  ? "Delete Maintenance Interval" : "Archive Maintenance Item"}
               onClick={finishConfirmation}>
-              {confirmation.kind === "delete" ? "Queue Delete"
+              {["delete", "recommended-delete"].includes(confirmation.kind) ? "Queue Delete"
                 : confirmation.kind === "maintenance-interval-delete"
                   ? "Delete Maintenance Interval" : "Archive Maintenance Item"}
             </button>
           )}
-          {confirmation && !["delete", "maintenance-item-archive", "maintenance-interval-delete"].includes(confirmation.kind)
+          {confirmation && !["delete", "recommended-delete", "maintenance-item-archive", "maintenance-interval-delete"].includes(confirmation.kind)
             && !saveUncertain && !saving
             && !maintenanceItemSaving && !maintenanceItemRetryDraft
             && !maintenanceIntervalSaving && !maintenanceIntervalRetryDraft && <button type="button"
