@@ -351,8 +351,8 @@ function harness(overrides = {}) {
     render, settle, nodes, text: (node = tree) => text(node), find, button, input, calls, blocker, dialog,
     manageDialog, maintenanceDialog, intervalDialog, focusCounts, assetStore,
     intervalStore,
-    attachDescriptionEditor(start, end = start) {
-      const node = input("vehicles-recommended-description");
+    attachDescriptionEditor(start, end = start, id = "vehicles-recommended-description") {
+      const node = input(id);
       const editor = {
         value: node.props.value, disabled: node.props.disabled,
         selectionStart: start, selectionEnd: end, selectionDirection: "forward", scrollTop: 25, insertions: 0,
@@ -1270,7 +1270,8 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
     assert.equal(panel.props["aria-label"], label);
     assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
     assert.match(ui.text(panel), expectedId === "recommended"
-      ? /No recommended service recorded for this asset/ : /not yet available/);
+      ? /No recommended service recorded for this asset/ : expectedId === "completed"
+        ? /No completed service recorded for this asset/ : /not yet available/);
     assert.equal(ui.calls.saves.length, 0);
     assert.equal(ui.calls.workspaces.length, workspacesBefore);
     assert.equal(ui.button("Discard and continue"), undefined);
@@ -1798,6 +1799,606 @@ test("Recommended actual service read/save mappers preserve exact bullet strings
   }, uuid(999));
   assert.equal(request.recommended_operations[0].description, description);
   assert.deepEqual(Object.keys(request.recommended_operations[0]).sort(), ["action", "description", "expected_version", "id"]);
+});
+
+const completedRecord = (id = 701, overrides = {}) => ({
+  id: uuid(id), serviceDate: "2025-12-05", usageReadingValue: 100820,
+  usageReadingUnit: "miles", mechanic: "Synthetic tire shop",
+  serviceDescription: "Replaced all 4 tires.\nBalanced and torqued to specification.", version: 7,
+  ...overrides,
+});
+
+function completedHarness(records = [], overrides = {}) {
+  return harness({
+    loadVehicleWorkspace: async () => ({ ...workspace(assets[0], [record(12, "2023-02-27")]),
+      recommendedServiceRecords: [recommendation()], completedServiceRecords: records }),
+    ...overrides,
+  });
+}
+
+function openCompleted(ui) {
+  ui.find((node) => node.props?.["data-vehicles-section"] === "completed").props.onClick();
+  ui.render();
+}
+
+test("Completed empty state is asset-specific without a blank form or unrelated actions", async () => {
+  const ui = completedHarness();
+  await ui.settle();
+  openCompleted(ui);
+  const panel = ui.find((node) => node.props?.id === "vehicles-section-panel");
+  assert.equal(panel.props["aria-label"], "Completed Service");
+  assert.match(ui.text(panel), /No completed service recorded for this asset/);
+  assert(ui.button("Add Completed Service"));
+  assert.equal(ui.button("Edit"), undefined);
+  assert.equal(ui.button("Delete Record"), undefined);
+  assert.equal(ui.input("vehicles-completed-description"), undefined);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Completed uses its own newest-first date selector and stable record IDs, not an Ongoing rail", async () => {
+  const older = completedRecord(702, { serviceDate: "2024-01-03", serviceDescription: "Older synthetic service" });
+  const ui = completedHarness([older, completedRecord()]);
+  await ui.settle();
+  openCompleted(ui);
+  const selector = ui.input("vehicles-completed-record");
+  assert.equal(selector.type, "select");
+  assert.equal(selector.props.value, uuid(701));
+  assert.deepEqual(selector.children.map((node) => node.props.value), [uuid(701), uuid(702)]);
+  assert.deepEqual(selector.children.map((node) => ui.text(node)), ["2025-12-05", "2024-01-03"]);
+  assert.match(ui.text(), /Service Description/);
+  assert.equal(ui.button("Bullets"), undefined);
+  assert.equal(ui.nodes().filter((node) => node.props?.role === "switch").length, 0);
+  assert.equal(ui.find((node) => node.props?.["aria-label"] === "Ongoing Maintenance records"), undefined);
+  selector.props.onChange({ target: { value: uuid(702) } });
+  ui.render();
+  assert.match(ui.text(), /Older synthetic service/);
+  assert.equal(ui.input("vehicles-completed-record").props.value, uuid(702));
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Completed Add preserves all fields across every section, locks its asset, and cancels without saving", async () => {
+  const ui = completedHarness();
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Add Completed Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-date").props.onChange({ target: { value: "2026-04-04" } });
+  ui.input("vehicles-completed-usage").props.onChange({ target: { value: "125.5" } });
+  ui.input("vehicles-completed-mechanic").props.onChange({ target: { value: "Synthetic workshop" } });
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: "Synthetic service.\n\nSecond paragraph." } });
+  ui.render();
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.button("Delete Record"), undefined);
+  assert.equal(ui.input("vehicles-completed-description").props.onKeyDown, undefined);
+  for (const section of ["ongoing", "recommended", "intervals", "key-information", "completed"]) {
+    ui.find((node) => node.props?.["data-vehicles-section"] === section).props.onClick();
+    ui.render();
+    assert.equal(ui.calls.saves.length, 0);
+  }
+  assert.equal(ui.input("vehicles-completed-date").props.value, "2026-04-04");
+  assert.equal(ui.input("vehicles-completed-usage").props.value, 125.5);
+  assert.equal(ui.input("vehicles-completed-mechanic").props.value, "Synthetic workshop");
+  assert.equal(ui.input("vehicles-completed-description").props.value, "Synthetic service.\n\nSecond paragraph.");
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.equal(ui.shouldBlock(), true);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /No completed service recorded/);
+  assert.equal(ui.calls.saves.length, 0);
+  assert.equal(ui.shouldBlock(), false);
+});
+
+test("Completed create emits only its committed fields and stable client identity in the shared envelope", async () => {
+  const ui = completedHarness();
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Add Completed Service").props.onClick();
+  ui.render();
+  const description = "Synthetic completed work.\n\nLiteral <b>text</b> stays plain.";
+  ui.input("vehicles-completed-date").props.onChange({ target: { value: "2026-04-04" } });
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: description } });
+  ui.render();
+  await ui.find((node) => node.props?.id === "vehicles-completed-form").props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+  const draft = ui.calls.saves[0];
+  assert.equal(draft.assetId, uuid(1));
+  assert.equal(draft.expectedAssetVersion, 4);
+  assert.deepEqual(draft.completedOperations, [{ action: "create", id: uuid(900), serviceDate: "2026-04-04",
+    usageReadingValue: null, usageReadingUnit: "miles", mechanic: null, serviceDescription: description }]);
+  for (const field of ["ongoingOperations", "recommendedOperations", "intervalOperations", "maintenanceItemOperations", "linkOperations"]) {
+    assert.deepEqual(draft[field], []);
+  }
+  assert.equal(ui.calls.templates, 0);
+  assert.equal(ui.calls.catalogReads, 0);
+});
+
+test("Completed Edit and no-op Save preserve content, while a changed field carries its expected version", async () => {
+  const ui = completedHarness([completedRecord()]);
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-completed-description").props.value, completedRecord().serviceDescription);
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  await ui.button("Save Changes").props.onClick();
+  assert.equal(ui.calls.saves.length, 0);
+  ui.input("vehicles-completed-mechanic").props.onChange({ target: { value: "Updated synthetic shop" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].completedOperations, [{ action: "update", id: uuid(701), expectedVersion: 7,
+    mechanic: "Updated synthetic shop" }]);
+  assert.deepEqual(ui.calls.saves[0].recommendedOperations, []);
+});
+
+test("Completed cancellation restores the exact original multiline Service Description", async () => {
+  const source = completedRecord(701, { serviceDescription: "Original line.\n\nSecond line." });
+  const ui = completedHarness([source]);
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: "Changed synthetic text" } });
+  ui.render();
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  const text = ui.find((node) => node.props?.["aria-label"] === "Completed Service Description");
+  assert.equal(ui.text(text), source.serviceDescription);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Completed deletion is confirmed, cancelable, versioned, and pending until the shared Save", async () => {
+  const ui = completedHarness([completedRecord()]);
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Delete Record").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /Queue deletion of this Completed Service record/);
+  assert.equal(ui.button("Queue Delete").props["aria-label"], "Queue Delete");
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-completed-record").props.value, uuid(701));
+  ui.button("Delete Record").props.onClick();
+  ui.render();
+  ui.button("Queue Delete").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /All Completed Service records are queued/);
+  assert.equal(ui.calls.saves.length, 0);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-completed-record").props.value, uuid(701));
+  ui.button("Delete Record").props.onClick();
+  ui.render();
+  ui.button("Queue Delete").props.onClick();
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].completedOperations, [{ action: "delete", id: uuid(701), expectedVersion: 7 }]);
+  assert.deepEqual(ui.calls.saves[0].ongoingOperations, []);
+  assert.deepEqual(ui.calls.saves[0].recommendedOperations, []);
+});
+
+test("Completed enforces its actual date, description, mechanic and reading constraints before saving", async () => {
+  for (const [field, value] of [
+    ["vehicles-completed-date", "2026-02-30"],
+    ["vehicles-completed-description", ""], ["vehicles-completed-description", " \n "],
+    ["vehicles-completed-description", " padded "], ["vehicles-completed-description", "X".repeat(10001)],
+    ["vehicles-completed-mechanic", "X".repeat(161)],
+    ["vehicles-completed-usage", "-1"], ["vehicles-completed-usage", "1.001"],
+    ["vehicles-completed-usage", "10000000000"],
+  ]) {
+    const ui = completedHarness([completedRecord()]);
+    await ui.settle();
+    openCompleted(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    ui.input(field).props.onChange({ target: { value } });
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.equal(ui.calls.saves.length, 0, field);
+    assert(ui.nodes().some((node) => node.props?.role === "alert" && ui.text(node).includes("Review Completed Service")));
+  }
+});
+
+test("Completed dates are unique only within Completed history, not Recommended or Ongoing", async () => {
+  const ui = completedHarness([completedRecord()]);
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Add Completed Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-date").props.onChange({ target: { value: "2025-12-05" } });
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: "Synthetic duplicate" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 0);
+  ui.input("vehicles-completed-date").props.onChange({ target: { value: "2023-02-27" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+});
+
+test("Completed conflict and rejected saves preserve drafts and original optimistic versions", async () => {
+  for (const code of ["version_conflict", "validation_error", "not_found"]) {
+    const ui = completedHarness([completedRecord()], {
+      saveVehicleChanges: async (draft) => { ui.calls.saves.push(structuredClone(draft)); throw { code }; },
+    });
+    await ui.settle();
+    openCompleted(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    ui.input("vehicles-completed-description").props.onChange({ target: { value: "Retained synthetic work" } });
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.equal(ui.input("vehicles-completed-description").props.value, "Retained synthetic work");
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+    assert.equal(ui.calls.saves[0].completedOperations[0].expectedVersion, 7);
+    assert(ui.nodes().some((node) => node.props?.role === "alert"));
+  }
+});
+
+test("Completed prevents duplicate submits and retries an unknown-outcome create with exact request and record IDs", async () => {
+  let release;
+  let exactRetry;
+  const requests = [];
+  const ui = completedHarness([], {
+    saveVehicleChanges: async (draft) => {
+      requests.push(structuredClone(draft));
+      if (requests.length === 1) {
+        await new Promise((resolve) => { release = resolve; });
+        exactRetry = { ...structuredClone(draft), requestId: uuid(990) };
+        throw { code: "unknown_outcome", retryDraft: exactRetry };
+      }
+      return { status: "saved", replayed: true, assetVersion: 5,
+        entityVersions: { completed: { [uuid(900)]: 1 } } };
+    },
+  });
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Add Completed Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: "Stable synthetic create" } });
+  ui.render();
+  const submit = ui.button("Save Changes").props.onClick;
+  const first = submit();
+  await submit();
+  assert.equal(requests.length, 1);
+  release();
+  await first;
+  await ui.settle();
+  assert.equal(ui.input("vehicles-completed-description").props.disabled, true);
+  assert.equal(ui.button("Cancel Changes").props.disabled, true);
+  await ui.button("Retry same save").props.onClick();
+  await ui.settle();
+  assert.deepEqual(requests[1], exactRetry);
+  assert.equal(requests[1].completedOperations[0].id, uuid(900));
+});
+
+test("Completed confirmed-save reconciliation retains returned versions when workspace refresh fails", async () => {
+  let loads = 0;
+  const ui = completedHarness([completedRecord()], {
+    loadVehicleWorkspace: async () => {
+      if (loads++ > 0) throw Error("Synthetic read failure");
+      return { ...workspace(assets[0], []), completedServiceRecords: [completedRecord()] };
+    },
+    saveVehicleChanges: async (draft) => {
+      ui.calls.saves.push(structuredClone(draft));
+      return { status: "saved", assetVersion: 5, entityVersions: { completed: { [uuid(701)]: 8 } } };
+    },
+  });
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: "Confirmed synthetic work" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.match(ui.text(), /saved, but the latest workspace could not be reloaded/);
+  assert.match(ui.text(), /Confirmed synthetic work/);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  ui.input("vehicles-completed-mechanic").props.onChange({ target: { value: "Synthetic other shop" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves[1].expectedAssetVersion, 5);
+  assert.equal(ui.calls.saves[1].completedOperations[0].expectedVersion, 8);
+});
+
+test("Completed, Recommended, and Ongoing share one changed-only atomic save", async () => {
+  const ui = completedHarness([completedRecord()]);
+  await ui.settle();
+  enterOngoingEdit(ui);
+  ui.input("vehicles-mechanic").props.onChange({ target: { value: "Synthetic ongoing shop" } });
+  ui.render();
+  openRecommended(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Synthetic recommended work" } });
+  ui.render();
+  openCompleted(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: "Synthetic completed work" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+  const draft = ui.calls.saves[0];
+  assert.equal(draft.completedOperations.length, 1);
+  assert.equal(draft.recommendedOperations.length, 1);
+  assert.equal(draft.ongoingOperations.length, 1);
+  assert.deepEqual(draft.intervalOperations, []);
+  assert.deepEqual(draft.maintenanceItemOperations, []);
+  assert.equal(draft.keyInformationOperation, null);
+});
+
+test("Completed hours and none-usage assets preserve domain units without a catalog relationship", async () => {
+  for (const unit of ["hours", "none"]) {
+    const asset = { ...assets[0], usageUnit: unit };
+    const source = completedRecord(701, { usageReadingUnit: unit, usageReadingValue: unit === "none" ? null : 125.5 });
+    const ui = completedHarness([source], { loadVehicleWorkspace: async () => ({
+      ...workspace(asset, []), completedServiceRecords: [source],
+    }) });
+    await ui.settle();
+    openCompleted(ui);
+    if (unit === "hours") assert.match(ui.text(), /Hours/);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    assert.equal(Boolean(ui.input("vehicles-completed-usage")), unit !== "none");
+    assert.equal(ui.input("vehicles-completed-description").props.maxLength, "10000");
+    assert.equal(ui.input("vehicles-completed-mechanic").props.maxLength, "160");
+    assert.equal(ui.calls.catalogReads, 0);
+    assert.equal(ui.button("Bullets").props["aria-label"], "Toggle bullets");
+    ui.input("vehicles-completed-description").props.onChange({ target: { value: "Synthetic unit-specific service" } });
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.deepEqual(ui.calls.saves[0].completedOperations, [{ action: "update", id: uuid(701), expectedVersion: 7,
+      serviceDescription: "Synthetic unit-specific service" }]);
+  }
+});
+
+test("Completed renders multiline historical content safely, with labels and no direct mutation boundary", async () => {
+  const description = "Annual maintenance completed.\n\n\u2022 Changed engine oil\n\u2022 Replaced oil filter\n\n<script>literal text</script>";
+  const ui = completedHarness([completedRecord(701, { serviceDescription: description })]);
+  await ui.settle();
+  openCompleted(ui);
+  const content = ui.find((node) => node.props?.["aria-label"] === "Completed Service Description");
+  assert.equal(ui.text(content), description);
+  assert.equal(content.props.dangerouslySetInnerHTML, undefined);
+  assert.equal(ui.nodes(content).some((node) => node.type === "script"), false);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  for (const id of ["vehicles-completed-date", "vehicles-completed-usage", "vehicles-completed-mechanic", "vehicles-completed-description"]) {
+    assert(ui.find((node) => node.type === "label" && node.props.htmlFor === id));
+  }
+  const source = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx"), "utf8");
+  assert.doesNotMatch(source, /\.from\s*\(|\.rpc\s*\(|dangerouslySetInnerHTML/);
+  assert.match(source, /draft\.completedOperations\.push/);
+});
+
+test("Completed actual service mappers and uncertain transport preserve plain text, stable IDs, and exact replay", async () => {
+  const loadSource = (file) => fs.readFileSync(path.join(root, file), "utf8")
+    .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
+  const { parseDateOnly } = vm.runInNewContext(`(() => {
+    ${loadSource("src/services/vehiclesMaintenanceIntervalEngine.js")}; return { parseDateOnly };
+  })()`);
+  const { createVehiclesDataAccess, VehiclesDataAccessError } = vm.runInNewContext(`(() => {
+    ${loadSource("src/services/vehiclesDataAccess.js")}; return { createVehiclesDataAccess, VehiclesDataAccessError };
+  })()`);
+  const { createVehiclesService, mapHistoryRow } = vm.runInNewContext(`(() => {
+    ${loadSource("src/services/vehiclesService.js")}; return { createVehiclesService, mapHistoryRow };
+  })()`, { parseDateOnly, createVehiclesDataAccess, VehiclesDataAccessError,
+    crypto: { randomUUID: () => uuid(990) },
+    getSupabaseClient: () => { throw Error("No production client in Completed tests"); },
+  });
+  const requests = [];
+  const client = {
+    from() { throw Error("Completed save must not issue table writes"); },
+    rpc(name, payload) {
+      assert.equal(name, "save_vehicles_changes");
+      requests.push(structuredClone(payload));
+      if (requests.length === 1) return Promise.reject({ code: "ECONNRESET" });
+      const request = payload.p_request;
+      return Promise.resolve({ error: null, data: {
+        ok: true, request_id: request.request_id, asset_id: request.asset_id, asset_version: 5, replayed: true,
+        entity_versions: { completed: { [uuid(900)]: 1 } }, created_ids: { completed: [uuid(900)] },
+        deleted_ids: {}, affected_asset_versions: {},
+      } });
+    },
+  };
+  const description = "Annual maintenance completed.\n\n\u2022 Changed engine oil\n\u2022 Replaced oil filter\n\nLiteral <b>text</b> stays plain.";
+  const mapped = mapHistoryRow({ id: uuid(900), service_date: "2026-04-04", usage_reading_unit: "none",
+    usage_reading_value: null, mechanic: null, version: 1, service_description: description }, "completed");
+  assert.equal(mapped.serviceDescription, description);
+  const service = createVehiclesService(() => client);
+  let unknown;
+  try {
+    await service.saveVehicleChanges({ assetId: uuid(1), expectedAssetVersion: 4, completedOperations: [{
+      action: "create", id: mapped.id, serviceDate: mapped.serviceDate, usageReadingUnit: "none",
+      usageReadingValue: null, mechanic: null, serviceDescription: mapped.serviceDescription,
+    }] });
+  } catch (error) { unknown = error; }
+  assert.equal(unknown.code, "unknown_outcome");
+  assert.equal(unknown.retryDraft.requestId, uuid(990));
+  assert.equal(unknown.retryDraft.completedOperations[0].id, uuid(900));
+  const result = await service.saveVehicleChanges(unknown.retryDraft);
+  assert.equal(result.replayed, true);
+  assert.deepEqual(requests[1], requests[0]);
+  assert.equal(requests[0].p_request.completed_operations[0].service_description, description);
+  assert.equal(requests[0].p_request.recommended_operations, undefined);
+  assert.equal(requests[0].p_request.ongoing_operations, undefined);
+  assert.equal(requests[0].p_request.interval_operations, undefined);
+});
+
+test("Completed shared-save errors remain accessible while viewing Intervals or Key Information", async () => {
+  const ui = completedHarness();
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Add Completed Service").props.onClick();
+  ui.render();
+  for (const section of ["intervals", "key-information"]) {
+    ui.find((node) => node.props?.["data-vehicles-section"] === section).props.onClick();
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert(ui.nodes().some((node) => node.props?.role === "alert" && ui.text(node).includes("Review Completed Service")));
+    assert.equal(ui.calls.saves.length, 0);
+  }
+});
+
+test("Completed bullets share the approved current-line, multiline, blank-line and mixed-prefix behavior", async () => {
+  const scenarios = [
+    { source: "Replaced oil filter", start: 5, end: 5, expected: "\u2022 Replaced oil filter", selection: [7, 7] },
+    { source: "\u2022 Replaced oil filter", start: 5, end: 5, expected: "Replaced oil filter", selection: [3, 3] },
+    { source: "Replaced oil filter\nChanged engine oil\nInspected air filter",
+      expected: "\u2022 Replaced oil filter\n\u2022 Changed engine oil\n\u2022 Inspected air filter" },
+    { source: "\u2022 Replaced oil filter\n\u2022 Changed engine oil\n\u2022 Inspected air filter",
+      expected: "Replaced oil filter\nChanged engine oil\nInspected air filter" },
+    { source: "Replaced oil filter\n\nChanged engine oil\n  \nInspected air filter",
+      expected: "\u2022 Replaced oil filter\n\n\u2022 Changed engine oil\n  \n\u2022 Inspected air filter" },
+    { source: "\u2022 Replaced oil filter\nChanged engine oil\n\u2022 Inspected air filter",
+      expected: "\u2022 Replaced oil filter\n\u2022 Changed engine oil\n\u2022 Inspected air filter" },
+  ];
+  for (const scenario of scenarios) {
+    const ui = completedHarness([completedRecord(701, { serviceDescription: scenario.source })]);
+    await ui.settle();
+    openCompleted(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    const editor = ui.attachDescriptionEditor(scenario.start ?? 0, scenario.end ?? scenario.source.length,
+      "vehicles-completed-description");
+    editor.selectionDirection = "backward";
+    ui.button("Bullets").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-completed-description").props.value, scenario.expected);
+    assert.equal(editor.insertions, 1);
+    assert.equal(editor.selectionDirection, "backward");
+    assert(editor.selectionStart >= 0 && editor.selectionEnd <= scenario.expected.length);
+    if (scenario.selection) assert.deepEqual([editor.selectionStart, editor.selectionEnd], scenario.selection);
+    assert.equal(editor.scrollTop, 25);
+    assert.equal(ui.calls.saves.length, 0);
+  }
+});
+
+test("Completed and Recommended use one native bullet handler without intercepting textarea keyboard history", async () => {
+  const source = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx"), "utf8");
+  assert.equal((source.match(/function toggleDescriptionBullets\(/g) || []).length, 1);
+  assert.equal((source.match(/function toggleEditorBullets\(/g) || []).length, 1);
+  assert.match(source, /toggleEditorBullets\(recommendedDescriptionRef\.current/);
+  assert.match(source, /toggleEditorBullets\(completedDescriptionRef\.current/);
+  const ui = completedHarness([completedRecord()]);
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  const textarea = ui.input("vehicles-completed-description");
+  for (const handler of ["onKeyDown", "onKeyUp", "onBeforeInput", "onPaste", "onCopy"]) {
+    assert.equal(textarea.props[handler], undefined);
+  }
+  const button = ui.button("Bullets");
+  assert.equal(button.props.type, "button");
+  assert.equal(button.props["aria-label"], "Toggle bullets");
+  assert.match(button.props.className, /descriptionBullets/);
+});
+
+test("Completed bullet transforms count prefixes and reject over-limit text atomically without truncation", async () => {
+  for (const [description, expected] of [
+    ["X".repeat(9998), "\u2022 " + "X".repeat(9998)],
+    ["X".repeat(9999), null],
+    ["X".repeat(9996) + "\nY", null],
+    ["\u2022 " + "X".repeat(9998), "X".repeat(9998)],
+  ]) {
+    const ui = completedHarness([completedRecord(701, { serviceDescription: description })]);
+    await ui.settle();
+    openCompleted(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    const editor = ui.attachDescriptionEditor(0, description.length, "vehicles-completed-description");
+    ui.button("Bullets").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-completed-description").props.value, expected ?? description);
+    assert.equal(editor.insertions, expected === null ? 0 : 1);
+    assert.equal(ui.input("vehicles-completed-description").props.maxLength, "10000");
+    if (expected === null) {
+      assert.equal(editor.selectionStart, 0);
+      assert.equal(editor.selectionEnd, description.length);
+      assert(ui.nodes().some((node) => node.props?.role === "alert" && ui.text(node).includes("10,000-character")));
+      assert.equal(ui.button("Save Changes").props.disabled, true);
+    }
+  }
+});
+
+test("Completed mixed prose and bullets survive Add, all-section traversal and exact create mapping", async () => {
+  const initial = "Annual maintenance completed.\n\nChanged engine oil\nReplaced oil filter\nInspected air filter\n\nVehicle tested normally afterward.";
+  const expected = "Annual maintenance completed.\n\n\u2022 Changed engine oil\n\u2022 Replaced oil filter\n\u2022 Inspected air filter\n\nVehicle tested normally afterward.";
+  const ui = completedHarness();
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Add Completed Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-date").props.onChange({ target: { value: "2026-04-04" } });
+  ui.input("vehicles-completed-usage").props.onChange({ target: { value: "456.25" } });
+  ui.input("vehicles-completed-mechanic").props.onChange({ target: { value: "Synthetic workshop" } });
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: initial } });
+  ui.render();
+  ui.attachDescriptionEditor(initial.indexOf("Changed"), initial.indexOf("\n\nVehicle"), "vehicles-completed-description");
+  ui.button("Bullets").props.onClick();
+  ui.render();
+  for (const section of ["ongoing", "recommended", "intervals", "key-information", "completed"]) {
+    ui.find((node) => node.props?.["data-vehicles-section"] === section).props.onClick();
+    ui.render();
+  }
+  assert.equal(ui.input("vehicles-completed-description").props.value, expected);
+  assert.equal(ui.input("vehicles-completed-date").props.value, "2026-04-04");
+  assert.equal(ui.input("vehicles-completed-usage").props.value, 456.25);
+  assert.equal(ui.input("vehicles-completed-mechanic").props.value, "Synthetic workshop");
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.calls.saves.length, 0);
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].completedOperations, [{ action: "create", id: uuid(900),
+    serviceDate: "2026-04-04", usageReadingValue: 456.25, usageReadingUnit: "miles",
+    mechanic: "Synthetic workshop", serviceDescription: expected }]);
+});
+
+test("Completed saved bullet text reopens exactly, cancels cleanly, and produces only a Description update", async () => {
+  const original = "Annual maintenance completed.\n\n\u2022 Changed engine oil\n\u2022 Replaced oil filter\n\nVehicle tested normally afterward.";
+  const expected = "Annual maintenance completed.\n\nChanged engine oil\nReplaced oil filter\n\nVehicle tested normally afterward.";
+  const ui = completedHarness([completedRecord(701, { serviceDescription: original })]);
+  await ui.settle();
+  openCompleted(ui);
+  const region = () => ui.find((node) => node.props?.["aria-label"] === "Completed Service Description");
+  assert.equal(ui.text(region()), original);
+  assert.equal(region().props.dangerouslySetInnerHTML, undefined);
+  const editAndToggle = () => {
+    ui.button("Edit").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-completed-description").props.value, original);
+    assert.equal(ui.button("Save Changes").props.disabled, true);
+    ui.attachDescriptionEditor(original.indexOf("\u2022"), original.indexOf("\n\nVehicle"), "vehicles-completed-description");
+    ui.button("Bullets").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-completed-description").props.value, expected);
+  };
+  editAndToggle();
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.text(region()), original);
+  assert.equal(ui.calls.saves.length, 0);
+  editAndToggle();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].completedOperations, [{ action: "update", id: uuid(701), expectedVersion: 7,
+    serviceDescription: expected }]);
 });
 
 test("Maintenance Intervals section reads existing data and opens the existing manager", async () => {
