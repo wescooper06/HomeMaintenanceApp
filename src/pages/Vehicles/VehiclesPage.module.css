@@ -17,6 +17,17 @@
   max-width: 28rem;
 }
 
+.assetLabel .lm-form-label {
+  font-size: var(--lm-font-label);
+  font-weight: 700;
+}
+
+.assetSelectorControl {
+  border-color: var(--lm-color-border-strong);
+  background: var(--lm-color-surface-subtle);
+  font-weight: 700;
+}
+
 .vehicleContextRow {
   display: flex;
   min-width: 0;
@@ -33,6 +44,10 @@
   align-items: flex-end;
   justify-content: flex-end;
   gap: var(--lm-space-2);
+}
+
+.recordDeleteAction::before {
+  content: none;
 }
 
 .sectionTabs {
@@ -356,8 +371,10 @@
 .pageManageActions > summary {
   width: auto;
   min-width: var(--lm-control-desktop);
+  height: auto;
+  min-height: var(--lm-control-desktop);
   padding-inline: var(--lm-space-3);
-  font-weight: 600;
+  text-align: center;
 }
 
 .pageMoreActions > summary:focus-visible,
@@ -384,6 +401,16 @@
 .pageMoreActionsMenu button {
   width: 100%;
   text-align: left;
+}
+
+.pageManageActionsMenu button {
+  display: flex;
+  width: 100%;
+  min-height: var(--lm-control-mobile);
+  align-items: center;
+  padding-inline: var(--lm-space-3);
+  text-align: center;
+  justify-content: center;
 }
 
 .dialog {
@@ -735,6 +762,16 @@
   .assetRow {
     width: 100%;
     max-width: none;
+  }
+
+  .pageManageActions > summary {
+    min-height: var(--lm-control-mobile);
+    height: auto;
+  }
+
+  .pageManageActionsMenu {
+    inset-inline-start: 0;
+    inset-inline-end: auto;
   }
 
   .pageActions {

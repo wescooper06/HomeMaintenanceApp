@@ -1,4 +1,3 @@
-import { MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useBlocker } from "react-router-dom";
 
@@ -216,6 +215,7 @@ export default function VehiclesPage() {
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [ongoingEditing, setOngoingEditing] = useState(false);
   const [activeSection, setActiveSection] = useState("ongoing");
+  const [manageMenuOpen, setManageMenuOpen] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
   const [saveError, setSaveError] = useState("");
   const [status, setStatus] = useState("");
@@ -265,6 +265,7 @@ export default function VehiclesPage() {
   const manageSaveLock = useRef(false);
   const maintenanceItemSaveLock = useRef(false);
   const maintenanceIntervalSaveLock = useRef(false);
+  const manageDetailsRef = useRef(null);
 
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
   const selectedMaintenanceItem = maintenanceItems?.find((item) => item.id === selectedMaintenanceItemId);
@@ -303,6 +304,28 @@ export default function VehiclesPage() {
     || maintenanceItemDirty || maintenanceItemSaving || maintenanceItemRetryDraft !== null
     || maintenanceIntervalDirty || maintenanceIntervalSaving || maintenanceIntervalRetryDraft !== null
     || (manageAssetsOpen && manageAssetDraftDirty) || manageSaving || manageRetryDraft !== null);
+
+  useEffect(() => {
+    if (!manageMenuOpen) return undefined;
+
+    function dismissManageOnOutsidePointer(event) {
+      if (!manageDetailsRef.current?.contains(event.target)) setManageMenuOpen(false);
+    }
+
+    function dismissManageOnEscape(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setManageMenuOpen(false);
+      manageButtonRef.current?.focus();
+    }
+
+    document.addEventListener("pointerdown", dismissManageOnOutsidePointer);
+    document.addEventListener("keydown", dismissManageOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissManageOnOutsidePointer);
+      document.removeEventListener("keydown", dismissManageOnEscape);
+    };
+  }, [manageMenuOpen]);
 
   useEffect(() => {
     let active = true;
@@ -1454,9 +1477,10 @@ export default function VehiclesPage() {
       <PageHeader id="vehicles-page-title" title="Vehicles" />
       <div className={styles.vehicleContextRow}>
         <div className={styles.assetRow}>
-          <label className="lm-form-field" htmlFor="vehicles-asset-select">
+          <label className={`lm-form-field ${styles.assetLabel}`} htmlFor="vehicles-asset-select">
             <span className="lm-form-label">Vehicle</span>
-            <select id="vehicles-asset-select" className="lm-form-control" value={selectedAssetId}
+            <select id="vehicles-asset-select" className={`lm-form-control ${styles.assetSelectorControl}`}
+              value={selectedAssetId}
               disabled={!assets?.length || saving || saveUncertain}
               onChange={(event) => selectAsset(event.target.value)}>
               {assets?.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
@@ -1464,33 +1488,39 @@ export default function VehiclesPage() {
           </label>
         </div>
         <div className={styles.pageActions}>
-          <details className={`${styles.pageMoreActions} ${styles.pageManageActions}`}>
-            <summary ref={manageButtonRef} aria-label="Manage" title="Manage">Manage</summary>
-            <div className={styles.pageMoreActionsMenu}>
+          <details ref={manageDetailsRef} className={`${styles.pageMoreActions} ${styles.pageManageActions}`}
+            open={manageMenuOpen}>
+            <summary ref={manageButtonRef} className="lm-button lm-button--secondary"
+              aria-label="Manage" aria-expanded={manageMenuOpen} title="Manage"
+              onClick={(event) => {
+                event.preventDefault();
+                setManageMenuOpen((open) => !open);
+              }}>Manage</summary>
+            <div className={`${styles.pageMoreActionsMenu} ${styles.pageManageActionsMenu}`}>
               <button type="button" className="lm-button lm-button--secondary"
-                onClick={(event) => {
-                  event?.currentTarget?.closest("details")?.removeAttribute("open");
+                onClick={() => {
+                  setManageMenuOpen(false);
                   openManageAssets();
                 }} disabled={saving || saveUncertain || manageSaving
                   || maintenanceItemSaving || manageMaintenanceItemsOpen || manageMaintenanceIntervalsOpen}>
-                Manage Assets
+                Assets
               </button>
               <button ref={manageMaintenanceItemsButtonRef} type="button" className="lm-button lm-button--secondary"
-                onClick={(event) => {
-                  event?.currentTarget?.closest("details")?.removeAttribute("open");
+                onClick={() => {
+                  setManageMenuOpen(false);
                   openManageMaintenanceItems();
                 }} disabled={saving || saveUncertain || manageSaving
                   || manageRetryDraft || maintenanceItemSaving || manageMaintenanceIntervalsOpen}>
-                Manage Maintenance Items
+                Maintenance Items
               </button>
               <button ref={manageMaintenanceIntervalsButtonRef} type="button" className="lm-button lm-button--secondary"
-                onClick={(event) => {
-                  event?.currentTarget?.closest("details")?.removeAttribute("open");
+                onClick={() => {
+                  setManageMenuOpen(false);
                   openManageMaintenanceIntervals();
                 }} disabled={!workspace || workspaceLoading || saving || saveUncertain || manageSaving || manageRetryDraft
                   || maintenanceItemSaving || maintenanceItemRetryDraft || maintenanceIntervalSaving
                   || manageMaintenanceIntervalsOpen}>
-                Manage Maintenance Intervals
+                Maintenance Intervals
               </button>
             </div>
           </details>
@@ -1501,18 +1531,8 @@ export default function VehiclesPage() {
           {workspace && !ongoingEditing && <button type="button" className="lm-button lm-button--primary"
             onClick={addRecord} disabled={saving || saveUncertain}>Add Ongoing Record</button>}
           {selectedRecord && !selectedRecord.isNew && !ongoingEditing && (
-            <details className={styles.pageMoreActions}>
-              <summary aria-label="More actions" title="More actions">
-                <MoreHorizontal aria-hidden="true" size={18} />
-              </summary>
-              <div className={styles.pageMoreActionsMenu}>
-                <button type="button" className="lm-button lm-button--danger"
-                  onClick={(event) => {
-                    event?.currentTarget?.closest("details")?.removeAttribute("open");
-                    queueDelete();
-                  }} disabled={saving || saveUncertain}>Delete Record</button>
-              </div>
-            </details>
+            <button type="button" className={`lm-button lm-button--danger ${styles.recordDeleteAction}`}
+              onClick={queueDelete} disabled={saving || saveUncertain}>Delete Record</button>
           )}
           {ongoingEditing && <button type="button"
             className={`lm-button lm-button--secondary ${styles.desktopSessionAction}`}

@@ -73,6 +73,7 @@ function harness(overrides = {}) {
   const hookSlots = [];
   const refs = [];
   const effects = [];
+  const documentListeners = new Map();
   const calls = {
     listAssets: 0, workspaces: [], templates: 0, saves: [], creates: [], catalogReads: 0, catalogSaves: [],
   };
@@ -221,11 +222,25 @@ function harness(overrides = {}) {
     managedName: 0, manageButton: 0, maintenanceItemName: 0, maintenanceItemButton: 0,
     maintenanceIntervalItem: 0, maintenanceIntervalsAddButton: 0, manageIntervalsButton: 0,
   };
+  const mockDocument = {
+    activeElement: { focus() {} },
+    addEventListener(type, listener) {
+      const listeners = documentListeners.get(type) || [];
+      listeners.push(listener);
+      documentListeners.set(type, listeners);
+    },
+    removeEventListener(type, listener) {
+      documentListeners.set(type, (documentListeners.get(type) || []).filter((entry) => entry !== listener));
+    },
+  };
   const context = {
     element: (type, props, ...children) => {
       const renderedChildren = (children.length ? children : [props?.children]).flat(Infinity)
         .filter((child) => child !== null && child !== undefined && child !== false);
       if (typeof type === "function") return type({ ...props, children: renderedChildren });
+      if (type === "details" && String(props?.className).includes("pageManageActions") && props.ref) {
+        props.ref.current = { contains: (target) => target === "inside-manage" };
+      }
       return { type, props: props || {}, children: renderedChildren };
     },
     fragment: "fragment",
@@ -238,7 +253,7 @@ function harness(overrides = {}) {
     createVehicleChangesDraft: (...args) => service.createVehicleChangesDraft(...args),
     buildRecordDeleteOperation: (...args) => service.buildRecordDeleteOperation(...args),
     crypto: { randomUUID: () => uuid(nextRecordId++) },
-    document: { activeElement: { focus() {} } },
+    document: mockDocument,
     window: { addEventListener() {}, removeEventListener() {} },
     useState(initial) {
       const index = hookIndex++;
@@ -303,7 +318,16 @@ function harness(overrides = {}) {
   }
   function find(predicate) { return nodes().find(predicate); }
   function button(label) {
-    return nodes().find((node) => node.type === "button" && text(node) === label);
+    const optionLabels = {
+      "Manage Assets": "Assets",
+      "Manage Maintenance Items": "Maintenance Items",
+      "Manage Maintenance Intervals": "Maintenance Intervals",
+    };
+    const targetLabel = optionLabels[label] || label;
+    const candidates = nodes().filter((node) => node.type === "button" && text(node) === targetLabel);
+    return optionLabels[label]
+      ? candidates.find((node) => String(node.props.className).includes("pageManageActionsMenu")) || candidates[0]
+      : candidates[0];
   }
   function input(id) { return nodes().find((node) => node.props.id === id); }
   async function settle() {
@@ -317,6 +341,10 @@ function harness(overrides = {}) {
     render, settle, nodes, text: (node = tree) => text(node), find, button, input, calls, blocker, dialog,
     manageDialog, maintenanceDialog, intervalDialog, focusCounts, assetStore,
     intervalStore,
+    dispatchDocumentEvent(type, event) {
+      for (const listener of [...(documentListeners.get(type) || [])]) listener(event);
+    },
+    documentListenerCount(type) { return (documentListeners.get(type) || []).length; },
     shouldBlock: () => blockerPredicate(),
     setService(next) { service = next; context.vehiclesService = next; },
   };
@@ -1037,7 +1065,7 @@ test("Manage Assets does not expose database writes or Delete Asset", () => {
   assert.match(source, /vehiclesService\.saveMaintenanceItem/);
 });
 
-test("Vehicles page actions follow the canonical Manage, Edit, Add, More order", async () => {
+test("Vehicles page actions show Manage, Edit, Add, and Delete directly", async () => {
   const ui = harness();
   await ui.settle();
   const actionContainer = ui.find((node) => node.props?.className === "pageActions");
@@ -1048,8 +1076,114 @@ test("Vehicles page actions follow the canonical Manage, Edit, Add, More order",
     }
     return node.type === "button" ? ui.text(node) : "";
   }).filter(Boolean);
-  assert.deepEqual(actions, ["Manage", "Edit", "Add Ongoing Record", "More actions"]);
-  assert.equal(actionContainer.children.some((node) => node.type === "button" && ui.text(node) === "Delete Record"), false);
+  assert.deepEqual(actions, ["Manage", "Edit", "Add Ongoing Record", "Delete Record"]);
+  assert.equal(actionContainer.children.some((node) => node.type === "button" && ui.text(node) === "Delete Record"), true);
+  assert.equal(actionContainer.children.some((node) => node.type === "details"
+    && node.children.some((child) => child.type === "summary" && child.props["aria-label"] === "More actions")), false);
+});
+
+test("Manage actions share peer typography and offer centered exact labels", async () => {
+  const ui = harness();
+  await ui.settle();
+  const manage = ui.find((node) => node.type === "details" && String(node.props.className).includes("pageManageActions"));
+  const trigger = ui.nodes(manage).find((node) => node.type === "summary");
+  const menu = ui.nodes(manage).find((node) => node.type === "div"
+    && String(node.props.className).includes("pageManageActionsMenu"));
+  const options = ui.nodes(menu).filter((node) => node.type === "button");
+  const edit = ui.button("Edit");
+  assert.equal(trigger.props["aria-expanded"], false);
+  assert.equal(trigger.props.className, edit.props.className);
+  assert.match(trigger.props.className, /lm-button/);
+  assert.match(trigger.props.className, /lm-button--secondary/);
+  assert.deepEqual(options.map((option) => ui.text(option)), [
+    "Assets", "Maintenance Items", "Maintenance Intervals",
+  ]);
+  assert.equal(new Set(options.map((option) => option.props.className)).size, 1);
+
+  const selector = ui.input("vehicles-asset-select");
+  assert.equal(selector.props.value, uuid(1));
+  assert.match(selector.props.className, /assetSelectorControl/);
+  assert.equal(ui.find((node) => node.type === "label" && node.props.htmlFor === "vehicles-asset-select") !== undefined, true);
+
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.pageManageActionsMenu\s+button\s*\{[^}]*text-align:\s*center;[^}]*justify-content:\s*center/s);
+  assert.match(css, /\.pageManageActionsMenu\s+button\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(css, /\.assetSelectorControl\s*\{[^}]*border-color:\s*var\(--lm-color-border-strong\);[^}]*background:\s*var\(--lm-color-surface-subtle\);[^}]*font-weight:\s*700/s);
+});
+
+test("Manage popup preserves desktop anchoring and uses a viewport-safe mobile start edge", () => {
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  const desktopMenu = css.match(/\.pageMoreActionsMenu\s*\{([^}]*)\}/s)?.[1] || "";
+  assert.match(desktopMenu, /position:\s*absolute;/);
+  assert.match(desktopMenu, /inset-inline-end:\s*0;/);
+  assert.match(desktopMenu, /min-width:\s*14rem;/);
+
+  const mobileCss = css.slice(css.indexOf("@media (max-width: 600px)"));
+  const mobileMenu = mobileCss.match(/\.pageManageActionsMenu\s*\{([^}]*)\}/s)?.[1] || "";
+  assert.match(mobileMenu, /inset-inline-start:\s*0;/);
+  assert.match(mobileMenu, /inset-inline-end:\s*auto;/);
+  assert.doesNotMatch(mobileMenu, /transform|translate|margin|font-size|(?:left|right):\s*-/);
+  assert.equal(css.match(/\.pageManageActionsMenu\s*\{/g)?.length, 1);
+});
+
+test("Manage disclosure dismisses outside and on Escape, and each option opens its existing manager", async () => {
+  const ui = harness();
+  await ui.settle();
+  const manage = () => ui.find((node) => node.type === "details"
+    && String(node.props.className).includes("pageManageActions"));
+  const trigger = () => ui.nodes(manage()).find((node) => node.type === "summary");
+  const open = () => {
+    trigger().props.onClick({ preventDefault() {} });
+    ui.render();
+    assert.equal(manage().props.open, true);
+    assert.equal(trigger().props["aria-expanded"], true);
+    assert.equal(ui.documentListenerCount("pointerdown"), 1);
+    assert.equal(ui.documentListenerCount("keydown"), 1);
+  };
+
+  open();
+  ui.dispatchDocumentEvent("pointerdown", { target: "inside-manage" });
+  ui.render();
+  assert.equal(manage().props.open, true);
+  ui.dispatchDocumentEvent("pointerdown", { target: "outside" });
+  ui.render();
+  assert.equal(manage().props.open, false);
+  assert.equal(ui.documentListenerCount("pointerdown"), 0);
+  assert.equal(ui.documentListenerCount("keydown"), 0);
+
+  open();
+  let escapePrevented = false;
+  ui.dispatchDocumentEvent("keydown", { key: "Escape", preventDefault() { escapePrevented = true; } });
+  ui.render();
+  assert.equal(escapePrevented, true);
+  assert.equal(manage().props.open, false);
+  assert.equal(ui.documentListenerCount("pointerdown"), 0);
+  assert.equal(ui.documentListenerCount("keydown"), 0);
+  assert(ui.focusCounts.manageButton > 0);
+
+  open();
+  ui.button("Manage Assets").props.onClick();
+  await ui.settle();
+  assert.equal(manage().props.open, false);
+  assert.equal(ui.manageDialog.open, true);
+  assert.equal(ui.documentListenerCount("pointerdown"), 0);
+  ui.find((node) => node.type === "button" && node.props["aria-label"] === "Close Manage Assets").props.onClick();
+  ui.render();
+
+  open();
+  ui.button("Manage Maintenance Items").props.onClick();
+  await ui.settle();
+  assert.equal(manage().props.open, false);
+  assert.equal(ui.maintenanceDialog.open, true);
+  ui.find((node) => node.type === "button" && node.props["aria-label"] === "Close Manage Maintenance Items").props.onClick();
+  ui.render();
+
+  open();
+  ui.button("Manage Maintenance Intervals").props.onClick();
+  await ui.settle();
+  assert.equal(manage().props.open, false);
+  assert.equal(ui.intervalDialog.open, true);
+  assert.equal(ui.calls.saves.length, 0);
 });
 
 test("Vehicles shell exposes the canonical five sections in order above section content", async () => {
@@ -1098,13 +1232,14 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
   await ui.settle();
   const assetId = ui.input("vehicles-asset-select").props.value;
   const workspacesBefore = ui.calls.workspaces.length;
+  const sectionTab = (id) => ui.find((node) => node.props?.["data-vehicles-section"] === id);
 
   for (const [label, expectedId] of [
     ["Recommended Service", "recommended"],
     ["Completed Service", "completed"],
     ["Key Information", "key-information"],
   ]) {
-    ui.button(label).props.onClick();
+    sectionTab(expectedId).props.onClick();
     ui.render();
     const panel = ui.find((node) => node.props?.id === "vehicles-section-panel");
     assert.equal(panel.props["aria-label"], label);
@@ -1117,7 +1252,7 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
       .props["aria-selected"], true);
   }
 
-  ui.button("Ongoing Maintenance").props.onClick();
+  sectionTab("ongoing").props.onClick();
   ui.render();
   enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-04" } });
@@ -1128,7 +1263,7 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
     ["Maintenance Intervals", "intervals"],
     ["Key Information", "key-information"],
   ]) {
-    ui.button(label).props.onClick();
+    sectionTab(expectedId).props.onClick();
     ui.render();
     assert.equal(ui.find((node) => node.props?.id === "vehicles-section-panel").props["aria-label"], label);
     assert.equal(ui.find((node) => node.props?.["data-vehicles-section"] === expectedId)
@@ -1146,7 +1281,7 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
   assert(mobileSessionActions);
   assert.equal(ui.nodes(sectionPanel).includes(mobileSessionActions), false);
 
-  ui.button("Ongoing Maintenance").props.onClick();
+  sectionTab("ongoing").props.onClick();
   ui.render();
   assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-04");
   ui.button("Cancel Changes").props.onClick();
@@ -1162,7 +1297,7 @@ test("Maintenance Intervals section reads existing data and opens the existing m
   });
   const ui = harness({ initialIntervals: [intervalEntry] });
   await ui.settle();
-  ui.button("Maintenance Intervals").props.onClick();
+  ui.find((node) => node.props?.["data-vehicles-section"] === "intervals").props.onClick();
   ui.render();
 
   const panel = ui.find((node) => node.props?.id === "vehicles-section-panel");
@@ -1217,10 +1352,12 @@ test("Add draft uses the service template, false states and asset usage unit wit
   const ui = harness();
   await ui.settle();
   assert(ui.button("Add Ongoing Record"));
+  assert(ui.button("Delete Record"), "persisted selected records expose Delete Record in the action row");
   await ui.button("Add Ongoing Record").props.onClick();
   ui.render();
   assert.equal(ui.calls.templates, 1);
   assert.equal(ui.calls.saves.length, 0);
+  assert.equal(ui.button("Delete Record"), undefined, "new drafts are not deletable until persisted");
   assert.equal(ui.input("vehicles-usage-unit").props.value, "hours");
   assert.equal(ui.input("vehicles-mechanic").props.maxLength, "160");
   assert.deepEqual(ui.nodes().filter((node) => node.type === "input" && node.props.type === "checkbox")
