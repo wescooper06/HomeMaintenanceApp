@@ -49,10 +49,11 @@ const interval = (id, maintenanceItemId, overrides = {}) => ({
   notCalculatedReason: "no_qualifying_service",
   ...overrides,
 });
-const workspace = (asset, records = [], maintenanceItems = [], maintenanceIntervals = []) => ({
+const workspace = (asset, records = [], maintenanceItems = [], maintenanceIntervals = [], maintenanceItemCatalog = maintenanceItems) => ({
   asset,
   ongoingMaintenanceRecords: records,
   maintenanceItems,
+  maintenanceItemCatalog,
   maintenanceIntervals,
 });
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -60,8 +61,15 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 let compiled;
 let bulletTransform;
 let keyDocumentHelpers;
+let intervalHelpers;
+let calculateMaintenanceInterval;
 test.before(async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
+  const enginePath = path.join(root, "src", "services", "vehiclesMaintenanceIntervalEngine.js");
+  const engineSource = fs.readFileSync(enginePath, "utf8").replace(/^export /gm, "");
+  calculateMaintenanceInterval = vm.runInNewContext(
+    `(() => { ${engineSource}; return calculateMaintenanceInterval; })()`
+  );
   const file = path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx");
   const source = fs.readFileSync(file, "utf8")
     .replace(/^import[\s\S]*?;\r?$/gm, "")
@@ -71,6 +79,10 @@ test.before(async () => {
   })).code;
   bulletTransform = vm.runInNewContext(`(() => { ${compiled}; return toggleDescriptionBullets; })()`);
   keyDocumentHelpers = vm.runInNewContext(`(() => { ${compiled}; return { readKeyDocument, keyDocumentLength }; })()`);
+  intervalHelpers = vm.runInNewContext(
+    `(() => { ${compiled}; return { intervalProjection, lastServiceLabel, nextServiceLabel }; })()`,
+    { calculateMaintenanceInterval },
+  );
 });
 
 function harness(overrides = {}) {
@@ -106,7 +118,8 @@ function harness(overrides = {}) {
         ? [record(12, "2026-02-01"), record(11, "2026-01-01")]
         : [], catalogStore.filter((catalogItemEntry) => catalogItemEntry.archivedAt === null
           && isApplicable(catalogItemEntry, assetId)),
-      intervalStore.filter((entry) => entry.assetId === assetId));
+      intervalStore.filter((entry) => entry.assetId === assetId),
+      structuredClone(catalogStore));
     },
     listMaintenanceItems: async () => {
       calls.catalogReads += 1;
@@ -267,6 +280,7 @@ function harness(overrides = {}) {
     resolveLinkTitle: overrides.resolveLinkTitle || (async (url) => ({ url, title: url })),
     URL,
     styles: new Proxy({}, { get: (_target, key) => String(key) }),
+    calculateMaintenanceInterval,
     vehiclesService: service,
     createVehicleChangesDraft: (...args) => service.createVehicleChangesDraft(...args),
     buildRecordDeleteOperation: (...args) => service.buildRecordDeleteOperation(...args),
@@ -291,11 +305,7 @@ function harness(overrides = {}) {
                 : index === 6 ? maintenanceDialog
                   : index === 7 ? { focus() { focusCounts.maintenanceItemName += 1; } }
                     : index === 8 ? { focus() { focusCounts.maintenanceItemButton += 1; } }
-                    : index === 9 ? intervalDialog
-                      : index === 10 ? { focus() { focusCounts.maintenanceIntervalItem += 1; } }
-                        : index === 11 ? { focus() { focusCounts.maintenanceIntervalsAddButton += 1; } }
-                          : index === 12 ? { focus() { focusCounts.manageIntervalsButton += 1; } }
-              : initial;
+                      : initial;
         refs[index] = { current };
         refObjects[index] = refs[index];
       }
@@ -1159,7 +1169,7 @@ test("Manage popup preserves desktop anchoring and uses a viewport-safe mobile s
   assert.equal(css.match(/\.pageManageActionsMenu\s*\{/g)?.length, 1);
 });
 
-test("Manage disclosure dismisses outside and on Escape, and each option opens its existing manager", async () => {
+test("Manage disclosure dismisses outside and on Escape, and interval shortcut navigates to the table", async () => {
   const ui = harness();
   await ui.settle();
   const manage = () => ui.find((node) => node.type === "details"
@@ -1215,7 +1225,9 @@ test("Manage disclosure dismisses outside and on Escape, and each option opens i
   ui.button("Manage Maintenance Intervals").props.onClick();
   await ui.settle();
   assert.equal(manage().props.open, false);
-  assert.equal(ui.intervalDialog.open, true);
+  assert.equal(ui.intervalDialog.open, false);
+  assert.equal(ui.find((node) => node.props?.["data-vehicles-section"] === "intervals").props["aria-selected"], true);
+  assert(ui.button("+ New Service"));
   assert.equal(ui.calls.saves.length, 0);
 });
 
@@ -2894,26 +2906,67 @@ test("Key Information title lookup cannot mutate a frozen unknown-outcome save r
     url: "https://example.test/updated" }]);
 });
 
-test("Maintenance Intervals section reads existing data and opens the existing manager", async () => {
+test("Interval table projection uses only the latest qualifying performed Ongoing item for Miles, Hours, and Months", () => {
+  const maintenanceItemId = uuid(301);
+  const ongoingRecords = [
+    record(701, "2024-01-31", {
+      usageReadingValue: 1000, capturedItems: [item(301, "Oil Change", true)],
+    }),
+    record(702, "2025-03-31", {
+      usageReadingValue: 9000, capturedItems: [item(301, "Oil Change", false)],
+    }),
+    record(703, "2025-02-28", {
+      usageReadingValue: 7000, capturedItems: [item(301, "Oil Change", true)],
+    }),
+  ];
+  const milesWorkspace = workspace(assets[0], ongoingRecords);
+  const miles = intervalHelpers.intervalProjection(milesWorkspace, maintenanceItemId, "5000", "miles");
+  assert.equal(miles.lastService.recordId, uuid(703));
+  assert.equal(miles.lastService.serviceDate, "2025-02-28");
+  assert.equal(JSON.stringify(miles.nextService), JSON.stringify({ kind: "usage", value: 12000, unit: "miles" }));
+  assert.equal(JSON.stringify(intervalHelpers.lastServiceLabel(miles.lastService)), JSON.stringify({
+    value: "7,000 mi · 2/28/2025", detail: "",
+  }));
+  assert.equal(JSON.stringify(intervalHelpers.nextServiceLabel(miles)), JSON.stringify({ value: "12,000 mi", detail: "" }));
+
+  const hoursWorkspace = workspace(assets[1], [record(704, "2025-06-15", {
+    usageReadingValue: 100, usageReadingUnit: "hours",
+    capturedItems: [item(301, "Oil Change", true)],
+  })]);
+  assert.equal(JSON.stringify(intervalHelpers.intervalProjection(hoursWorkspace, maintenanceItemId, "25", "hours").nextService),
+    JSON.stringify({ kind: "usage", value: 125, unit: "hours" }));
+  const months = intervalHelpers.intervalProjection(milesWorkspace, maintenanceItemId, "1", "months");
+  assert.equal(JSON.stringify(months.nextService), JSON.stringify({ kind: "date", serviceDate: "2025-03-28" }));
+  const noHistory = intervalHelpers.intervalProjection(workspace(assets[0], []), maintenanceItemId, "5000", "miles");
+  assert.equal(noHistory.lastService, null);
+  assert.equal(noHistory.nextService, null);
+  assert.equal(noHistory.notCalculatedReason, "no_qualifying_service");
+});
+
+test("Maintenance Intervals section reads the inline table and derives Last and Next Service", async () => {
   const intervalEntry = interval(601, 301, {
     assetId: uuid(1),
     maintenanceItemName: "Oil Change",
   });
-  const ui = harness({ initialIntervals: [intervalEntry] });
+  const serviceRecord = record(602, "2026-02-01", {
+    usageReadingValue: 99555,
+    capturedItems: [item(301, "Oil Change", true)],
+  });
+  const ui = harness({ initialIntervals: [intervalEntry], loadVehicleWorkspace: async () => ({
+    ...workspace(assets[0], [serviceRecord], [catalogItem(301, { displayName: "Oil Change" })], [intervalEntry]),
+    maintenanceItemCatalog: [catalogItem(301, { displayName: "Oil Change" })],
+  }) });
   await ui.settle();
   ui.find((node) => node.props?.["data-vehicles-section"] === "intervals").props.onClick();
   ui.render();
-
   const panel = ui.find((node) => node.props?.id === "vehicles-section-panel");
   assert.equal(panel.props["aria-label"], "Maintenance Intervals");
   assert.match(ui.text(panel), /Oil Change/);
-  assert.match(ui.text(panel), /5000 miles/);
-  const managerButton = ui.nodes(panel).find((node) => node.type === "button"
-    && ui.text(node) === "Manage Maintenance Intervals");
-  assert(managerButton);
-  managerButton.props.onClick();
-  ui.render();
-  assert.equal(ui.intervalDialog.open, true);
+  assert.match(ui.text(panel), /5,000 mi/);
+  assert.match(ui.text(panel), /99,555 mi · 2\/1\/2026/);
+  assert.match(ui.text(panel), /104,555 mi/);
+  assert(ui.button("+ New Service"));
+  assert.equal(ui.intervalDialog.open, false);
   assert.equal(ui.calls.saves.length, 0);
 });
 
@@ -3407,7 +3460,145 @@ test("Vehicles UI uses the service boundary and semantic accessible performed co
   assert.match(source, /role="alert"/);
 });
 
-test("Maintenance Interval manager shows an accessible empty state and filters active applicable items", async () => {
+test("Maintenance Interval table changes remain pending until one shared multi-collection Save", async () => {
+  const existing = interval(401, 301, {
+    assetId: uuid(1),
+    recommendedInterval: { value: 5000, unit: "miles" },
+    comments: "Old comment",
+    version: 7,
+    lastService: { serviceDate: "2026-02-01", usageReadingValue: 120, usageReadingUnit: "miles" },
+    nextService: { kind: "usage", value: 5120, unit: "miles" },
+    notCalculatedReason: null,
+  });
+  const ui = harness({ initialIntervals: [existing] });
+  await ui.settle();
+  enterOngoingEdit(ui);
+  ui.input("vehicles-mechanic").props.onChange({ target: { value: "Synthetic interval session" } });
+  ui.render();
+  ui.button("Maintenance Intervals").props.onClick();
+  ui.render();
+  assert.match(ui.text(), /Last Service/);
+  assert.match(ui.text(), /Next Service/);
+  ui.input(`vehicles-maintenance-interval-value-${existing.id}`).props.onChange({ target: { value: "7500" } });
+  ui.render();
+  assert.equal(ui.calls.saves.length, 0, "editing a table cell must not send a request");
+  assert(ui.button("Cancel Changes"));
+  assert(ui.button("Save Changes"));
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+  assert.deepEqual(ui.calls.saves[0].intervalOperations, [{
+    action: "update", id: existing.id, expectedVersion: existing.version, intervalValue: 7500,
+  }]);
+  assert.equal(ui.calls.saves[0].ongoingOperations[0].mechanic, "Synthetic interval session");
+  assert.deepEqual(ui.calls.saves[0].recommendedOperations, []);
+  assert.deepEqual(ui.calls.saves[0].completedOperations, []);
+});
+
+test("Ongoing, Recommended, Completed and Key Information each save atomically with an Interval edit", async () => {
+  const combinations = ["ongoing", "recommended", "completed", "key-information"];
+  for (const section of combinations) {
+    const existing = interval(401, 301, {
+      assetId: uuid(1),
+      recommendedInterval: { value: 5000, unit: "miles" },
+      version: 7,
+    });
+    const ui = harness({ initialIntervals: [existing] });
+    await ui.settle();
+    if (section === "ongoing") {
+      enterOngoingEdit(ui);
+      ui.input("vehicles-mechanic").props.onChange({ target: { value: "Synthetic mechanic" } });
+      ui.render();
+    } else if (section === "recommended") {
+      openRecommended(ui);
+      ui.button("Add Recommended Service").props.onClick();
+      ui.render();
+      ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Synthetic recommendation" } });
+      ui.render();
+    } else if (section === "completed") {
+      openCompleted(ui);
+      ui.button("Add Completed Service").props.onClick();
+      ui.render();
+      ui.input("vehicles-completed-description").props.onChange({ target: { value: "Synthetic completion" } });
+      ui.render();
+    } else {
+      ui.button("Key Information").props.onClick();
+      ui.render();
+      ui.button("Add Key Information").props.onClick();
+      ui.render();
+      keyEditor(ui).props.onChange({ schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "Synthetic key note" }] }] });
+      ui.render();
+    }
+    ui.button("Maintenance Intervals").props.onClick();
+    ui.render();
+    ui.input(`vehicles-maintenance-interval-value-${existing.id}`).props.onChange({ target: { value: "7500" } });
+    ui.render();
+    assert.equal(ui.calls.saves.length, 0, `${section} plus interval must remain local before Save`);
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.equal(ui.calls.saves.length, 1, `${section} plus interval must be one atomic request`);
+    const request = ui.calls.saves[0];
+    assert.equal(request.intervalOperations.length, 1);
+    assert.deepEqual(request.intervalOperations[0], {
+      action: "update", id: existing.id, expectedVersion: existing.version, intervalValue: 7500,
+    });
+    assert.equal(request.ongoingOperations.length, section === "ongoing" ? 1 : 0);
+    assert.equal(request.recommendedOperations.length, section === "recommended" ? 1 : 0);
+    assert.equal(request.completedOperations.length, section === "completed" ? 1 : 0);
+    assert.equal(Boolean(request.keyInformationOperation), section === "key-information");
+    assert.deepEqual(request.maintenanceItemOperations, []);
+    assert.deepEqual(request.availabilityOperations, []);
+    assert.deepEqual(request.linkOperations, []);
+  }
+});
+
+test("One Save atomically commits all historical sections, Key Information and Intervals", async () => {
+  const existing = interval(401, 301, {
+    assetId: uuid(1), recommendedInterval: { value: 5000, unit: "miles" }, version: 7,
+  });
+  const ui = harness({ initialIntervals: [existing] });
+  await ui.settle();
+  enterOngoingEdit(ui);
+  ui.input("vehicles-mechanic").props.onChange({ target: { value: "Synthetic mechanic" } });
+  ui.render();
+  openRecommended(ui);
+  ui.button("Add Recommended Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-recommended-description").props.onChange({ target: { value: "Synthetic recommendation" } });
+  ui.render();
+  openCompleted(ui);
+  ui.button("Add Completed Service").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: "Synthetic completion" } });
+  ui.render();
+  ui.button("Key Information").props.onClick();
+  ui.render();
+  ui.button("Add Key Information").props.onClick();
+  ui.render();
+  keyEditor(ui).props.onChange({ schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "Synthetic key note" }] }] });
+  ui.render();
+  ui.button("Maintenance Intervals").props.onClick();
+  ui.render();
+  ui.input(`vehicles-maintenance-interval-value-${existing.id}`).props.onChange({ target: { value: "7500" } });
+  ui.render();
+  assert.equal(ui.calls.saves.length, 0);
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+  const request = ui.calls.saves[0];
+  assert.equal(request.ongoingOperations.length, 1);
+  assert.equal(request.recommendedOperations.length, 1);
+  assert.equal(request.completedOperations.length, 1);
+  assert(request.keyInformationOperation);
+  assert.equal(request.intervalOperations.length, 1);
+  assert.deepEqual(request.maintenanceItemOperations, []);
+  assert.deepEqual(request.availabilityOperations, []);
+  assert.deepEqual(request.linkOperations, []);
+});
+
+test("Inline interval Add starts an empty local row with only active applicable unassigned items", async () => {
   const ui = harness({
     initialMaintenanceItems: [
       catalogItem(301),
@@ -3417,68 +3608,64 @@ test("Maintenance Interval manager shows an accessible empty state and filters a
     ],
   });
   await ui.settle();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  ui.button("Maintenance Intervals").props.onClick();
   ui.render();
-  assert.equal(ui.intervalDialog.open, true);
   assert.match(ui.text(), /No Maintenance Intervals are set for this asset/);
-  assert(ui.button("Add Maintenance Interval"));
-  assert.equal(ui.focusCounts.maintenanceIntervalsAddButton, 1);
-  const dialog = ui.find((node) => node.type === "dialog"
-    && node.props["aria-labelledby"] === "vehicles-manage-intervals-title");
-  assert(dialog);
-  ui.button("Add Maintenance Interval").props.onClick();
+  assert(ui.button("+ New Service"));
+  ui.button("+ New Service").props.onClick();
   ui.render();
-  assert.equal(ui.focusCounts.maintenanceIntervalItem, 1);
-  const options = ui.input("vehicles-maintenance-interval-item").children.map((node) => ui.text(node));
+  const input = ui.input(`vehicles-maintenance-interval-item-${uuid(900)}`);
+  assert(input);
+  const options = input.children.map((node) => ui.text(node));
   assert.deepEqual(options, [
-    "Choose an applicable Maintenance Item",
+    "Choose a Maintenance Item",
     "Synthetic Maintenance 301",
     "Synthetic Maintenance 302",
   ]);
   assert.doesNotMatch(ui.text(), /Synthetic Maintenance 303|Synthetic Maintenance 304/);
+  assert.equal(ui.calls.saves.length, 0);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.input(`vehicles-maintenance-interval-item-${uuid(900)}`), undefined);
+  assert.equal(ui.calls.saves.length, 0);
 });
 
-test("Maintenance Interval create sends one asset-associated atomic service operation", async () => {
+test("Inline interval create stays local and is committed only by page-level Save Changes", async () => {
   const ui = harness();
   await ui.settle();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  ui.button("Maintenance Intervals").props.onClick();
   ui.render();
-  ui.button("Add Maintenance Interval").props.onClick();
+  ui.button("+ New Service").props.onClick();
   ui.render();
-  ui.input("vehicles-maintenance-interval-item").props.onChange({ target: { value: uuid(301) } });
-  ui.input("vehicles-maintenance-interval-value").props.onChange({ target: { value: "5000" } });
-  ui.input("vehicles-maintenance-interval-unit").props.onChange({ target: { value: "miles" } });
-  ui.input("vehicles-maintenance-interval-comments").props.onChange({ target: { value: "Synthetic change" } });
+  const id = uuid(900);
+  ui.input(`vehicles-maintenance-interval-item-${id}`).props.onChange({ target: { value: uuid(301) } });
+  ui.input(`vehicles-maintenance-interval-value-${id}`).props.onChange({ target: { value: "5000" } });
+  ui.input(`vehicles-maintenance-interval-unit-${id}`).props.onChange({ target: { value: "miles" } });
+  ui.input(`vehicles-maintenance-interval-comments-${id}`).props.onChange({ target: { value: "Synthetic change" } });
   ui.render();
-  const form = ui.find((node) => node.type === "form" && node.props.className === "maintenanceIntervalForm");
-  await form.props.onSubmit({ preventDefault() {} });
+  assert.equal(ui.calls.saves.length, 0);
+  assert(ui.button("Cancel Changes"));
+  assert(ui.button("Save Changes"));
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  await ui.button("Save Changes").props.onClick();
   await ui.settle();
   assert.equal(ui.calls.saves.length, 1);
   const request = ui.calls.saves[0];
   assert.equal(request.assetId, uuid(1));
   assert.equal(request.expectedAssetVersion, 4);
-  assert.equal(request.intervalOperations.length, 1);
-  assert.deepEqual({
-    action: request.intervalOperations[0].action,
-    id: request.intervalOperations[0].id,
-    maintenanceItemId: request.intervalOperations[0].maintenanceItemId,
-    intervalValue: request.intervalOperations[0].intervalValue,
-    intervalUnit: request.intervalOperations[0].intervalUnit,
-    comments: request.intervalOperations[0].comments,
-  }, {
-    action: "create",
-    id: uuid(900),
+  assert.deepEqual(request.intervalOperations, [{
+    action: "create", id,
     maintenanceItemId: uuid(301),
     intervalValue: 5000,
     intervalUnit: "miles",
     comments: "Synthetic change",
-  });
-  assert.match(ui.text(), /Maintenance Interval saved/);
+  }]);
+  assert.match(ui.text(), /Changes saved/);
   assert.equal(ui.intervalStore.length, 1);
   assert.equal(ui.intervalStore[0].assetId, uuid(1));
 });
 
-test("Maintenance Interval edit sends the expected entity version and changed supported fields", async () => {
+test("Inline interval edit emits only changed fields with the saved entity version", async () => {
   const existing = interval(401, 301, {
     assetId: uuid(1),
     recommendedInterval: { value: 5000, unit: "miles" },
@@ -3487,55 +3674,56 @@ test("Maintenance Interval edit sends the expected entity version and changed su
   });
   const ui = harness({ initialIntervals: [existing] });
   await ui.settle();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  ui.button("Maintenance Intervals").props.onClick();
   ui.render();
-  const row = ui.find((node) => node.type === "button" && node.props["aria-pressed"] === false
-    && ui.text(node).includes("Synthetic Maintenance 301"));
-  row.props.onClick();
+  ui.button("Edit").props.onClick();
   ui.render();
-  assert.equal(ui.input("vehicles-maintenance-interval-value").props.value, "5000");
-  ui.input("vehicles-maintenance-interval-value").props.onChange({ target: { value: "7500" } });
-  ui.input("vehicles-maintenance-interval-comments").props.onChange({ target: { value: "New comment" } });
+  ui.input(`vehicles-maintenance-interval-value-${existing.id}`).props.onChange({ target: { value: "7500" } });
+  ui.input(`vehicles-maintenance-interval-comments-${existing.id}`).props.onChange({ target: { value: "New comment" } });
   ui.render();
-  const form = ui.find((node) => node.type === "form" && node.props.className === "maintenanceIntervalForm");
-  await form.props.onSubmit({ preventDefault() {} });
+  assert.equal(ui.calls.saves.length, 0);
+  await ui.button("Save Changes").props.onClick();
   await ui.settle();
   assert.equal(ui.calls.saves.length, 1);
   assert.deepEqual(ui.calls.saves[0].intervalOperations[0], {
     action: "update",
     id: existing.id,
     expectedVersion: 7,
-    maintenanceItemId: uuid(301),
     intervalValue: 7500,
-    intervalUnit: "miles",
     comments: "New comment",
   });
   assert.equal(ui.intervalStore[0].version, 8);
 });
 
-test("Maintenance Interval validation enforces positive precision and whole months without saving", async () => {
+test("Shared interval Save validates active item, positive precision and whole months", async () => {
   const ui = harness();
   await ui.settle();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  ui.button("Maintenance Intervals").props.onClick();
   ui.render();
-  ui.button("Add Maintenance Interval").props.onClick();
+  ui.button("+ New Service").props.onClick();
   ui.render();
-  const form = ui.find((node) => node.type === "form" && node.props.className === "maintenanceIntervalForm");
-  await form.props.onSubmit({ preventDefault() {} });
+  const id = uuid(900);
+  await ui.button("Save Changes").props.onClick();
   ui.render();
-  assert.match(ui.text(), /Choose an active Maintenance Item applicable/);
-  ui.input("vehicles-maintenance-interval-item").props.onChange({ target: { value: uuid(301) } });
-  ui.input("vehicles-maintenance-interval-unit").props.onChange({ target: { value: "months" } });
-  ui.input("vehicles-maintenance-interval-value").props.onChange({ target: { value: "1.5" } });
+  assert.match(ui.text(), /Choose an active Maintenance Item enabled for this asset/);
+  ui.input(`vehicles-maintenance-interval-item-${id}`).props.onChange({ target: { value: uuid(301) } });
+  ui.input(`vehicles-maintenance-interval-unit-${id}`).props.onChange({ target: { value: "months" } });
+  ui.input(`vehicles-maintenance-interval-value-${id}`).props.onChange({ target: { value: "1.5" } });
   ui.render();
-  const updatedForm = ui.find((node) => node.type === "form" && node.props.className === "maintenanceIntervalForm");
-  await updatedForm.props.onSubmit({ preventDefault() {} });
+  await ui.button("Save Changes").props.onClick();
   ui.render();
   assert.match(ui.text(), /positive interval value/);
   assert.equal(ui.calls.saves.length, 0);
+  ui.input(`vehicles-maintenance-interval-value-${id}`).props.onChange({ target: { value: "12" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].intervalOperations[0], {
+    action: "create", id, maintenanceItemId: uuid(301), intervalValue: 12, intervalUnit: "months", comments: null,
+  });
 });
 
-test("Maintenance Interval no-op Save is disabled and Cancel restores persisted values", async () => {
+test("Interval values reverted to baseline emit no operation and shared Cancel restores view state", async () => {
   const existing = interval(401, 301, {
     assetId: uuid(1),
     recommendedInterval: { value: 2500, unit: "hours" },
@@ -3543,38 +3731,50 @@ test("Maintenance Interval no-op Save is disabled and Cancel restores persisted 
   });
   const ui = harness({ initialIntervals: [existing] });
   await ui.settle();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  ui.button("Maintenance Intervals").props.onClick();
   ui.render();
-  ui.find((node) => node.type === "button" && ui.text(node).includes("Synthetic Maintenance 301")).props.onClick();
+  ui.button("Edit").props.onClick();
   ui.render();
-  assert.equal(ui.button("Save").props.disabled, true);
-  ui.input("vehicles-maintenance-interval-value").props.onChange({ target: { value: "3000" } });
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  const value = `vehicles-maintenance-interval-value-${existing.id}`;
+  const comments = `vehicles-maintenance-interval-comments-${existing.id}`;
+  ui.input(value).props.onChange({ target: { value: "3000" } });
   ui.render();
-  assert.equal(ui.button("Save").props.disabled, false);
-  ui.button("Cancel").props.onClick();
+  assert.equal(ui.button("Save Changes").props.disabled, false);
+  ui.input(value).props.onChange({ target: { value: "2500" } });
   ui.render();
-  assert.equal(ui.input("vehicles-maintenance-interval-value").props.value, "2500");
-  assert.equal(ui.input("vehicles-maintenance-interval-comments").props.value, "Persisted");
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  ui.input(comments).props.onChange({ target: { value: "Temporary" } });
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, false);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.input(value), undefined);
+  assert.match(ui.text(), /2,500 hours/);
+  assert.match(ui.text(), /Persisted/);
   assert.equal(ui.calls.saves.length, 0);
 });
 
-test("Maintenance Interval uses the configured asset unit for defaults and supports none via months", async () => {
+test("Inline Add defaults hours assets to Hours and unitless assets to Months without saving", async () => {
   for (const [usageUnit, expected] of [["hours", "hours"], ["none", "months"]]) {
     const ui = harness({ initialAssets: [{ ...assets[0], usageUnit }] });
     await ui.settle();
-    ui.button("Manage Maintenance Intervals").props.onClick();
+    ui.button("Maintenance Intervals").props.onClick();
     ui.render();
-    ui.button("Add Maintenance Interval").props.onClick();
+    ui.button("+ New Service").props.onClick();
     ui.render();
-    assert.equal(ui.input("vehicles-maintenance-interval-unit").props.value, expected);
-    assert.match(ui.text(), new RegExp(`Asset Usage Unit: ${usageUnit}`));
+    assert.equal(ui.input(`vehicles-maintenance-interval-unit-${uuid(900)}`).props.value, expected);
+    assert.equal(ui.calls.saves.length, 0);
+    ui.button("Cancel Changes").props.onClick();
+    ui.render();
+    assert.equal(ui.calls.saves.length, 0);
   }
 });
 
-test("Maintenance Interval version and unavailable-item conflicts preserve drafts until explicit reload", async () => {
+test("Shared interval Save conflict preserves the pending row for cancel or retry", async () => {
   for (const [code, expected] of [
     ["version_conflict", /changed elsewhere/],
-    ["item_archived_or_unavailable", /no longer active and applicable/],
+    ["item_archived_or_unavailable", /Maintenance Item is no longer available/],
   ]) {
     let ui;
     ui = harness({
@@ -3584,90 +3784,90 @@ test("Maintenance Interval version and unavailable-item conflicts preserve draft
       },
     });
     await ui.settle();
-    ui.button("Manage Maintenance Intervals").props.onClick();
+    ui.button("Maintenance Intervals").props.onClick();
     ui.render();
-    ui.button("Add Maintenance Interval").props.onClick();
+    ui.button("+ New Service").props.onClick();
     ui.render();
-    ui.input("vehicles-maintenance-interval-item").props.onChange({ target: { value: uuid(301) } });
-    ui.input("vehicles-maintenance-interval-value").props.onChange({ target: { value: "100" } });
+    const id = uuid(900);
+    ui.input(`vehicles-maintenance-interval-item-${id}`).props.onChange({ target: { value: uuid(301) } });
+    ui.input(`vehicles-maintenance-interval-value-${id}`).props.onChange({ target: { value: "100" } });
     ui.render();
-    const form = ui.find((node) => node.type === "form" && node.props.className === "maintenanceIntervalForm");
-    await form.props.onSubmit({ preventDefault() {} });
+    await ui.button("Save Changes").props.onClick();
     ui.render();
     assert.match(ui.text(), expected);
-    assert.match(ui.text(), /Reload the workspace before resuming/);
-    ui.button("Reload workspace").props.onClick();
-    ui.render();
-    assert.match(ui.text(), /Discard interval edits and reload/);
-    ui.button("Stay").props.onClick();
-    ui.render();
-    assert.equal(ui.intervalDialog.open, true);
-    ui.button("Reload workspace").props.onClick();
-    ui.render();
-    ui.button("Discard edits").props.onClick();
-    await ui.settle();
+    assert.equal(ui.input(`vehicles-maintenance-interval-value-${id}`).props.value, "100");
     assert.equal(ui.calls.saves.length, 1);
-    assert.match(ui.text(), /Vehicles workspace reloaded/);
+    ui.button("Cancel Changes").props.onClick();
+    ui.render();
+    assert.equal(ui.input(`vehicles-maintenance-interval-value-${id}`), undefined);
   }
 });
 
-test("Maintenance Interval duplicate submissions are locked and unknown-outcome retry keeps IDs and values", async () => {
+test("Interval unknown outcome uses the shared lock and replays the exact request with stable client ID", async () => {
   let ui;
+  let exactRetry;
   ui = harness({
     saveVehicleChanges: async (draft) => {
       ui.calls.saves.push(structuredClone(draft));
       if (ui.calls.saves.length === 1) {
-        throw { code: "unknown_outcome", retryDraft: structuredClone(draft) };
+        exactRetry = { ...structuredClone(draft), requestId: uuid(777) };
+        throw { code: "unknown_outcome", retryDraft: exactRetry };
       }
       return { status: "saved", assetVersion: 5, entityVersions: { intervals: {} } };
     },
   });
   await ui.settle();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  ui.button("Maintenance Intervals").props.onClick();
   ui.render();
-  ui.button("Add Maintenance Interval").props.onClick();
+  ui.button("+ New Service").props.onClick();
   ui.render();
-  ui.input("vehicles-maintenance-interval-item").props.onChange({ target: { value: uuid(301) } });
-  ui.input("vehicles-maintenance-interval-value").props.onChange({ target: { value: "12.5" } });
-  ui.input("vehicles-maintenance-interval-unit").props.onChange({ target: { value: "hours" } });
+  const id = uuid(900);
+  ui.input(`vehicles-maintenance-interval-item-${id}`).props.onChange({ target: { value: uuid(301) } });
+  ui.input(`vehicles-maintenance-interval-value-${id}`).props.onChange({ target: { value: "12.5" } });
+  ui.input(`vehicles-maintenance-interval-unit-${id}`).props.onChange({ target: { value: "hours" } });
   ui.render();
-  const form = ui.find((node) => node.type === "form" && node.props.className === "maintenanceIntervalForm");
-  const submit = form.props.onSubmit;
-  const firstAttempt = submit({ preventDefault() {} });
-  const duplicateAttempt = submit({ preventDefault() {} });
+  const submit = ui.button("Save Changes").props.onClick;
+  const firstAttempt = submit();
+  const duplicateAttempt = submit();
   await Promise.all([firstAttempt, duplicateAttempt]);
   ui.render();
   assert.match(ui.text(), /outcome is unknown/);
   assert.equal(ui.calls.saves.length, 1);
-  assert.equal(ui.button("Save").props.disabled, true);
+  assert.equal(ui.button("Save Changes").props.disabled, true);
   const first = ui.calls.saves[0];
-  await ui.button("Retry same request").props.onClick();
+  await ui.button("Retry same save").props.onClick();
   await ui.settle();
   assert.equal(ui.calls.saves.length, 2);
-  assert.deepEqual(ui.calls.saves[1], first);
+  assert.deepEqual(ui.calls.saves[1], exactRetry);
+  assert.deepEqual(ui.calls.saves[1].intervalOperations, first.intervalOperations);
+  assert.equal(ui.calls.saves[1].intervalOperations[0].id, id);
   assert.equal(ui.calls.saves[1].intervalOperations[0].id, first.intervalOperations[0].id);
-  assert.equal(ui.calls.saves[1].requestId, first.requestId);
+  assert.equal(ui.calls.saves[1].requestId, uuid(777));
   assert.equal(ui.calls.saves[1].intervalOperations[0].intervalValue, 12.5);
 });
 
-test("Maintenance Interval delete requires confirmation and sends one versioned delete", async () => {
+test("Interval Remove queues a versioned delete and shared Cancel restores the saved row", async () => {
   const existing = interval(401, 301, { assetId: uuid(1), version: 3 });
   const ui = harness({ initialIntervals: [existing] });
   await ui.settle();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  ui.button("Maintenance Intervals").props.onClick();
   ui.render();
-  ui.find((node) => node.type === "button" && ui.text(node).includes("Synthetic Maintenance 301")).props.onClick();
+  ui.button("Edit").props.onClick();
   ui.render();
-  ui.button("Delete Maintenance Interval").props.onClick();
+  ui.find((node) => node.type === "button"
+    && node.props["aria-label"] === "Remove Service Synthetic Maintenance 301").props.onClick();
   ui.render();
-  assert.match(ui.text(), /Delete this Maintenance Interval/);
-  ui.button("Stay").props.onClick();
+  assert.equal(ui.calls.saves.length, 0);
+  assert.doesNotMatch(ui.text(), /Synthetic Maintenance 301/);
+  ui.button("Cancel Changes").props.onClick();
   ui.render();
-  assert.equal(ui.intervalDialog.open, true);
-  ui.button("Delete Maintenance Interval").props.onClick();
+  assert.match(ui.text(), /Synthetic Maintenance 301/);
+  ui.button("Edit").props.onClick();
   ui.render();
-  ui.find((node) => node.type === "button" && node.props["aria-label"] === "Delete Maintenance Interval")
-    .props.onClick();
+  ui.find((node) => node.type === "button"
+    && node.props["aria-label"] === "Remove Service Synthetic Maintenance 301").props.onClick();
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
   await ui.settle();
   assert.deepEqual(ui.calls.saves[0].intervalOperations, [{
     action: "delete",
@@ -3677,97 +3877,67 @@ test("Maintenance Interval delete requires confirmation and sends one versioned 
   assert.equal(ui.intervalStore.length, 0);
 });
 
-test("Maintenance Interval dirty-close and competing Ongoing edits require explicit discard", async () => {
-  const ui = harness();
+test("Interval drafts survive all-section traversal and shared Cancel restores both sections", async () => {
+  const existing = interval(401, 301, {
+    assetId: uuid(1),
+    recommendedInterval: { value: 5000, unit: "miles" },
+    version: 3,
+  });
+  const ui = harness({ initialIntervals: [existing] });
   await ui.settle();
+  const selectSection = (id) => ui.find((node) => node.props?.["data-vehicles-section"] === id).props.onClick();
   enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-05" } });
   ui.render();
-  ui.button("Manage Maintenance Intervals").props.onClick();
+  selectSection("intervals");
   ui.render();
-  assert.equal(ui.intervalDialog.open, false);
-  assert.match(ui.text(), /Discard Ongoing Maintenance edits and manage Maintenance Intervals/);
-  ui.button("Stay").props.onClick();
+  const value = `vehicles-maintenance-interval-value-${existing.id}`;
+  ui.input(value).props.onChange({ target: { value: "7500" } });
   ui.render();
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.calls.saves.length, 0);
+  for (const section of ["recommended", "completed", "key-information", "ongoing"]) {
+    selectSection(section);
+    ui.render();
+    assert.equal(ui.find((node) => node.props?.["data-vehicles-section"] === section).props["aria-selected"], true);
+  }
   assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-05");
+  selectSection("intervals");
+  ui.render();
+  assert.equal(ui.input(value).props.value, "7500");
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.input(value), undefined);
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Manage Maintenance Intervals entry navigates to the inline table and opens no modal", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.find((node) => node.type === "summary" && node.props["aria-label"] === "Manage")
+    .props.onClick({ preventDefault() {} });
   ui.button("Manage Maintenance Intervals").props.onClick();
   ui.render();
-  ui.button("Discard and continue").props.onClick();
-  ui.render();
-  assert.equal(ui.intervalDialog.open, true);
-  ui.button("Add Maintenance Interval").props.onClick();
-  ui.render();
-  ui.input("vehicles-maintenance-interval-item").props.onChange({ target: { value: uuid(301) } });
-  ui.input("vehicles-maintenance-interval-value").props.onChange({ target: { value: "10" } });
-  ui.render();
-  ui.find((node) => node.type === "button" && node.props["aria-label"] === "Close Manage Maintenance Intervals")
-    .props.onClick();
-  ui.render();
-  assert.match(ui.text(), /Discard Maintenance Interval edits/);
-  ui.button("Stay").props.onClick();
-  ui.render();
-  assert.equal(ui.intervalDialog.open, true);
-  ui.find((node) => node.type === "button" && node.props["aria-label"] === "Close Manage Maintenance Intervals")
-    .props.onClick();
-  ui.render();
-  ui.button("Discard edits").props.onClick();
-  ui.render();
+  assert.match(ui.text(), /Maintenance Intervals/);
   assert.equal(ui.intervalDialog.open, false);
-  assert(ui.focusCounts.manageIntervalsButton > 0);
+  assert.equal(ui.button("+ New Service") !== undefined, true);
 });
 
-test("Opening Maintenance Intervals protects dirty Asset and Maintenance Item drafts", async () => {
-  const assetUi = harness();
-  await assetUi.settle();
-  assetUi.button("Manage Assets").props.onClick();
-  assetUi.render();
-  assetUi.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Unsaved asset" } });
-  assetUi.render();
-  assetUi.button("Manage Maintenance Intervals").props.onClick();
-  assetUi.render();
-  assert.match(assetUi.text(), /Discard Asset edits and manage Maintenance Intervals/);
-  assetUi.button("Stay").props.onClick();
-  assetUi.render();
-  assert.equal(assetUi.manageDialog.open, true);
-  assetUi.button("Manage Maintenance Intervals").props.onClick();
-  assetUi.render();
-  assetUi.button("Discard and continue").props.onClick();
-  assetUi.render();
-  assert.equal(assetUi.manageDialog.open, false);
-  assert.equal(assetUi.intervalDialog.open, true);
-
-  const itemUi = harness();
-  await itemUi.settle();
-  itemUi.button("Manage Maintenance Items").props.onClick();
-  itemUi.render();
-  await itemUi.settle();
-  itemUi.button("Add Maintenance Item").props.onClick();
-  itemUi.render();
-  await itemUi.settle();
-  itemUi.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Unsaved item" } });
-  itemUi.render();
-  itemUi.button("Manage Maintenance Intervals").props.onClick();
-  itemUi.render();
-  assert.match(itemUi.text(), /Discard Maintenance Item edits and manage Maintenance Intervals/);
-  itemUi.button("Stay").props.onClick();
-  itemUi.render();
-  assert.equal(itemUi.maintenanceDialog.open, true);
-  itemUi.button("Manage Maintenance Intervals").props.onClick();
-  itemUi.render();
-  itemUi.button("Discard and continue").props.onClick();
-  itemUi.render();
-  assert.equal(itemUi.maintenanceDialog.open, false);
-  assert.equal(itemUi.intervalDialog.open, true);
-});
-
-test("Maintenance Interval UI uses service persistence and accessible fields without direct database writes", () => {
+test("Inline Maintenance Interval table uses the shared service save and accessible canonical fields", () => {
   const source = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx"), "utf8");
   const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
-  assert.match(source, /vehiclesService\.saveVehicleChanges\(request\)/);
+  assert.match(source, /vehiclesService\.saveVehicleChanges\(draft\)/);
   assert.doesNotMatch(source, /\.from\s*\(|\.rpc\s*\(|save_vehicles_changes|vehicle_maintenance_intervals/);
-  assert.match(source, /aria-label="Close Manage Maintenance Intervals"/);
-  assert.match(source, /htmlFor="vehicles-maintenance-interval-item"/);
-  assert.match(source, /htmlFor="vehicles-maintenance-interval-value"/);
-  assert.match(source, /Retry same request/);
-  assert.match(css, /\.maintenanceIntervalForm :focus-visible/);
+  assert.match(source, /role="table" aria-label=\{`Maintenance Intervals for/);
+  assert.match(source, /role="columnheader">Last Service/);
+  assert.match(source, /role="columnheader">Next Service/);
+  assert.match(source, /aria-label=\{`Interval value \$\{interval\.maintenanceItemName\}`\}/);
+  assert.match(source, /aria-label=\{`Interval unit \$\{interval\.maintenanceItemName\}`\}/);
+  assert.match(source, /aria-label=\{`Comments \$\{interval\.maintenanceItemName\}`\}/);
+  assert.match(source, /intervalOperations\.push\(\.\.\.buildMaintenanceIntervalOperations\(\)\)/);
+  assert.doesNotMatch(source, /persistMaintenanceInterval|maintenanceIntervalsDialogRef|>Save<\/button>/);
+  assert.match(css, /\.intervalTableBody\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.intervalRow\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
 });

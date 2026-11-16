@@ -309,33 +309,104 @@
   margin: var(--lm-space-2) 0 var(--lm-space-4);
 }
 
-.sectionIntervalList {
-  display: grid;
-  min-width: 0;
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.intervalSection {
+  height: max(22rem, calc(100dvh - 23rem));
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
-.sectionIntervalList li {
+.intervalTable {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1.4fr) minmax(6rem, 0.6fr) minmax(0, 1fr);
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--lm-color-border);
+  background: var(--lm-color-surface);
+}
+
+.intervalTableHeader,
+.intervalRow {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(8rem, 1.2fr) minmax(8rem, 1fr) minmax(11rem, 1.25fr)
+    minmax(8rem, 1fr) minmax(9rem, 1.2fr) minmax(4.5rem, 0.55fr);
   align-items: center;
-  gap: var(--lm-space-3);
-  border-bottom: 1px solid var(--lm-color-border);
+  gap: var(--lm-space-2);
   padding: var(--lm-space-2);
 }
 
-.sectionIntervalList li > * {
+.intervalTableHeader {
+  border-bottom: 1px solid var(--lm-color-border-strong);
+  background: var(--lm-color-surface-subtle);
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-label);
+  font-weight: 700;
+}
+
+.intervalTableHeader > div,
+.intervalTableHeader [role="row"] {
+  display: contents;
+}
+
+.intervalTableHeader [role="columnheader"] {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.sectionIntervalList li > span:last-child {
+.intervalTableBody {
+  min-height: 0;
+  max-height: calc(100dvh - 32rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.intervalRow {
+  align-items: start;
+  border-bottom: 1px solid var(--lm-color-border);
+}
+
+.intervalRow:last-child {
+  border-bottom: 0;
+}
+
+.intervalRowPending {
+  background: var(--lm-color-surface-selected);
+}
+
+.intervalRow [role="cell"] {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--lm-space-1);
+  overflow-wrap: anywhere;
+}
+
+.intervalRecommendedControls {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(4rem, 1fr) minmax(5rem, 1fr);
+  gap: var(--lm-space-1);
+}
+
+.intervalRecommendedControls > * {
+  min-width: 0;
+}
+
+.intervalServiceCell small {
   color: var(--lm-color-text-secondary);
   font-size: var(--lm-font-secondary);
+}
+
+.intervalMobileLabel {
+  display: none;
+}
+
+.intervalActionCell {
+  justify-items: end;
+}
+
+.intervalActionHeading {
+  text-align: center;
 }
 
 .empty {
@@ -658,12 +729,6 @@
   overflow: auto;
 }
 
-.maintenanceIntervalsDialog {
-  width: min(68rem, calc(100vw - 32px));
-  max-height: min(52rem, calc(100vh - 32px));
-  overflow: auto;
-}
-
 .itemLabel {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -719,48 +784,6 @@
 
 .itemToggle :global(.lm-checkbox):checked ~ .switchTrack::after {
   transform: translateX(20px);
-}
-
-.maintenanceIntervalManager {
-  display: grid;
-  grid-template-columns: minmax(15rem, 0.8fr) minmax(0, 1.2fr);
-  gap: var(--lm-space-6);
-  margin-top: var(--lm-space-5);
-}
-
-.maintenanceIntervalList {
-  display: grid;
-  max-height: 28rem;
-  overflow-y: auto;
-  margin: var(--lm-space-3) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.maintenanceIntervalList li {
-  min-width: 0;
-}
-
-.maintenanceIntervalList button span {
-  overflow-wrap: anywhere;
-}
-
-.maintenanceIntervalForm {
-  display: grid;
-  align-content: start;
-  gap: var(--lm-space-4);
-  min-width: 0;
-}
-
-.maintenanceIntervalForm h3 {
-  margin: 0;
-}
-
-.maintenanceIntervalForm :focus-visible,
-.maintenanceIntervalList button:focus-visible,
-.maintenanceIntervalsDialog > .detailHeading button:focus-visible {
-  outline: 3px solid var(--lm-color-focus);
-  outline-offset: 2px;
 }
 
 .maintenanceItemManager {
@@ -930,8 +953,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .maintenanceItemManager,
-  .maintenanceIntervalManager {
+  .maintenanceItemManager {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -940,6 +962,58 @@
   .keyRegions {
     grid-template-columns: minmax(0, 1fr);
     height: auto;
+  }
+
+  .intervalSection {
+    height: auto;
+    min-height: 0;
+  }
+
+  .intervalTable {
+    display: block;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .intervalTableHeader {
+    display: none;
+  }
+
+  .intervalTableBody {
+    display: grid;
+    max-height: none;
+    overflow: visible;
+    gap: var(--lm-space-3);
+  }
+
+  .intervalRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--lm-space-3);
+    border: 1px solid var(--lm-color-border);
+    border-radius: var(--lm-radius-control);
+    padding: var(--lm-space-3);
+    background: var(--lm-color-surface);
+  }
+
+  .intervalMobileLabel {
+    display: block;
+    color: var(--lm-color-text-secondary);
+    font-size: var(--lm-font-label);
+    font-weight: 700;
+  }
+
+  .intervalRecommendedControls {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .intervalActionCell {
+    justify-items: stretch;
+  }
+
+  .intervalActionCell button,
+  .intervalSection > .sectionHeading button {
+    min-height: var(--lm-control-mobile);
   }
 
   .keyDocument {
@@ -1083,8 +1157,4 @@
     gap: var(--lm-space-1);
   }
 
-  .sectionIntervalList li {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--lm-space-1);
-  }
 }

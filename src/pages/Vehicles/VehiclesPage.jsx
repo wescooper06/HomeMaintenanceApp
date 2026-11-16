@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useBlocker } from "react-router-dom";
 
 import PageHeader from "../../components/layout/PageHeader.jsx";
+import { calculateMaintenanceInterval } from "../../services/vehiclesMaintenanceIntervalEngine.js";
 import {
   buildRecordDeleteOperation,
   createVehicleChangesDraft,
@@ -346,41 +347,57 @@ function makeMaintenanceItemDraft(item = null, currentAssetId = "") {
   };
 }
 
-function makeMaintenanceIntervalDraft(interval = null) {
-  if (!interval) {
-    return {
-      operation: "create",
-      id: crypto.randomUUID(),
-      requestId: crypto.randomUUID(),
-      expectedVersion: null,
-      maintenanceItemId: "",
-      intervalValue: "",
-      intervalUnit: "miles",
-      comments: "",
-    };
-  }
-  return {
-    operation: "update",
-    id: interval.id,
-    requestId: crypto.randomUUID(),
-    expectedVersion: interval.version,
-    maintenanceItemId: interval.maintenanceItemId,
-    intervalValue: String(interval.recommendedInterval.value),
-    intervalUnit: interval.recommendedInterval.unit,
-    comments: interval.comments || "",
-  };
+function formatServiceDate(value) {
+  if (!value) return "";
+  const [year, month, day] = value.split("-").map(Number);
+  return `${month}/${day}/${year}`;
 }
 
-function maintenanceIntervalSummary(interval) {
+function intervalProjection(workspace, maintenanceItemId, intervalValue, intervalUnit) {
+  const value = Number(intervalValue);
+  if (!workspace || !maintenanceItemId || !Number.isFinite(value) || value <= 0
+    || !["miles", "hours", "months"].includes(intervalUnit)
+    || (intervalUnit === "months" && !Number.isInteger(value))) return null;
+  return calculateMaintenanceInterval({
+    asset: { id: workspace.asset.id, usage_unit: workspace.asset.usageUnit },
+    maintenanceItem: { id: maintenanceItemId },
+    interval: { maintenance_item_id: maintenanceItemId, interval_value: value, interval_unit: intervalUnit },
+    ongoingRecords: workspace.ongoingMaintenanceRecords.map((record) => ({
+      id: record.id,
+      asset_id: workspace.asset.id,
+      service_date: record.serviceDate,
+      usage_reading_value: record.usageReadingValue,
+      usage_reading_unit: record.usageReadingUnit,
+      items: record.capturedItems.map((item) => ({
+        maintenance_item_id: item.maintenanceItemId,
+        is_performed: item.isPerformed,
+      })),
+    })),
+  });
+}
+
+function lastServiceLabel(lastService) {
+  if (!lastService) return { value: "Not calculated", detail: "No qualifying service yet" };
+  const reading = lastService.usageReadingValue === null || lastService.usageReadingUnit === "none"
+    ? "" : `${lastService.usageReadingValue.toLocaleString()} ${lastService.usageReadingUnit === "miles" ? "mi" : "hours"} · `;
+  return { value: `${reading}${formatServiceDate(lastService.serviceDate)}`, detail: "" };
+}
+
+function nextServiceLabel(interval) {
   if (interval.nextService?.kind === "usage") {
-    return `Next at ${interval.nextService.value} ${interval.nextService.unit}`;
+    const unit = interval.nextService.unit === "miles" ? "mi" : "hours";
+    return { value: `${interval.nextService.value.toLocaleString()} ${unit}`, detail: "" };
   }
   if (interval.nextService?.kind === "date") {
-    return `Next on ${interval.nextService.serviceDate}`;
+    return { value: formatServiceDate(interval.nextService.serviceDate), detail: "" };
   }
-  if (interval.notCalculatedReason === "usage_unit_mismatch") return "Latest reading uses a different unit";
-  if (interval.notCalculatedReason === "usage_reading_missing") return "Latest service has no usage reading";
-  return "No qualifying service yet";
+  if (interval.notCalculatedReason === "usage_unit_mismatch") {
+    return { value: "Not calculated", detail: "Latest reading uses a different unit" };
+  }
+  if (interval.notCalculatedReason === "usage_reading_missing") {
+    return { value: "Not calculated", detail: "Latest service has no usage reading" };
+  }
+  return { value: "Not calculated", detail: "No qualifying service yet" };
 }
 
 function maintenanceItemErrorMessage(error) {
@@ -402,27 +419,6 @@ function maintenanceItemErrorMessage(error) {
   }
   if (error?.code === "duplicate_active_item_name") return "An active Maintenance Item already uses this name.";
   return "Maintenance Item changes could not be confirmed. Your draft is preserved.";
-}
-
-function maintenanceIntervalErrorMessage(error) {
-  if (error?.code === "validation_error") return "Review the highlighted interval details and try again.";
-  if (error?.code === "version_conflict") return "This interval changed elsewhere. Reload it before trying again.";
-  if (error?.code === "authorization_error") return "Your session cannot save this interval. Sign in again.";
-  if (error?.code === "not_found") return "The asset, Maintenance Item, or interval is no longer available. Reload the workspace.";
-  if (error?.code === "item_archived_or_unavailable") {
-    return "This Maintenance Item is no longer active and applicable to this asset. No changes were saved; reload the workspace.";
-  }
-  if (error?.code === "duplicate_interval") return "An interval already exists for this Maintenance Item and asset.";
-  if (error?.code === "request_id_payload_mismatch") {
-    return "This request ID was used for different interval values. Reload the workspace before continuing.";
-  }
-  if (error?.code === "retryable_transport") {
-    return "The save could not be confirmed because of a connection issue. Retry the same request.";
-  }
-  if (error?.code === "unknown_outcome") {
-    return "The save outcome is unknown. Retry the exact request before making more changes.";
-  }
-  return "Maintenance Interval changes could not be confirmed. Your draft is preserved.";
 }
 
 export default function VehiclesPage() {
@@ -480,15 +476,9 @@ export default function VehiclesPage() {
   const [maintenanceItemSaving, setMaintenanceItemSaving] = useState(false);
   const [maintenanceItemError, setMaintenanceItemError] = useState("");
   const [maintenanceItemStatus, setMaintenanceItemStatus] = useState("");
-  const [manageMaintenanceIntervalsOpen, setManageMaintenanceIntervalsOpen] = useState(false);
-  const [selectedMaintenanceIntervalId, setSelectedMaintenanceIntervalId] = useState("");
-  const [maintenanceIntervalDraft, setMaintenanceIntervalDraft] = useState(null);
-  const [maintenanceIntervalRetryDraft, setMaintenanceIntervalRetryDraft] = useState(null);
-  const [maintenanceIntervalNeedsReload, setMaintenanceIntervalNeedsReload] = useState(false);
-  const [maintenanceIntervalsLoading, setMaintenanceIntervalsLoading] = useState(false);
-  const [maintenanceIntervalSaving, setMaintenanceIntervalSaving] = useState(false);
+  const [maintenanceIntervalOperations, setMaintenanceIntervalOperations] = useState([]);
+  const [maintenanceIntervalEditing, setMaintenanceIntervalEditing] = useState(false);
   const [maintenanceIntervalError, setMaintenanceIntervalError] = useState("");
-  const [maintenanceIntervalStatus, setMaintenanceIntervalStatus] = useState("");
   const saveLock = useRef(false);
   const dialogRef = useRef(null);
   const assetsDialogRef = useRef(null);
@@ -498,13 +488,8 @@ export default function VehiclesPage() {
   const maintenanceItemsDialogRef = useRef(null);
   const maintenanceItemNameRef = useRef(null);
   const maintenanceItemsAddButtonRef = useRef(null);
-  const maintenanceIntervalsDialogRef = useRef(null);
-  const maintenanceIntervalItemRef = useRef(null);
-  const maintenanceIntervalsAddButtonRef = useRef(null);
-  const manageMaintenanceIntervalsButtonRef = useRef(null);
   const manageSaveLock = useRef(false);
   const maintenanceItemSaveLock = useRef(false);
-  const maintenanceIntervalSaveLock = useRef(false);
   const manageDetailsRef = useRef(null);
   const recommendedDescriptionRef = useRef(null);
   const completedDescriptionRef = useRef(null);
@@ -514,19 +499,45 @@ export default function VehiclesPage() {
   const selectedMaintenanceItem = maintenanceItems?.find((item) => item.id === selectedMaintenanceItemId);
   const maintenanceItemBaseline = maintenanceItems?.find((item) => item.id === maintenanceItemDraft?.id);
   const maintenanceIntervals = workspace?.maintenanceIntervals || [];
-  const selectedMaintenanceInterval = maintenanceIntervals.find((interval) =>
-    interval.id === selectedMaintenanceIntervalId);
-  const maintenanceIntervalBaseline = maintenanceIntervals.find((interval) =>
-    interval.id === maintenanceIntervalDraft?.id);
-  const hasMaintenanceIntervalDraft = Boolean(maintenanceIntervalDraft);
-  const maintenanceIntervalDirty = Boolean(maintenanceIntervalDraft && (
-    maintenanceIntervalDraft.operation === "create"
-    || !maintenanceIntervalBaseline
-    || maintenanceIntervalDraft.maintenanceItemId !== maintenanceIntervalBaseline.maintenanceItemId
-    || maintenanceIntervalDraft.intervalValue !== String(maintenanceIntervalBaseline.recommendedInterval.value)
-    || maintenanceIntervalDraft.intervalUnit !== maintenanceIntervalBaseline.recommendedInterval.unit
-    || maintenanceIntervalDraft.comments !== (maintenanceIntervalBaseline.comments || "")
-  ));
+  const maintenanceIntervalDirty = maintenanceIntervalOperations.length > 0;
+  const intervalOperationById = new Map(maintenanceIntervalOperations.map((operation) => [operation.id, operation]));
+  const intervalRows = [
+    ...maintenanceIntervals.filter((interval) => intervalOperationById.get(interval.id)?.action !== "delete")
+      .map((interval) => {
+        const operation = intervalOperationById.get(interval.id);
+        const maintenanceItemId = operation?.maintenanceItemId ?? interval.maintenanceItemId;
+        const intervalValue = operation?.intervalValue ?? String(interval.recommendedInterval.value);
+        const intervalUnit = operation?.intervalUnit ?? interval.recommendedInterval.unit;
+        const projection = intervalProjection(workspace, maintenanceItemId, intervalValue, intervalUnit);
+        const catalogItem = workspace?.maintenanceItemCatalog?.find((item) => item.id === maintenanceItemId);
+        return {
+          ...interval,
+          action: operation?.action || "saved",
+          maintenanceItemName: catalogItem?.displayName || interval.maintenanceItemName,
+          maintenanceItemId,
+          intervalValue,
+          intervalUnit,
+          comments: operation?.comments ?? interval.comments ?? "",
+          lastService: projection ? projection.lastService : interval.lastService,
+          nextService: projection ? projection.nextService : interval.nextService,
+          notCalculatedReason: projection ? projection.notCalculatedReason : interval.notCalculatedReason,
+        };
+      }),
+    ...maintenanceIntervalOperations.filter((operation) => operation.action === "create").map((operation) => {
+      const projection = intervalProjection(workspace, operation.maintenanceItemId,
+        operation.intervalValue, operation.intervalUnit);
+      const item = workspace?.maintenanceItemCatalog?.find((entry) => entry.id === operation.maintenanceItemId);
+      return {
+        ...operation,
+        action: "create",
+        maintenanceItemName: item?.displayName || "Choose a Maintenance Item",
+        recommendedInterval: { value: Number(operation.intervalValue) || 0, unit: operation.intervalUnit },
+        lastService: projection?.lastService || null,
+        nextService: projection?.nextService || null,
+        notCalculatedReason: projection?.notCalculatedReason || "no_qualifying_service",
+      };
+    }),
+  ];
   const maintenanceItemDirty = Boolean(maintenanceItemDraft && (
     maintenanceItemDraft.operation === "create"
     || !maintenanceItemBaseline
@@ -550,14 +561,14 @@ export default function VehiclesPage() {
   ));
   const keyDirty = JSON.stringify(keyDocument) !== JSON.stringify(keyBaseline.notes?.document || { schemaVersion: 1, blocks: [] })
     || keyLinksValue(keyLinks) !== keyLinksValue(keyBaseline.links);
-  const dirty = ongoingDirty || recommendedDirty || completedDirty || keyDirty;
-  const sessionEditing = ongoingEditing || recommendedEditing || completedEditing || keyEditing;
+  const dirty = ongoingDirty || recommendedDirty || completedDirty || keyDirty || maintenanceIntervalDirty;
+  const sessionEditing = ongoingEditing || recommendedEditing || completedEditing || keyEditing
+    || maintenanceIntervalEditing;
   const saveUncertain = retryDraft !== null;
   const manageAssetDraftDirty = manageDraftIsDirty();
   const hasMaintenanceItemDraft = Boolean(maintenanceItemDraft);
   const blocker = useBlocker(() => dirty || saving || saveUncertain
     || maintenanceItemDirty || maintenanceItemSaving || maintenanceItemRetryDraft !== null
-    || maintenanceIntervalDirty || maintenanceIntervalSaving || maintenanceIntervalRetryDraft !== null
     || (manageAssetsOpen && manageAssetDraftDirty) || manageSaving || manageRetryDraft !== null);
 
   useEffect(() => {
@@ -650,17 +661,6 @@ export default function VehiclesPage() {
   }, [manageMaintenanceItemsOpen, hasMaintenanceItemDraft, maintenanceItemDraft?.id]);
 
   useEffect(() => {
-    const dialog = maintenanceIntervalsDialogRef.current;
-    if (manageMaintenanceIntervalsOpen) {
-      if (dialog && !dialog.open) dialog.showModal();
-      if (hasMaintenanceIntervalDraft) maintenanceIntervalItemRef.current?.focus();
-      else maintenanceIntervalsAddButtonRef.current?.focus();
-    } else if (dialog?.open) {
-      dialog.close();
-    }
-  }, [manageMaintenanceIntervalsOpen, hasMaintenanceIntervalDraft, maintenanceIntervalDraft?.id]);
-
-  useEffect(() => {
     if (!manageMaintenanceItemsOpen) return undefined;
     let active = true;
     vehiclesService.listMaintenanceItems().then((items) => {
@@ -676,8 +676,7 @@ export default function VehiclesPage() {
 
   useEffect(() => {
     if (!dirty && !saving && !saveUncertain && !maintenanceItemDirty
-      && !maintenanceItemSaving && !maintenanceItemRetryDraft && !maintenanceIntervalDirty
-      && !maintenanceIntervalSaving && !maintenanceIntervalRetryDraft
+      && !maintenanceItemSaving && !maintenanceItemRetryDraft
       && !(manageAssetsOpen && manageAssetDraftDirty) && !manageSaving && !manageRetryDraft) return undefined;
     const beforeUnload = (event) => {
       event.preventDefault();
@@ -686,7 +685,6 @@ export default function VehiclesPage() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty, saving, saveUncertain, maintenanceItemDirty, maintenanceItemSaving, maintenanceItemRetryDraft,
-    maintenanceIntervalDirty, maintenanceIntervalSaving, maintenanceIntervalRetryDraft,
     manageAssetsOpen, manageAssetDraftDirty, manageSaving, manageRetryDraft]);
 
   function resetDraft() {
@@ -708,6 +706,9 @@ export default function VehiclesPage() {
     setKeyLinks(keyBaseline.links.map((link) => ({ ...link })));
     setKeyNoteId(keyBaseline.notes?.id || "");
     setKeyEditing(false);
+    setMaintenanceIntervalOperations([]);
+    setMaintenanceIntervalEditing(false);
+    setMaintenanceIntervalError("");
     setSaveError("");
     setStatus("Changes canceled. The last saved records are restored.");
   }
@@ -915,42 +916,6 @@ export default function VehiclesPage() {
     beginManageMaintenanceItems();
   }
 
-  function beginManageMaintenanceIntervals() {
-    setSelectedMaintenanceIntervalId("");
-    setMaintenanceIntervalDraft(null);
-    setMaintenanceIntervalRetryDraft(null);
-    setMaintenanceIntervalNeedsReload(false);
-    setMaintenanceIntervalError("");
-    setMaintenanceIntervalStatus("");
-    setManageMaintenanceIntervalsOpen(true);
-  }
-
-  function openManageMaintenanceIntervals() {
-    if (manageMaintenanceIntervalsOpen) return;
-    if (!workspace || workspaceLoading || saving || saveUncertain || manageSaving || manageRetryDraft
-      || maintenanceItemSaving || maintenanceItemRetryDraft || maintenanceIntervalSaving
-      || maintenanceIntervalRetryDraft) return;
-    if (manageAssetsOpen) {
-      if (manageDraftIsDirty()) {
-        setConfirmation({ kind: "manage-intervals-open-assets" });
-        return;
-      }
-      closeManageAssets();
-    }
-    if (manageMaintenanceItemsOpen) {
-      if (maintenanceItemDirty) {
-        setConfirmation({ kind: "manage-intervals-open-items" });
-        return;
-      }
-      closeManageMaintenanceItems();
-    }
-    if (dirty) {
-      setConfirmation({ kind: "manage-intervals-open" });
-      return;
-    }
-    beginManageMaintenanceIntervals();
-  }
-
   function closeManageMaintenanceItems() {
     if (maintenanceItemsDialogRef.current?.open) maintenanceItemsDialogRef.current.close();
     setManageMaintenanceItemsOpen(false);
@@ -977,31 +942,6 @@ export default function VehiclesPage() {
       return;
     }
     closeManageMaintenanceItems();
-  }
-
-  function closeManageMaintenanceIntervals() {
-    if (maintenanceIntervalsDialogRef.current?.open) maintenanceIntervalsDialogRef.current.close();
-    setManageMaintenanceIntervalsOpen(false);
-    setSelectedMaintenanceIntervalId("");
-    setMaintenanceIntervalDraft(null);
-    setMaintenanceIntervalRetryDraft(null);
-    setMaintenanceIntervalNeedsReload(false);
-    setMaintenanceIntervalError("");
-    setMaintenanceIntervalStatus("");
-    manageMaintenanceIntervalsButtonRef.current?.focus();
-  }
-
-  function requestCloseManageMaintenanceIntervals() {
-    if (maintenanceIntervalSaving) return;
-    if (maintenanceIntervalRetryDraft) {
-      setMaintenanceIntervalError("Resolve the pending save by retrying the same request before closing.");
-      return;
-    }
-    if (maintenanceIntervalDirty) {
-      setConfirmation({ kind: "manage-intervals-close" });
-      return;
-    }
-    closeManageMaintenanceIntervals();
   }
 
   function selectMaintenanceItem(item) {
@@ -1117,21 +1057,138 @@ export default function VehiclesPage() {
     }
   }
 
-  function requestReloadMaintenanceIntervals() {
-    if (maintenanceIntervalDirty) {
-      setConfirmation({ kind: "manage-intervals-reload" });
-      return;
-    }
-    reloadMaintenanceIntervals();
+  function beginMaintenanceIntervalEdit() {
+    if (saving || saveUncertain) return;
+    setMaintenanceIntervalEditing(true);
+    setMaintenanceIntervalError("");
   }
 
-  function discardIntervalDraftAndReload() {
-    setMaintenanceIntervalDraft(null);
-    setSelectedMaintenanceIntervalId("");
-    setMaintenanceIntervalRetryDraft(null);
-    setMaintenanceIntervalNeedsReload(false);
-    setConfirmation(null);
-    reloadMaintenanceIntervals();
+  function addMaintenanceInterval() {
+    if (!workspace || saving || saveUncertain) return;
+    setMaintenanceIntervalEditing(true);
+    setMaintenanceIntervalError("");
+    setMaintenanceIntervalOperations((operations) => [...operations, {
+      action: "create",
+      id: crypto.randomUUID(),
+      maintenanceItemId: "",
+      intervalValue: "",
+      intervalUnit: workspace.asset.usageUnit === "none" ? "months" : workspace.asset.usageUnit,
+      comments: "",
+    }]);
+  }
+
+  function updateMaintenanceIntervalRow(row, update) {
+    if (saving || saveUncertain || row.action === "delete") return;
+    setMaintenanceIntervalEditing(true);
+    setMaintenanceIntervalError("");
+    setMaintenanceIntervalOperations((operations) => {
+      const current = operations.find((operation) => operation.id === row.id);
+      if (current?.action === "delete") return operations;
+      const baseline = maintenanceIntervals.find((interval) => interval.id === row.id);
+      const next = {
+        ...(current || (baseline ? {
+          action: "update",
+          id: baseline.id,
+          expectedVersion: baseline.version,
+          maintenanceItemId: baseline.maintenanceItemId,
+          intervalValue: String(baseline.recommendedInterval.value),
+          intervalUnit: baseline.recommendedInterval.unit,
+          comments: baseline.comments || "",
+        } : {})),
+        ...update,
+      };
+      if (next.action === "create") {
+        return operations.map((operation) => operation.id === row.id ? next : operation);
+      }
+      const unchanged = next.maintenanceItemId === baseline.maintenanceItemId
+        && Number(next.intervalValue) === baseline.recommendedInterval.value
+        && next.intervalUnit === baseline.recommendedInterval.unit
+        && (next.comments.trim() || null) === (baseline.comments || null);
+      if (unchanged) return operations.filter((operation) => operation.id !== row.id);
+      return current
+        ? operations.map((operation) => operation.id === row.id ? next : operation)
+        : [...operations, next];
+    });
+  }
+
+  function removeMaintenanceInterval(row) {
+    if (saving || saveUncertain || row.action === "delete") return;
+    setMaintenanceIntervalEditing(true);
+    setMaintenanceIntervalError("");
+    if (row.action === "create") {
+      setMaintenanceIntervalOperations((operations) => operations.filter((operation) => operation.id !== row.id));
+      return;
+    }
+    const baseline = maintenanceIntervals.find((interval) => interval.id === row.id);
+    if (!baseline) return;
+    setMaintenanceIntervalOperations((operations) => [
+      ...operations.filter((operation) => operation.id !== row.id),
+      { action: "delete", id: baseline.id, expectedVersion: baseline.version },
+    ]);
+  }
+
+  function validateMaintenanceIntervals() {
+    const seenItems = new Set();
+    for (const row of intervalRows.filter((interval) => interval.action !== "saved")) {
+      const value = Number(row.intervalValue);
+      const available = workspace?.maintenanceItems?.some((item) =>
+        item.id === row.maintenanceItemId && !item.archivedAt);
+      if (!available) {
+        setMaintenanceIntervalError("Choose an active Maintenance Item enabled for this asset in every interval row.");
+        return false;
+      }
+      const duplicate = intervalRows.some((other) => other.id !== row.id
+        && other.maintenanceItemId === row.maintenanceItemId);
+      if (seenItems.has(row.maintenanceItemId) || duplicate) {
+        setMaintenanceIntervalError("An asset can have only one interval for each Maintenance Item.");
+        return false;
+      }
+      seenItems.add(row.maintenanceItemId);
+      if (!Number.isFinite(value) || value <= 0 || value > 9999999999.99
+        || !/^\d+(?:\.\d{1,2})?$/.test(row.intervalValue)
+        || !["miles", "hours", "months"].includes(row.intervalUnit)
+        || (row.intervalUnit === "months" && !Number.isInteger(value))) {
+        setMaintenanceIntervalError("Enter a positive interval value supported by the selected unit.");
+        return false;
+      }
+      if (typeof row.comments !== "string" || row.comments.length > 2000) {
+        setMaintenanceIntervalError("Comments must be 2,000 characters or fewer.");
+        return false;
+      }
+    }
+    setMaintenanceIntervalError("");
+    return true;
+  }
+
+  function buildMaintenanceIntervalOperations() {
+    const operations = maintenanceIntervalOperations.map((operation) => {
+      if (operation.action === "delete") return { ...operation };
+      if (operation.action === "create") return {
+        action: "create",
+        id: operation.id,
+        maintenanceItemId: operation.maintenanceItemId,
+        intervalValue: Number(operation.intervalValue),
+        intervalUnit: operation.intervalUnit,
+        comments: operation.comments.trim() || null,
+      };
+      const baseline = maintenanceIntervals.find((interval) => interval.id === operation.id);
+      if (!baseline) return null;
+      const result = { action: "update", id: baseline.id, expectedVersion: baseline.version };
+      if (operation.maintenanceItemId !== baseline.maintenanceItemId) result.maintenanceItemId = operation.maintenanceItemId;
+      if (Number(operation.intervalValue) !== baseline.recommendedInterval.value) {
+        result.intervalValue = Number(operation.intervalValue);
+      }
+      if (operation.intervalUnit !== baseline.recommendedInterval.unit) result.intervalUnit = operation.intervalUnit;
+      if ((operation.comments.trim() || null) !== (baseline.comments || null)) {
+        result.comments = operation.comments.trim() || null;
+      }
+      return result;
+    }).filter(Boolean);
+    return [
+      ...operations.filter((operation) => operation.action === "delete"),
+      ...operations.filter((operation) => operation.action === "update"),
+      ...operations.filter((operation) => operation.action === "create"),
+    ];
   }
 
   async function saveMaintenanceItemChanges(event) {
@@ -1172,195 +1229,6 @@ export default function VehiclesPage() {
     setMaintenanceItemsLoading(true);
     setMaintenanceItemsError("");
     setMaintenanceItemsAttempt((attempt) => attempt + 1);
-  }
-
-  function selectMaintenanceInterval(intervalId) {
-    if (maintenanceIntervalSaving || maintenanceIntervalRetryDraft || maintenanceIntervalNeedsReload) return;
-    if (maintenanceIntervalDirty) {
-      setConfirmation({ kind: "manage-intervals-switch", value: intervalId });
-      return;
-    }
-    const interval = maintenanceIntervals.find((entry) => entry.id === intervalId);
-    setSelectedMaintenanceIntervalId(interval?.id || "");
-    setMaintenanceIntervalDraft(interval ? makeMaintenanceIntervalDraft(interval) : null);
-    setMaintenanceIntervalError("");
-    setMaintenanceIntervalStatus("");
-  }
-
-  function startNewMaintenanceInterval() {
-    if (maintenanceIntervalSaving || maintenanceIntervalRetryDraft || maintenanceIntervalNeedsReload) return;
-    if (maintenanceIntervalDirty) {
-      setConfirmation({ kind: "manage-intervals-new" });
-      return;
-    }
-    setSelectedMaintenanceIntervalId("");
-    setMaintenanceIntervalDraft({
-      ...makeMaintenanceIntervalDraft(),
-      intervalUnit: workspace.asset.usageUnit === "none" ? "months" : workspace.asset.usageUnit,
-    });
-    setMaintenanceIntervalError("");
-    setMaintenanceIntervalStatus("");
-  }
-
-  function updateMaintenanceIntervalDraft(update) {
-    if (maintenanceIntervalNeedsReload || maintenanceIntervalRetryDraft || maintenanceIntervalSaving) return;
-    setMaintenanceIntervalDraft((current) => current ? { ...current, ...update } : current);
-    setMaintenanceIntervalError("");
-    setMaintenanceIntervalStatus("");
-  }
-
-  function cancelMaintenanceIntervalDraft() {
-    if (!maintenanceIntervalDraft || maintenanceIntervalSaving || maintenanceIntervalRetryDraft) return;
-    if (maintenanceIntervalDraft.operation === "create") {
-      setMaintenanceIntervalDraft(null);
-      setSelectedMaintenanceIntervalId("");
-    } else {
-      const original = maintenanceIntervals.find((interval) => interval.id === maintenanceIntervalDraft.id);
-      setMaintenanceIntervalDraft(original ? makeMaintenanceIntervalDraft(original) : null);
-      setSelectedMaintenanceIntervalId(original?.id || "");
-    }
-    setMaintenanceIntervalError("");
-    setMaintenanceIntervalStatus("Changes canceled. Saved Maintenance Interval values are restored.");
-  }
-
-  function validateMaintenanceIntervalDraft(draft) {
-    const intervalValue = Number(draft.intervalValue);
-    const item = workspace?.maintenanceItems?.find((entry) =>
-      entry.id === draft.maintenanceItemId && !entry.archivedAt);
-    const duplicate = maintenanceIntervals.some((interval) =>
-      interval.maintenanceItemId === draft.maintenanceItemId && interval.id !== draft.id);
-    if (!item || duplicate) {
-      setMaintenanceIntervalError(duplicate
-        ? "This asset already has an interval for the selected Maintenance Item."
-        : "Choose an active Maintenance Item applicable to this asset.");
-      return false;
-    }
-    if (!Number.isFinite(intervalValue) || intervalValue <= 0 || intervalValue > 9999999999.99
-      || !/^\d+(?:\.\d{1,2})?$/.test(draft.intervalValue)
-      || !["miles", "hours", "months"].includes(draft.intervalUnit)
-      || (draft.intervalUnit === "months" && !Number.isInteger(intervalValue))) {
-      setMaintenanceIntervalError("Enter a positive interval value supported by the selected unit.");
-      return false;
-    }
-    if (typeof draft.comments !== "string" || draft.comments.length > 2000) {
-      setMaintenanceIntervalError("Comments must be 2,000 characters or fewer.");
-      return false;
-    }
-    return true;
-  }
-
-  async function reloadMaintenanceIntervals() {
-    if (!workspace || maintenanceIntervalsLoading) return;
-    setMaintenanceIntervalsLoading(true);
-    setMaintenanceIntervalError("");
-    try {
-      const fresh = await vehiclesService.loadVehicleWorkspace(workspace.asset.id);
-      setWorkspace(fresh);
-      setMaintenanceIntervalNeedsReload(false);
-      setMaintenanceIntervalStatus("Vehicles workspace reloaded.");
-    } catch (error) {
-      setMaintenanceIntervalError(maintenanceIntervalErrorMessage(error));
-      setMaintenanceIntervalStatus("");
-    } finally {
-      setMaintenanceIntervalsLoading(false);
-    }
-  }
-
-  async function persistMaintenanceInterval(request) {
-    if (maintenanceIntervalSaveLock.current || maintenanceIntervalSaving) return;
-    maintenanceIntervalSaveLock.current = true;
-    setMaintenanceIntervalSaving(true);
-    setMaintenanceIntervalError("");
-    setMaintenanceIntervalStatus("Saving Maintenance Interval...");
-    try {
-      const result = await vehiclesService.saveVehicleChanges(request);
-      if (result?.status !== "saved") {
-        throw { code: "unknown_outcome", retryDraft: request };
-      }
-      const operation = request.intervalOperations[0];
-      const deleting = operation.action === "delete";
-      try {
-        const fresh = await vehiclesService.loadVehicleWorkspace(workspace.asset.id);
-        const savedInterval = fresh.maintenanceIntervals.find((interval) => interval.id === operation.id);
-        setWorkspace(fresh);
-        setMaintenanceIntervalRetryDraft(null);
-        if (!deleting && !savedInterval) {
-          setSelectedMaintenanceIntervalId(operation.id);
-          setMaintenanceIntervalDraft(null);
-          setMaintenanceIntervalNeedsReload(true);
-          setMaintenanceIntervalStatus("Interval save succeeded, but the saved interval was not returned by the refreshed workspace.");
-          setMaintenanceIntervalError("Reload the workspace before making further interval changes.");
-        } else {
-          setSelectedMaintenanceIntervalId(deleting ? "" : operation.id);
-          setMaintenanceIntervalDraft(deleting ? null : makeMaintenanceIntervalDraft(savedInterval));
-          setMaintenanceIntervalNeedsReload(false);
-          setMaintenanceIntervalStatus(deleting ? "Maintenance Interval deleted." : "Maintenance Interval saved.");
-        }
-      } catch {
-        setMaintenanceIntervalDraft(null);
-        setSelectedMaintenanceIntervalId(deleting ? "" : operation.id);
-        setMaintenanceIntervalNeedsReload(true);
-        setMaintenanceIntervalRetryDraft(null);
-        setMaintenanceIntervalStatus(deleting
-          ? "Interval deletion succeeded, but the latest workspace could not be reloaded."
-          : "Interval save succeeded, but the latest workspace could not be reloaded.");
-        setMaintenanceIntervalError("Reload the workspace before making further interval changes.");
-      }
-    } catch (error) {
-      if (error?.retryDraft) setMaintenanceIntervalRetryDraft(error.retryDraft);
-      if (["version_conflict", "not_found", "item_archived_or_unavailable",
-        "duplicate_interval", "request_id_payload_mismatch"].includes(error?.code)) {
-        setMaintenanceIntervalNeedsReload(true);
-      }
-      setMaintenanceIntervalError(maintenanceIntervalErrorMessage(error));
-      setMaintenanceIntervalStatus("");
-    } finally {
-      maintenanceIntervalSaveLock.current = false;
-      setMaintenanceIntervalSaving(false);
-    }
-  }
-
-  async function saveMaintenanceInterval(event) {
-    event?.preventDefault();
-    const draft = maintenanceIntervalDraft;
-    if (!draft || maintenanceIntervalSaveLock.current || maintenanceIntervalSaving
-      || maintenanceIntervalRetryDraft || maintenanceIntervalNeedsReload || !maintenanceIntervalDirty) return;
-    if (!validateMaintenanceIntervalDraft(draft)) return;
-    const request = createVehicleChangesDraft(workspace);
-    request.requestId = draft.requestId;
-    request.intervalOperations = [{
-      action: draft.operation,
-      id: draft.id,
-      ...(draft.operation === "update" ? { expectedVersion: draft.expectedVersion } : {}),
-      maintenanceItemId: draft.maintenanceItemId,
-      intervalValue: Number(draft.intervalValue),
-      intervalUnit: draft.intervalUnit,
-      comments: draft.comments.trim() || null,
-    }];
-    await persistMaintenanceInterval(request);
-  }
-
-  function requestDeleteMaintenanceInterval(interval) {
-    if (!interval || maintenanceIntervalDirty || maintenanceIntervalSaving
-      || maintenanceIntervalRetryDraft || maintenanceIntervalNeedsReload) return;
-    setConfirmation({ kind: "maintenance-interval-delete", value: interval });
-  }
-
-  function deleteMaintenanceInterval(interval) {
-    if (!interval || maintenanceIntervalSaveLock.current || maintenanceIntervalSaving) return;
-    const request = createVehicleChangesDraft(workspace);
-    request.requestId = crypto.randomUUID();
-    request.intervalOperations = [{
-      action: "delete",
-      id: interval.id,
-      expectedVersion: interval.version,
-    }];
-    persistMaintenanceInterval(request);
-  }
-
-  function retryMaintenanceIntervalSave() {
-    if (!maintenanceIntervalRetryDraft || maintenanceIntervalSaveLock.current) return;
-    persistMaintenanceInterval(maintenanceIntervalRetryDraft);
   }
 
   function beginManageAssets() {
@@ -1620,42 +1488,11 @@ export default function VehiclesPage() {
     } else if (action.kind === "manage-items-open") {
       resetDraft();
       beginManageMaintenanceItems();
-    } else if (action.kind === "manage-intervals-open") {
-      resetDraft();
-      beginManageMaintenanceIntervals();
-    } else if (action.kind === "manage-intervals-open-assets") {
-      closeManageAssets();
-      beginManageMaintenanceIntervals();
-    } else if (action.kind === "manage-intervals-open-items") {
-      closeManageMaintenanceItems();
-      beginManageMaintenanceIntervals();
     } else if (action.kind === "manage-items-open-assets") {
       closeManageAssets();
       beginManageMaintenanceItems();
     } else if (action.kind === "manage-items-close") {
       closeManageMaintenanceItems();
-    } else if (action.kind === "manage-intervals-close") {
-      closeManageMaintenanceIntervals();
-    } else if (action.kind === "manage-intervals-reload") {
-      discardIntervalDraftAndReload();
-    } else if (action.kind === "manage-intervals-switch") {
-      const interval = maintenanceIntervals.find((entry) => entry.id === action.value);
-      setSelectedMaintenanceIntervalId(interval?.id || "");
-      setMaintenanceIntervalDraft(interval ? makeMaintenanceIntervalDraft(interval) : null);
-      setMaintenanceIntervalNeedsReload(false);
-      setMaintenanceIntervalError("");
-      setMaintenanceIntervalStatus("");
-    } else if (action.kind === "manage-intervals-new") {
-      setSelectedMaintenanceIntervalId("");
-      setMaintenanceIntervalDraft({
-        ...makeMaintenanceIntervalDraft(),
-        intervalUnit: workspace.asset.usageUnit === "none" ? "months" : workspace.asset.usageUnit,
-      });
-      setMaintenanceIntervalNeedsReload(false);
-      setMaintenanceIntervalError("");
-      setMaintenanceIntervalStatus("");
-    } else if (action.kind === "maintenance-interval-delete") {
-      deleteMaintenanceInterval(action.value);
     } else if (action.kind === "manage-items-switch") {
       const item = maintenanceItems?.find((entry) => entry.id === action.value);
       setSelectedMaintenanceItemId(item?.id || "");
@@ -1778,6 +1615,7 @@ export default function VehiclesPage() {
     }
     draft.linkOperations.push(...keyBaseline.links.filter((link) => !keyLinks.some((entry) => entry.id === link.id))
       .map((link) => ({ action: "delete", id: link.id, expectedVersion: link.version })));
+    draft.intervalOperations.push(...buildMaintenanceIntervalOperations());
     return draft;
   }
 
@@ -1794,6 +1632,9 @@ export default function VehiclesPage() {
       loadRecommendedState(fresh);
       loadCompletedState(fresh);
       loadKeyState(fresh);
+      setMaintenanceIntervalOperations([]);
+      setMaintenanceIntervalEditing(false);
+      setMaintenanceIntervalError("");
       setStatus("Changes saved.");
     } catch {
       const records = workingRecords.map((record) => ({
@@ -1804,6 +1645,28 @@ export default function VehiclesPage() {
       setWorkspace((current) => ({
         ...current,
         asset: { ...current.asset, version: result.assetVersion },
+        maintenanceIntervals: buildMaintenanceIntervalOperations().reduce((intervals, operation) => {
+          const existing = intervals.find((interval) => interval.id === operation.id);
+          if (operation.action === "delete") return intervals.filter((interval) => interval.id !== operation.id);
+          const itemId = operation.maintenanceItemId || existing?.maintenanceItemId;
+          const item = current.maintenanceItemCatalog.find((entry) => entry.id === itemId);
+          const value = operation.intervalValue ?? existing?.recommendedInterval.value;
+          const unit = operation.intervalUnit || existing?.recommendedInterval.unit;
+          const projected = intervalProjection(current, itemId, String(value), unit);
+          const saved = {
+            ...(existing || {}),
+            id: operation.id,
+            maintenanceItemId: itemId,
+            maintenanceItemName: item?.displayName || existing?.maintenanceItemName || "Maintenance Item",
+            recommendedInterval: { value, unit },
+            comments: Object.hasOwn(operation, "comments") ? operation.comments : existing?.comments || null,
+            version: result.entityVersions?.intervals?.[operation.id] || existing?.version || 1,
+            ...projected,
+          };
+          return existing
+            ? intervals.map((interval) => interval.id === saved.id ? saved : interval)
+            : [...intervals, saved];
+        }, current.maintenanceIntervals || []),
       }));
       setBaselineRecords(copyRecords(records));
       setWorkingRecords(copyRecords(records));
@@ -1823,6 +1686,9 @@ export default function VehiclesPage() {
       setCompletedRecords(completed.map((record) => ({ ...record })));
       setCompletedDeleted([]);
       setCompletedEditing(false);
+      setMaintenanceIntervalOperations([]);
+      setMaintenanceIntervalEditing(false);
+      setMaintenanceIntervalError("");
       loadKeyState({
         keyInformation: keyDocument.blocks.length ? { id: keyNoteId, document: keyDocument,
           version: result.entityVersions?.key_information?.[keyNoteId] || keyBaseline.notes?.version || 1 } : null,
@@ -1872,6 +1738,7 @@ export default function VehiclesPage() {
       setSaveError("Review Completed Service: use a unique valid date, a nonnegative reading with at most two decimals, and a trimmed Service Description (1-10,000 characters).");
       return;
     }
+    if (maintenanceIntervalDirty && !validateMaintenanceIntervals()) return;
     if (keyDocumentLength(keyDocument) > 50000 || keyLinks.some((link) => !validKeyLink(link))) {
       setSaveError("Review Key Information: notes allow 50,000 text units; links need an HTTPS URL (up to 2,048 characters), an optional title up to 300 characters, and valid ordering.");
       return;
@@ -1928,11 +1795,9 @@ export default function VehiclesPage() {
   }
 
   function handleRouteDiscard() {
-    if (saveUncertain || saving || maintenanceItemSaving || maintenanceItemRetryDraft
-      || maintenanceIntervalSaving || maintenanceIntervalRetryDraft) return;
+    if (saveUncertain || saving || maintenanceItemSaving || maintenanceItemRetryDraft) return;
     resetDraft();
     if (maintenanceItemDirty) closeManageMaintenanceItems();
-    if (maintenanceIntervalDirty) closeManageMaintenanceIntervals();
     if (manageAssetsOpen && manageDraftIsDirty()) closeManageAssets();
     blocker.proceed();
   }
@@ -1943,13 +1808,15 @@ export default function VehiclesPage() {
   const recommendedActive = activeSection === "recommended";
   const completedActive = activeSection === "completed";
   const ongoingActive = activeSection === "ongoing";
+  const intervalsActive = activeSection === "intervals";
   const keyActive = activeSection === "key-information";
   const activeRecord = completedActive ? completedRecord
     : recommendedActive ? recommendedRecord : ongoingActive ? selectedRecord : null;
   const activeEditing = completedActive ? completedEditing : recommendedActive ? recommendedEditing : ongoingEditing;
   const sectionDirty = (sectionId) => sectionId === "ongoing" ? ongoingDirty
     : sectionId === "recommended" ? recommendedDirty : sectionId === "completed" ? completedDirty
-      : sectionId === "key-information" ? keyDirty : false;
+      : sectionId === "intervals" ? maintenanceIntervalDirty
+        : sectionId === "key-information" ? keyDirty : false;
   const showUsageField = workspace?.asset?.usageUnit !== "none";
   const usageLabelUnit = selectedRecord?.usageReadingUnit === "none"
     ? workspace?.asset?.usageUnit : selectedRecord?.usageReadingUnit;
@@ -1964,36 +1831,25 @@ export default function VehiclesPage() {
       .sort((left, right) => left.displayNameSnapshot.localeCompare(right.displayNameSnapshot)
         || left.maintenanceItemId.localeCompare(right.maintenanceItemId)),
   }));
-  const selectableMaintenanceItems = (workspace?.maintenanceItems || [])
-    .filter((item) => !item.archivedAt && !maintenanceIntervals.some((interval) =>
-      interval.maintenanceItemId === item.id && interval.id !== maintenanceIntervalDraft?.id))
-    .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
-  const intervalDraftItemAvailable = Boolean(workspace?.maintenanceItems?.some((item) =>
-    item.id === maintenanceIntervalDraft?.maintenanceItemId && !item.archivedAt));
+  const intervalOptionsFor = (row) => {
+    const assigned = new Set(intervalRows.filter((interval) => interval.id !== row.id)
+      .map((interval) => interval.maintenanceItemId).filter(Boolean));
+    const options = (workspace?.maintenanceItems || []).filter((item) =>
+      !item.archivedAt && (!assigned.has(item.id) || item.id === row.maintenanceItemId));
+    if (row.maintenanceItemId && !options.some((item) => item.id === row.maintenanceItemId)) {
+      const currentItem = workspace?.maintenanceItemCatalog?.find((item) => item.id === row.maintenanceItemId);
+      if (currentItem) options.push({ ...currentItem, unavailable: true });
+    }
+    return options.sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
+  };
   const confirmationTitle = confirmation?.kind === "completed-delete"
     ? "Queue deletion of this Completed Service record?"
     : confirmation?.kind === "recommended-delete"
     ? "Queue deletion of this Recommended Service record?"
     : confirmation?.kind === "delete"
     ? "Queue deletion of this Ongoing record?"
-    : confirmation?.kind === "maintenance-interval-delete"
-      ? "Delete this Maintenance Interval?"
     : confirmation?.kind === "maintenance-item-archive"
       ? "Archive this Maintenance Item?"
-      : confirmation?.kind === "manage-intervals-close"
-        ? "Discard Maintenance Interval edits?"
-        : confirmation?.kind === "manage-intervals-switch"
-          ? "Discard Maintenance Interval edits and switch?"
-          : confirmation?.kind === "manage-intervals-new"
-            ? "Discard Maintenance Interval edits and start a new interval?"
-            : confirmation?.kind === "manage-intervals-open"
-              ? "Discard Ongoing Maintenance edits and manage Maintenance Intervals?"
-              : confirmation?.kind === "manage-intervals-open-assets"
-                ? "Discard Asset edits and manage Maintenance Intervals?"
-                : confirmation?.kind === "manage-intervals-open-items"
-                  ? "Discard Maintenance Item edits and manage Maintenance Intervals?"
-                  : confirmation?.kind === "manage-intervals-reload"
-                    ? "Discard interval edits and reload the workspace?"
       : confirmation?.kind === "manage-items-close"
         ? "Discard Maintenance Item edits?"
         : confirmation?.kind === "manage-items-switch"
@@ -2014,11 +1870,7 @@ export default function VehiclesPage() {
       ? "Discard changes and switch assets?"
       : confirmation?.kind === "record"
         ? "Discard changes and switch records?"
-        : maintenanceIntervalRetryDraft
-          ? "Maintenance Interval save outcome needs confirmation"
-          : maintenanceIntervalSaving
-            ? "Maintenance Interval save is in progress"
-          : maintenanceItemRetryDraft
+        : maintenanceItemRetryDraft
           ? "Maintenance Item save outcome needs confirmation"
           : maintenanceItemSaving
             ? "Maintenance Item save is in progress"
@@ -2035,7 +1887,7 @@ export default function VehiclesPage() {
             <span className="lm-form-label">Vehicle</span>
             <select id="vehicles-asset-select" className={`lm-form-control ${styles.assetSelectorControl}`}
               value={selectedAssetId}
-              disabled={!assets?.length || saving || saveUncertain || recommendedDirty || completedDirty || keyDirty}
+              disabled={!assets?.length || saving || saveUncertain || dirty}
               onChange={(event) => selectAsset(event.target.value)}>
               {assets?.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
             </select>
@@ -2056,7 +1908,7 @@ export default function VehiclesPage() {
                   setManageMenuOpen(false);
                   openManageAssets();
                 }} disabled={saving || saveUncertain || manageSaving
-                  || maintenanceItemSaving || manageMaintenanceItemsOpen || manageMaintenanceIntervalsOpen}>
+                  || maintenanceItemSaving || manageMaintenanceItemsOpen}>
                 Assets
               </button>
               <button ref={manageMaintenanceItemsButtonRef} type="button" className="lm-button lm-button--secondary"
@@ -2064,16 +1916,14 @@ export default function VehiclesPage() {
                   setManageMenuOpen(false);
                   openManageMaintenanceItems();
                 }} disabled={saving || saveUncertain || manageSaving
-                  || manageRetryDraft || maintenanceItemSaving || manageMaintenanceIntervalsOpen}>
+                  || manageRetryDraft || maintenanceItemSaving}>
                 Maintenance Items
               </button>
-              <button ref={manageMaintenanceIntervalsButtonRef} type="button" className="lm-button lm-button--secondary"
+              <button type="button" className="lm-button lm-button--secondary"
                 onClick={() => {
                   setManageMenuOpen(false);
-                  openManageMaintenanceIntervals();
-                }} disabled={!workspace || workspaceLoading || saving || saveUncertain || manageSaving || manageRetryDraft
-                  || maintenanceItemSaving || maintenanceItemRetryDraft || maintenanceIntervalSaving
-                  || manageMaintenanceIntervalsOpen}>
+                  setActiveSection("intervals");
+                }} disabled={!workspace || saving || saveUncertain}>
                 Maintenance Intervals
               </button>
             </div>
@@ -2089,6 +1939,9 @@ export default function VehiclesPage() {
                 : recommendedActive ? () => setRecommendedEditing(true) : editSelectedRecord}
               disabled={saving || saveUncertain}>Edit</button>
           )}
+          {workspace && intervalsActive && !sessionEditing && <button type="button"
+            className="lm-button lm-button--secondary" onClick={beginMaintenanceIntervalEdit}
+            disabled={saving || saveUncertain}>Edit</button>}
           {workspace && (ongoingActive || recommendedActive || completedActive) && !activeEditing && <button type="button" className="lm-button lm-button--primary"
             onClick={completedActive ? addCompleted : recommendedActive ? addRecommended : addRecord} disabled={saving || saveUncertain}>
             {completedActive ? "Add Completed Service" : recommendedActive ? "Add Recommended Service" : "Add Ongoing Record"}</button>}
@@ -2465,34 +2318,112 @@ export default function VehiclesPage() {
               </section>
             )}
 
-            {activeSection === "intervals" && (
-              <section className={styles.sectionContent} aria-labelledby="vehicles-intervals-section-title">
+            {intervalsActive && (
+              <section className={`${styles.sectionContent} ${styles.intervalSection}`}
+                aria-labelledby="vehicles-intervals-section-title">
                 <div className={styles.sectionHeading}>
-                  <div>
-                    <h2 id="vehicles-intervals-section-title">Maintenance Intervals</h2>
-                    <p>Intervals are specific to {workspace.asset.name}.</p>
-                  </div>
+                  <div><h2 id="vehicles-intervals-section-title">Maintenance Intervals</h2></div>
                   <button type="button" className="lm-button lm-button--secondary"
-                    onClick={openManageMaintenanceIntervals}
-                    disabled={workspaceLoading || saving || saveUncertain || manageSaving || manageRetryDraft
-                      || maintenanceItemSaving || maintenanceItemRetryDraft || maintenanceIntervalSaving
-                      || manageMaintenanceIntervalsOpen}>
-                    Manage Maintenance Intervals
+                    onClick={addMaintenanceInterval} disabled={saving || saveUncertain}>
+                    + New Service
                   </button>
                 </div>
-                {maintenanceIntervals.length === 0
+                {saveError && <div className="lm-feedback lm-feedback--error" role="alert">
+                  <p>{saveError}</p>
+                  {saveUncertain && <button type="button" className="lm-button lm-button--secondary"
+                    onClick={retryUnknownSave} disabled={saving}>Retry same save</button>}
+                </div>}
+                {maintenanceIntervalError && <p className="lm-feedback lm-feedback--error" role="alert">
+                  {maintenanceIntervalError}
+                </p>}
+                {status && <p className="lm-feedback" role="status" aria-live="polite">{status}</p>}
+                {intervalRows.length === 0
                   ? <p className="lm-empty-state">No Maintenance Intervals are set for this asset.</p>
-                  : <ul className={styles.sectionIntervalList} aria-label="Maintenance Intervals for selected asset">
-                    {[...maintenanceIntervals].sort((left, right) =>
-                      left.maintenanceItemName.localeCompare(right.maintenanceItemName)
-                        || left.id.localeCompare(right.id)).map((interval) => (
-                      <li key={interval.id}>
-                        <strong>{interval.maintenanceItemName}</strong>
-                        <span>{interval.recommendedInterval.value} {interval.recommendedInterval.unit}</span>
-                        <span>{maintenanceIntervalSummary(interval)}</span>
-                      </li>
-                    ))}
-                  </ul>}
+                  : <div role="table" aria-label={`Maintenance Intervals for ${workspace.asset.name}`}
+                    className={styles.intervalTable}>
+                    <div role="rowgroup" className={styles.intervalTableHeader}>
+                      <div role="row">
+                        <span role="columnheader">Maintenance Item</span>
+                        <span role="columnheader">Last Service</span>
+                        <span role="columnheader">Recommended Interval</span>
+                        <span role="columnheader">Next Service</span>
+                        <span role="columnheader">Comments</span>
+                        <span role="columnheader" className={styles.intervalActionHeading}>Actions</span>
+                      </div>
+                    </div>
+                    <div role="rowgroup" className={styles.intervalTableBody}>
+                      {[...intervalRows].sort((left, right) => left.maintenanceItemName.localeCompare(right.maintenanceItemName)
+                        || left.id.localeCompare(right.id)).map((interval) => {
+                        const last = lastServiceLabel(interval.lastService);
+                        const next = nextServiceLabel(interval);
+                        const editable = sessionEditing;
+                        return <div key={interval.id} role="row"
+                          className={`${styles.intervalRow} ${interval.action !== "saved" ? styles.intervalRowPending : ""}`}>
+                          <div role="cell" className={styles.intervalItemCell}>
+                            <span className={styles.intervalMobileLabel}>Maintenance Item</span>
+                            {editable ? <select id={`vehicles-maintenance-interval-item-${interval.id}`}
+                              className="lm-form-control" aria-label={`Maintenance Item ${interval.id}`}
+                              value={interval.maintenanceItemId} disabled={saving || saveUncertain}
+                              onChange={(event) => updateMaintenanceIntervalRow(interval,
+                                { maintenanceItemId: event.target.value })}>
+                              <option value="">Choose a Maintenance Item</option>
+                              {intervalOptionsFor(interval).map((item) => <option key={item.id} value={item.id}
+                                disabled={item.unavailable}>{item.displayName}{item.unavailable ? " (unavailable)" : ""}</option>)}
+                            </select> : <strong>{interval.maintenanceItemName}</strong>}
+                          </div>
+                          <div role="cell" className={styles.intervalServiceCell}>
+                            <span className={styles.intervalMobileLabel}>Last Service</span>
+                            <span>{last.value}</span>
+                            {last.detail && <small>{last.detail}</small>}
+                          </div>
+                          <div role="cell" className={styles.intervalRecommendedCell}>
+                            <span className={styles.intervalMobileLabel}>Recommended Interval</span>
+                            {editable ? <div className={styles.intervalRecommendedControls}>
+                              <input id={`vehicles-maintenance-interval-value-${interval.id}`}
+                                className="lm-form-control" type="number" min="0.01" max="9999999999.99"
+                                step={interval.intervalUnit === "months" ? "1" : "0.01"}
+                                aria-label={`Interval value ${interval.maintenanceItemName}`}
+                                aria-invalid={Boolean(maintenanceIntervalError)} value={interval.intervalValue}
+                                disabled={saving || saveUncertain}
+                                onChange={(event) => updateMaintenanceIntervalRow(interval,
+                                  { intervalValue: event.target.value })} />
+                              <select id={`vehicles-maintenance-interval-unit-${interval.id}`}
+                                className="lm-form-control" aria-label={`Interval unit ${interval.maintenanceItemName}`}
+                                value={interval.intervalUnit} disabled={saving || saveUncertain}
+                                onChange={(event) => updateMaintenanceIntervalRow(interval,
+                                  { intervalUnit: event.target.value })}>
+                                <option value="miles">Miles</option>
+                                <option value="hours">Hours</option>
+                                <option value="months">Months</option>
+                              </select>
+                            </div> : <span>{interval.recommendedInterval.value.toLocaleString()} {interval.recommendedInterval.unit}</span>}
+                          </div>
+                          <div role="cell" className={styles.intervalServiceCell}>
+                            <span className={styles.intervalMobileLabel}>Next Service</span>
+                            <span>{next.value}</span>
+                            {next.detail && <small>{next.detail}</small>}
+                          </div>
+                          <div role="cell" className={styles.intervalCommentsCell}>
+                            <span className={styles.intervalMobileLabel}>Comments</span>
+                            {editable ? <textarea id={`vehicles-maintenance-interval-comments-${interval.id}`}
+                              className="lm-form-control" aria-label={`Comments ${interval.maintenanceItemName}`}
+                              rows="2" maxLength="2000" value={interval.comments}
+                              disabled={saving || saveUncertain}
+                              onChange={(event) => updateMaintenanceIntervalRow(interval,
+                                { comments: event.target.value })} />
+                              : <span>{interval.comments || "—"}</span>}
+                          </div>
+                          <div role="cell" className={styles.intervalActionCell}>
+                            {editable && <button type="button" className="lm-button lm-button--secondary"
+                              aria-label={`Remove Service ${interval.maintenanceItemName}`}
+                              disabled={saving || saveUncertain} onClick={() => removeMaintenanceInterval(interval)}>
+                              Remove
+                            </button>}
+                          </div>
+                        </div>;
+                      })}
+                    </div>
+                  </div>}
               </section>
             )}
 
@@ -2814,196 +2745,6 @@ export default function VehiclesPage() {
         )}
       </dialog>
 
-      <dialog ref={maintenanceIntervalsDialogRef}
-        className={`${styles.dialog} ${styles.maintenanceIntervalsDialog}`}
-        aria-labelledby="vehicles-manage-intervals-title" onCancel={(event) => {
-          event.preventDefault();
-          requestCloseManageMaintenanceIntervals();
-        }}>
-        <div className={styles.detailHeading}>
-          <div>
-            <h2 id="vehicles-manage-intervals-title">Manage Maintenance Intervals</h2>
-            <p>Intervals are specific to {workspace?.asset.name || "the selected asset"}.</p>
-          </div>
-          <button type="button" className="lm-button lm-button--secondary"
-            onClick={requestCloseManageMaintenanceIntervals} disabled={maintenanceIntervalSaving}
-            aria-label="Close Manage Maintenance Intervals">Close</button>
-        </div>
-
-        {maintenanceIntervalsLoading && <p className="lm-loading-state" role="status">Loading Maintenance Intervals...</p>}
-        <div className={styles.maintenanceIntervalManager}>
-          <section aria-label="Maintenance Interval list">
-            <div className={styles.sectionHeading}>
-              <h3>Intervals</h3>
-              <button ref={maintenanceIntervalsAddButtonRef} type="button" className="lm-button lm-button--secondary"
-                onClick={startNewMaintenanceInterval}
-                disabled={maintenanceIntervalSaving || Boolean(maintenanceIntervalRetryDraft)
-                  || maintenanceIntervalNeedsReload || maintenanceIntervalsLoading}>
-                Add Maintenance Interval
-              </button>
-            </div>
-            {maintenanceIntervals.length === 0
-              ? <p className="lm-empty-state">No Maintenance Intervals are set for this asset.</p>
-              : <ul className={styles.maintenanceIntervalList} aria-label="Saved Maintenance Intervals">
-                {[...maintenanceIntervals].sort((left, right) =>
-                  left.maintenanceItemName.localeCompare(right.maintenanceItemName)
-                    || left.id.localeCompare(right.id)).map((interval) => (
-                  <li key={interval.id}>
-                    <button type="button"
-                      className={`${styles.managedAsset} ${selectedMaintenanceIntervalId === interval.id
-                        ? styles.managedAssetSelected : ""}`}
-                      aria-pressed={selectedMaintenanceIntervalId === interval.id}
-                      onClick={() => selectMaintenanceInterval(interval.id)}
-                      disabled={maintenanceIntervalSaving || Boolean(maintenanceIntervalRetryDraft)
-                        || maintenanceIntervalNeedsReload}>
-                      <strong>{interval.maintenanceItemName}</strong>
-                      <span>{interval.recommendedInterval.value} {interval.recommendedInterval.unit}
-                        {" · "}{maintenanceIntervalSummary(interval)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>}
-          </section>
-
-          {maintenanceIntervalDraft ? (
-            <form className={styles.maintenanceIntervalForm} onSubmit={saveMaintenanceInterval} noValidate>
-              <h3>{maintenanceIntervalDraft.operation === "create"
-                ? "New Maintenance Interval" : "Edit Maintenance Interval"}</h3>
-              <label className="lm-form-field" htmlFor="vehicles-maintenance-interval-item">
-                <span className="lm-form-label">Maintenance Item</span>
-                <select ref={maintenanceIntervalItemRef} id="vehicles-maintenance-interval-item"
-                  className="lm-form-control" required value={maintenanceIntervalDraft.maintenanceItemId}
-                  aria-invalid={Boolean(maintenanceIntervalError && !intervalDraftItemAvailable)}
-                  aria-describedby={maintenanceIntervalError ? "vehicles-maintenance-interval-error" : undefined}
-                  onChange={(event) => updateMaintenanceIntervalDraft({ maintenanceItemId: event.target.value })}
-                  disabled={maintenanceIntervalSaving || Boolean(maintenanceIntervalRetryDraft)
-                    || maintenanceIntervalNeedsReload}>
-                  <option value="">Choose an applicable Maintenance Item</option>
-                  {selectableMaintenanceItems.map((item) => (
-                    <option key={item.id} value={item.id}>{item.displayName}</option>
-                  ))}
-                </select>
-              </label>
-              {maintenanceIntervalDraft.operation === "update" && !intervalDraftItemAvailable && (
-                <p className="lm-feedback lm-feedback--error" role="alert">
-                  The linked Maintenance Item is not currently active and applicable. Reload to resolve the conflict;
-                  the interval has not been changed.
-                </p>
-              )}
-              {selectableMaintenanceItems.length === 0 && (
-                <p className="lm-empty-state">No active, applicable Maintenance Items are available without an existing interval.</p>
-              )}
-              <label className="lm-form-field" htmlFor="vehicles-maintenance-interval-value">
-                <span className="lm-form-label">Interval value</span>
-                <input id="vehicles-maintenance-interval-value" className="lm-form-control" type="number"
-                  required min="0.01" max="9999999999.99"
-                  step={maintenanceIntervalDraft.intervalUnit === "months" ? "1" : "0.01"}
-                  value={maintenanceIntervalDraft.intervalValue}
-                  aria-invalid={Boolean(maintenanceIntervalError
-                    && (!Number.isFinite(Number(maintenanceIntervalDraft.intervalValue))
-                      || Number(maintenanceIntervalDraft.intervalValue) <= 0
-                      || (maintenanceIntervalDraft.intervalUnit === "months"
-                        && !Number.isInteger(Number(maintenanceIntervalDraft.intervalValue)))))}
-                  aria-describedby={maintenanceIntervalError ? "vehicles-maintenance-interval-error" : undefined}
-                  onChange={(event) => updateMaintenanceIntervalDraft({ intervalValue: event.target.value })}
-                  disabled={maintenanceIntervalSaving || Boolean(maintenanceIntervalRetryDraft)
-                    || maintenanceIntervalNeedsReload} />
-              </label>
-              <label className="lm-form-field" htmlFor="vehicles-maintenance-interval-unit">
-                <span className="lm-form-label">Interval unit</span>
-                <select id="vehicles-maintenance-interval-unit" className="lm-form-control"
-                  value={maintenanceIntervalDraft.intervalUnit}
-                  aria-describedby={maintenanceIntervalError ? "vehicles-maintenance-interval-error" : undefined}
-                  onChange={(event) => updateMaintenanceIntervalDraft({
-                    intervalUnit: event.target.value,
-                  })}
-                  disabled={maintenanceIntervalSaving || Boolean(maintenanceIntervalRetryDraft)
-                    || maintenanceIntervalNeedsReload}>
-                  <option value="miles">Miles</option>
-                  <option value="hours">Hours</option>
-                  <option value="months">Months</option>
-                </select>
-              </label>
-              <p className="lm-feedback" role="status">
-                Asset Usage Unit: {workspace.asset.usageUnit}. Usage intervals are compared with the qualifying
-                service reading; month intervals use service dates.
-              </p>
-              <label className="lm-form-field" htmlFor="vehicles-maintenance-interval-comments">
-                <span className="lm-form-label">Comments</span>
-                <textarea id="vehicles-maintenance-interval-comments" className="lm-form-control"
-                  maxLength="2000" rows="4" value={maintenanceIntervalDraft.comments}
-                  aria-describedby={maintenanceIntervalError ? "vehicles-maintenance-interval-error" : undefined}
-                  onChange={(event) => updateMaintenanceIntervalDraft({ comments: event.target.value })}
-                  disabled={maintenanceIntervalSaving || Boolean(maintenanceIntervalRetryDraft)
-                    || maintenanceIntervalNeedsReload} />
-              </label>
-              {maintenanceIntervalError && <p id="vehicles-maintenance-interval-error"
-                className="lm-feedback lm-feedback--error" role="alert">{maintenanceIntervalError}</p>}
-              {maintenanceIntervalStatus && <p className="lm-feedback" role="status" aria-live="polite">
-                {maintenanceIntervalStatus}
-              </p>}
-              {maintenanceIntervalNeedsReload && <div className="lm-feedback" role="status" aria-live="polite">
-                <p>Reload the workspace before resuming interval changes.</p>
-                <button type="button" className="lm-button lm-button--secondary"
-                  onClick={requestReloadMaintenanceIntervals} disabled={maintenanceIntervalsLoading}>
-                  Reload workspace
-                </button>
-              </div>}
-              <div className={styles.dialogActions}>
-                <button type="button" className="lm-button lm-button--secondary"
-                  onClick={cancelMaintenanceIntervalDraft}
-                  disabled={maintenanceIntervalSaving || Boolean(maintenanceIntervalRetryDraft)}>
-                  Cancel
-                </button>
-                {maintenanceIntervalRetryDraft && <button type="button" className="lm-button lm-button--secondary"
-                  onClick={retryMaintenanceIntervalSave} disabled={maintenanceIntervalSaving}>
-                  Retry same request
-                </button>}
-                {maintenanceIntervalDraft.operation === "update" && (
-                  <button type="button" className="lm-button lm-button--danger"
-                    onClick={() => requestDeleteMaintenanceInterval(maintenanceIntervalBaseline)}
-                    disabled={maintenanceIntervalDirty || maintenanceIntervalSaving
-                      || Boolean(maintenanceIntervalRetryDraft) || maintenanceIntervalNeedsReload}>
-                    Delete Maintenance Interval
-                  </button>
-                )}
-                <button type="submit" className="lm-button lm-button--primary"
-                  disabled={!maintenanceIntervalDirty || maintenanceIntervalSaving
-                    || Boolean(maintenanceIntervalRetryDraft) || maintenanceIntervalNeedsReload}>
-                  {maintenanceIntervalSaving ? "Saving..." : "Save"}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <section className={`lm-surface ${styles.maintenanceItemReadOnly}`}>
-              <h3>{selectedMaintenanceInterval ? selectedMaintenanceInterval.maintenanceItemName
-                : "Select or add a Maintenance Interval"}</h3>
-              {selectedMaintenanceInterval && (
-                <>
-                  <p>{selectedMaintenanceInterval.recommendedInterval.value}{" "}
-                    {selectedMaintenanceInterval.recommendedInterval.unit}</p>
-                  <p>{maintenanceIntervalSummary(selectedMaintenanceInterval)}</p>
-                  {selectedMaintenanceInterval.comments && <p>{selectedMaintenanceInterval.comments}</p>}
-                </>
-              )}
-              {!selectedMaintenanceInterval && (
-                <p>Edits remain local until saved. Intervals do not modify service history or Maintenance Items.</p>
-              )}
-              {maintenanceIntervalError && <p className="lm-feedback lm-feedback--error" role="alert">
-                {maintenanceIntervalError}
-              </p>}
-              {maintenanceIntervalStatus && <p className="lm-feedback" role="status" aria-live="polite">
-                {maintenanceIntervalStatus}
-              </p>}
-              {maintenanceIntervalNeedsReload && <button type="button" className="lm-button lm-button--secondary"
-                onClick={requestReloadMaintenanceIntervals} disabled={maintenanceIntervalsLoading}>
-                Reload workspace
-              </button>}
-            </section>
-          )}
-        </div>
-      </dialog>
-
       <dialog ref={dialogRef} className={styles.dialog} aria-labelledby="vehicles-confirm-title"
         onCancel={(event) => {
           event.preventDefault();
@@ -3015,12 +2756,6 @@ export default function VehiclesPage() {
           ? "The record will be removed from the draft and deleted only after Save Changes."
           : confirmation?.kind === "maintenance-item-archive"
             ? "The item will be archived, not deleted. It remains available to historical records and is excluded from future Ongoing drafts."
-          : confirmation?.kind === "maintenance-interval-delete"
-            ? "This interval will be permanently removed for the selected asset. No Maintenance Item or service history will be changed."
-          : confirmation?.kind === "manage-intervals-reload"
-            ? "The current interval draft will be discarded so the latest saved versions and item availability can be loaded."
-          : confirmation?.kind?.startsWith("manage-intervals")
-            ? "Unsaved Maintenance Interval values will be discarded only if you choose the discard action. No interval is saved automatically."
           : confirmation?.kind === "manage-items-open"
             ? "Unsaved Ongoing Maintenance edits will be discarded only if you choose the discard action. No item is saved automatically."
           : confirmation?.kind === "manage-items-open-assets"
@@ -3040,31 +2775,26 @@ export default function VehiclesPage() {
               if (blocker.state === "blocked" && !confirmation) blocker.reset();
               else setConfirmation(null);
             }}>Stay</button>
-          {(["delete", "recommended-delete", "completed-delete"].includes(confirmation?.kind) || confirmation?.kind === "maintenance-item-archive"
-            || confirmation?.kind === "maintenance-interval-delete") && (
+          {(["delete", "recommended-delete", "completed-delete"].includes(confirmation?.kind)
+            || confirmation?.kind === "maintenance-item-archive") && (
             <button type="button" className={`lm-button lm-button--danger ${styles.archiveAction}`}
               aria-label={["delete", "recommended-delete", "completed-delete"].includes(confirmation.kind) ? "Queue Delete"
-                : confirmation.kind === "maintenance-interval-delete"
-                  ? "Delete Maintenance Interval" : "Archive Maintenance Item"}
+                : "Archive Maintenance Item"}
               onClick={finishConfirmation}>
               {["delete", "recommended-delete", "completed-delete"].includes(confirmation.kind) ? "Queue Delete"
-                : confirmation.kind === "maintenance-interval-delete"
-                  ? "Delete Maintenance Interval" : "Archive Maintenance Item"}
+                : "Archive Maintenance Item"}
             </button>
           )}
-          {confirmation && !["delete", "recommended-delete", "completed-delete", "maintenance-item-archive", "maintenance-interval-delete"].includes(confirmation.kind)
+          {confirmation && !["delete", "recommended-delete", "completed-delete", "maintenance-item-archive"].includes(confirmation.kind)
             && !saveUncertain && !saving
             && !maintenanceItemSaving && !maintenanceItemRetryDraft
-            && !maintenanceIntervalSaving && !maintenanceIntervalRetryDraft && <button type="button"
+            && <button type="button"
               className="lm-button lm-button--danger" onClick={finishConfirmation}>
-              {["manage-items-close", "manage-items-switch", "manage-items-new",
-                "manage-intervals-close", "manage-intervals-switch", "manage-intervals-new",
-                "manage-intervals-reload"].includes(confirmation.kind)
+              {["manage-items-close", "manage-items-switch", "manage-items-new"].includes(confirmation.kind)
                 ? "Discard edits" : "Discard and continue"}
             </button>}
           {blocker.state === "blocked" && !confirmation && !saving && !saveUncertain
             && !maintenanceItemSaving && !maintenanceItemRetryDraft
-            && !maintenanceIntervalSaving && !maintenanceIntervalRetryDraft
             && <button type="button" className="lm-button lm-button--danger" onClick={handleRouteDiscard}>
               Discard changes
             </button>}

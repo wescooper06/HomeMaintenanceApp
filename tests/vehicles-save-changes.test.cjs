@@ -347,6 +347,78 @@ test("asset and child-only writes increment the aggregate revision once; stale s
   assert.equal(await scalar("select version from public.vehicles_assets where id=$1", [assetId]), 2);
 });
 
+test("mixed history, Key Information, and interval changes use one atomic request and exact replay", async () => {
+  const assetId = await asset();
+  const itemId = await catalogItem(ownerA, "Synthetic combined interval item");
+  const ongoingId = uuid();
+  const recommendedId = uuid();
+  const completedId = uuid();
+  const intervalId = uuid();
+  const keyId = uuid();
+  const payload = request(assetId, {
+    ongoing_operations: [{
+      action: "create", id: ongoingId, service_date: "2026-03-01",
+      usage_reading_unit: "miles", usage_reading_value: 100,
+      items: [ongoingItem(itemId, true, "Synthetic combined interval item")],
+    }],
+    recommended_operations: [{
+      action: "create", id: recommendedId, service_date: "2026-03-02",
+      usage_reading_unit: "none", description: "Synthetic recommendation",
+    }],
+    completed_operations: [{
+      action: "create", id: completedId, service_date: "2026-03-03",
+      usage_reading_unit: "none", service_description: "Synthetic completed work",
+    }],
+    key_information_operation: {
+      action: "create", id: keyId, document: { schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "Synthetic key note" }] }] },
+    },
+    interval_operations: [{
+      action: "create", id: intervalId, maintenance_item_id: itemId,
+      interval_value: 5000, interval_unit: "miles", comments: "Synthetic interval",
+    }],
+  });
+  const saved = await save(payload);
+  assert.equal(saved.replayed, false);
+  assert.deepEqual(saved.created_ids.intervals, [intervalId]);
+  assert.equal(saved.entity_versions.intervals[intervalId], 1);
+  assert.equal(saved.entity_versions.ongoing[ongoingId], 1);
+  assert.equal(saved.entity_versions.recommended[recommendedId], 1);
+  assert.equal(saved.entity_versions.completed[completedId], 1);
+  assert.equal(saved.entity_versions.key_information[keyId], 1);
+  assert.equal(await scalar("select version from public.vehicles_assets where id=$1", [assetId]), 2);
+
+  const replay = await save(payload);
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.created_ids.intervals, [intervalId]);
+  assert.equal(await scalar("select count(*) from public.vehicle_maintenance_intervals where asset_id=$1", [assetId]), 1);
+  assert.equal(await scalar("select count(*) from public.vehicle_ongoing_records where asset_id=$1", [assetId]), 1);
+  assert.equal(await scalar("select count(*) from public.vehicle_recommended_records where asset_id=$1", [assetId]), 1);
+  assert.equal(await scalar("select count(*) from public.vehicle_completed_records where asset_id=$1", [assetId]), 1);
+  assert.equal(await scalar("select count(*) from public.vehicle_key_information where asset_id=$1", [assetId]), 1);
+});
+
+test("mixed interval and Ongoing request rolls back every collection on a later duplicate service date", async () => {
+  const assetId = await asset();
+  const itemId = await catalogItem(ownerA, "Synthetic rollback interval item");
+  const intervalId = uuid();
+  const serviceDate = "2026-04-04";
+  await expectCode(request(assetId, {
+    ongoing_operations: [
+      { action: "create", id: uuid(), service_date: serviceDate, usage_reading_unit: "none",
+        items: [ongoingItem(itemId, false, "Synthetic rollback interval item")] },
+      { action: "create", id: uuid(), service_date: serviceDate, usage_reading_unit: "none",
+        items: [ongoingItem(itemId, false, "Synthetic rollback interval item")] },
+    ],
+    interval_operations: [{
+      action: "create", id: intervalId, maintenance_item_id: itemId,
+      interval_value: 500, interval_unit: "miles",
+    }],
+  }), "duplicate_service_date");
+  assert.equal(await scalar("select count(*) from public.vehicle_maintenance_intervals where id=$1", [intervalId]), 0);
+  assert.equal(await scalar("select count(*) from public.vehicle_ongoing_records where asset_id=$1", [assetId]), 0);
+  assert.equal(await scalar("select version from public.vehicles_assets where id=$1", [assetId]), 1);
+});
+
 test("stale entity versions reject across every versioned child collection", async () => {
   const assetId = await asset();
   const itemId = uuid();
