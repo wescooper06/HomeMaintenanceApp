@@ -213,6 +213,102 @@
   color: var(--lm-color-text-secondary);
 }
 
+.keyRegions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
+  gap: var(--lm-space-4);
+  height: max(22rem, calc(100dvh - 23rem));
+}
+
+.keyPanel,
+.keyEditor {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--lm-space-2);
+}
+
+.keyPanel {
+  border: 1px solid var(--lm-color-border);
+  padding: var(--lm-space-3);
+  background: var(--lm-color-surface);
+}
+
+.keyPanel h3 {
+  margin: 0;
+  font-size: var(--lm-font-secondary);
+}
+
+.keyEditor,
+.keyScroll,
+.keyDocument {
+  flex: 1;
+  min-height: 0;
+}
+
+.keyDocument,
+.keyScroll {
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.keyDocument {
+  border: 1px solid var(--lm-color-border);
+  padding: var(--lm-space-3);
+  white-space: pre-wrap;
+}
+
+.keyDocument p,
+.keyDocument ul {
+  margin: 0 0 var(--lm-space-3);
+}
+
+.keyDocument ul {
+  padding-inline-start: var(--lm-space-4);
+}
+
+.keyLink a {
+  color: var(--lm-color-primary);
+}
+
+.keyDocument:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
+.keyReadOnly {
+  border: 0;
+  padding: 0;
+}
+
+.keyFormatting,
+.keyLinksHeading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--lm-space-2);
+}
+
+.keyLinksHeading {
+  justify-content: space-between;
+}
+
+.keyLinkEditor {
+  display: grid;
+  gap: var(--lm-space-2);
+  border-bottom: 1px solid var(--lm-color-border);
+  padding-block: var(--lm-space-3);
+}
+
+.keyLinkEditor button {
+  justify-self: end;
+}
+
+.keyLink {
+  margin: var(--lm-space-2) 0 var(--lm-space-4);
+}
+
 .sectionIntervalList {
   display: grid;
   min-width: 0;
@@ -841,6 +937,20 @@
 }
 
 @media (max-width: 600px) {
+  .keyRegions {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .keyDocument {
+    min-height: 18rem;
+  }
+
+  .keyReadOnly,
+  .keyScroll {
+    overflow-y: visible;
+  }
+
   .descriptionBullets {
     min-height: var(--lm-control-mobile);
   }

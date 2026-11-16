@@ -59,6 +59,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 let compiled;
 let bulletTransform;
+let keyDocumentHelpers;
 test.before(async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
   const file = path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx");
@@ -69,6 +70,7 @@ test.before(async () => {
     jsx: { runtime: "classic", pragma: "element", pragmaFrag: "fragment" },
   })).code;
   bulletTransform = vm.runInNewContext(`(() => { ${compiled}; return toggleDescriptionBullets; })()`);
+  keyDocumentHelpers = vm.runInNewContext(`(() => { ${compiled}; return { readKeyDocument, keyDocumentLength }; })()`);
 });
 
 function harness(overrides = {}) {
@@ -246,6 +248,9 @@ function harness(overrides = {}) {
     element: (type, props, ...children) => {
       const renderedChildren = (children.length ? children : [props?.children]).flat(Infinity)
         .filter((child) => child !== null && child !== undefined && child !== false);
+      if (typeof type === "function" && type.name === "KeyDocumentEditor") {
+        return { type: "KeyDocumentEditor", props, children: [] };
+      }
       if (typeof type === "function") return type({ ...props, children: renderedChildren });
       if (type === "details" && String(props?.className).includes("pageManageActions") && props.ref) {
         props.ref.current = { contains: (target) => target === "inside-manage" };
@@ -258,6 +263,9 @@ function harness(overrides = {}) {
     }),
     MoreHorizontal: (props) => ({ type: "svg", props: props || {}, children: [] }),
     List: (props) => ({ type: "svg", props: props || {}, children: [] }),
+    Bold: (props) => ({ type: "svg", props: props || {}, children: [] }),
+    resolveLinkTitle: overrides.resolveLinkTitle || (async (url) => ({ url, title: url })),
+    URL,
     styles: new Proxy({}, { get: (_target, key) => String(key) }),
     vehiclesService: service,
     createVehicleChangesDraft: (...args) => service.createVehicleChangesDraft(...args),
@@ -1271,7 +1279,7 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
     assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
     assert.match(ui.text(panel), expectedId === "recommended"
       ? /No recommended service recorded for this asset/ : expectedId === "completed"
-        ? /No completed service recorded for this asset/ : /not yet available/);
+        ? /No completed service recorded for this asset/ : /No key maintenance information recorded for this asset/);
     assert.equal(ui.calls.saves.length, 0);
     assert.equal(ui.calls.workspaces.length, workspacesBefore);
     assert.equal(ui.button("Discard and continue"), undefined);
@@ -2399,6 +2407,491 @@ test("Completed saved bullet text reopens exactly, cancels cleanly, and produces
   await ui.settle();
   assert.deepEqual(ui.calls.saves[0].completedOperations, [{ action: "update", id: uuid(701), expectedVersion: 7,
     serviceDescription: expected }]);
+});
+
+const keyDocumentFixture = () => ({ schemaVersion: 1, blocks: [
+  { type: "paragraph", runs: [{ text: "Oil & filter", bold: true }, { text: "", bold: false }] },
+  { type: "paragraph", runs: [] },
+  { type: "bullet_list", items: [
+    [{ text: "Use ", bold: false }, { text: "5W-30", bold: true }, { text: " full synthetic" }],
+    [], [{ text: "Replace the filter at every oil change" }],
+  ] },
+  { type: "paragraph", runs: [{ text: "Notes\nKeep service receipts.", bold: false }] },
+] });
+const keyNotes = (document = keyDocumentFixture()) => ({ id: uuid(801), document, version: 4 });
+const keyLink = (id = 851, overrides = {}) => ({ id: uuid(id), url: "https://example.test/manual",
+  displayTitle: "Owner manual", sortOrder: 5, version: 3, ...overrides });
+function keyHarness(notes = null, links = [], overrides = {}) {
+  return harness({ loadVehicleWorkspace: async () => ({ ...workspace(assets[0], [record(12, "2023-02-27")]),
+    keyInformation: notes, links }), ...overrides });
+}
+function openKeyInformation(ui) {
+  ui.find((node) => node.props?.["data-vehicles-section"] === "key-information").props.onClick();
+  ui.render();
+}
+function keyEditor(ui) { return ui.find((node) => node.type === "KeyDocumentEditor"); }
+function keyDomElement(name, children = [], style = {}) {
+  const node = { nodeType: 1, nodeName: name.toUpperCase(), style, childNodes: children,
+    children: children.filter((child) => child.nodeType === 1) };
+  for (const child of children) child.parentNode = node;
+  return node;
+}
+function keyDomText(text) { return { nodeType: 3, textContent: text }; }
+function keyDocumentDom(document) {
+  const runs = (values) => values.map((run) => keyDomElement(run.bold ? "strong" : "span", [keyDomText(run.text)]));
+  return keyDomElement("div", document.blocks.map((block) => block.type === "paragraph"
+    ? keyDomElement("p", runs(block.runs))
+    : keyDomElement("ul", block.items.map((entry) => keyDomElement("li", runs(entry))))));
+}
+
+test("Key Information empty state is a singleton asset view with no history, Delete Record, or automatic creation", async () => {
+  const ui = keyHarness();
+  await ui.settle();
+  openKeyInformation(ui);
+  assert.match(ui.text(), /No key maintenance information recorded for this asset/);
+  assert.match(ui.text(), /No links recorded for this asset/);
+  assert(ui.button("Add Key Information"));
+  assert.equal(ui.button("Delete Record"), undefined);
+  assert.equal(ui.input("vehicles-completed-record"), undefined);
+  assert.equal(keyEditor(ui), undefined);
+  ui.button("Add Key Information").props.onClick();
+  ui.render();
+  assert.equal(JSON.stringify(keyEditor(ui).props.value), JSON.stringify({ schemaVersion: 1, blocks: [] }));
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  await ui.button("Save Changes").props.onClick();
+  assert.equal(ui.calls.saves.length, 0);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(keyEditor(ui), undefined);
+});
+
+test("Key Information renders only schema paragraphs, structured bullets, bold runs, and safe clickable titles", async () => {
+  const ui = keyHarness(keyNotes(), [keyLink(), keyLink(852, { displayTitle: null, sortOrder: 8 })]);
+  await ui.settle();
+  openKeyInformation(ui);
+  assert.match(ui.text(), /Key Maintenance Information/);
+  assert.match(ui.text(), /Links & References/);
+  assert(ui.nodes().some((node) => node.type === "strong" && ui.text(node) === "Oil & filter"));
+  assert(ui.nodes().some((node) => node.type === "strong" && ui.text(node) === "5W-30"));
+  assert.equal(ui.nodes().filter((node) => node.type === "ul").length, 1);
+  assert.equal(ui.nodes().filter((node) => node.type === "li").length, 3);
+  const anchors = ui.nodes().filter((node) => node.type === "a");
+  assert.deepEqual(anchors.map((node) => ui.text(node)), ["Owner manual", "example.test"]);
+  assert(anchors.every((node) => node.props.rel === "noopener noreferrer"));
+  assert.equal(ui.button("Delete Record"), undefined);
+  assert.equal(keyEditor(ui), undefined);
+});
+
+test("Key Information document-to-editor serialization is exact for paragraphs, lists, empty items and optional bold flags", () => {
+  for (const original of [keyDocumentFixture(), { schemaVersion: 1, blocks: [] },
+    { schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "", bold: false }] }] }]) {
+    const restored = keyDocumentHelpers.readKeyDocument(keyDocumentDom(original), original);
+    assert.equal(JSON.stringify(restored), JSON.stringify(original));
+  }
+  const original = keyDocumentFixture();
+  const dom = keyDocumentDom(original);
+  dom.childNodes[0] = keyDomElement("p", [keyDomText("Oil & "), keyDomElement("b", [keyDomText("filter")])]);
+  const modified = keyDocumentHelpers.readKeyDocument(dom, original);
+  assert.equal(modified.blocks[0].runs[1].bold, true);
+  assert.equal(modified.blocks[0].runs[1].text, "filter");
+  assert.equal(JSON.stringify(modified.blocks.slice(1)), JSON.stringify(original.blocks.slice(1)));
+});
+
+test("Key Information native list and bold DOM map to schema-v1, including bold removal and clearing", () => {
+  const empty = { schemaVersion: 1, blocks: [] };
+  const dom = keyDomElement("div", [keyDomElement("p", [keyDomText("Before")]),
+    keyDomElement("ul", [keyDomElement("li", [keyDomText("List "), keyDomElement("strong", [keyDomText("bold")])]),
+      keyDomElement("li", [keyDomText("Second")])]), keyDomElement("p", [keyDomText("After")])]);
+  const value = keyDocumentHelpers.readKeyDocument(dom, empty);
+  assert.equal(value.blocks[1].type, "bullet_list");
+  assert.equal(value.blocks[1].items[0][1].bold, true);
+  assert.equal(value.blocks[2].runs[0].text, "After");
+  const unbold = keyDomElement("div", [keyDomElement("p", [keyDomElement("strong", [
+    keyDomText("Still "), keyDomElement("span", [keyDomText("not bold")], { fontWeight: "normal" }),
+  ])])]);
+  const removed = keyDocumentHelpers.readKeyDocument(unbold, empty);
+  assert.equal(removed.blocks[0].runs[0].bold, true);
+  assert.equal(removed.blocks[0].runs[1].bold, undefined);
+  const cleared = keyDocumentHelpers.readKeyDocument(keyDomElement("div", [keyDomElement("p", [keyDomElement("br")])]), value);
+  assert.equal(JSON.stringify(cleared), JSON.stringify(empty));
+});
+
+test("Key Information unchanged Edit is an exact no-op; link-only changes do not rewrite the document", async () => {
+  const notes = keyNotes();
+  const ui = keyHarness(notes, [keyLink()]);
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(JSON.stringify(keyEditor(ui).props.value), JSON.stringify(notes.document));
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  await ui.button("Save Changes").props.onClick();
+  assert.equal(ui.calls.saves.length, 0);
+  ui.input(`vehicles-key-title-${uuid(851)}`).props.onChange({ target: { value: "Updated title" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves[0].keyInformationOperation, null);
+  assert.deepEqual(ui.calls.saves[0].linkOperations, [{ action: "update", id: uuid(851), expectedVersion: 3,
+    displayTitle: "Updated title" }]);
+});
+
+test("Key Information creates one exact structured document and untouched collections emit nothing", async () => {
+  const ui = keyHarness();
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Add Key Information").props.onClick();
+  ui.render();
+  keyEditor(ui).props.onChange(keyDocumentFixture());
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  const request = ui.calls.saves[0];
+  assert.equal(request.assetId, uuid(1));
+  assert.equal(request.expectedAssetVersion, 4);
+  assert.deepEqual(request.keyInformationOperation, { action: "create", id: uuid(900), document: keyDocumentFixture() });
+  for (const field of ["ongoingOperations", "recommendedOperations", "completedOperations", "intervalOperations", "linkOperations"]) {
+    assert.deepEqual(request[field], []);
+  }
+});
+
+test("Key Information updates and clears through the existing versioned empty-document path without Delete Record", async () => {
+  const ui = keyHarness(keyNotes());
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  keyEditor(ui).props.onChange({ schemaVersion: 1, blocks: [] });
+  ui.render();
+  assert.equal(ui.button("Delete Record"), undefined);
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].keyInformationOperation, { action: "update", id: uuid(801), expectedVersion: 4,
+    document: { schemaVersion: 1, blocks: [] } });
+});
+
+test("Key Information links can exist independently, append in order, and remove using stable versions", async () => {
+  const ui = keyHarness(null, [keyLink(851, { sortOrder: 7 })]);
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.button("Add Link").props.onClick();
+  ui.render();
+  ui.input(`vehicles-key-url-${uuid(901)}`).props.onChange({ target: { value: "https://example.test/new" } });
+  ui.input(`vehicles-key-title-${uuid(901)}`).props.onChange({ target: { value: "New manual" } });
+  ui.render();
+  ui.find((node) => node.props?.["aria-label"] === "Remove link Owner manual").props.onClick();
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves[0].keyInformationOperation, null);
+  assert.deepEqual(ui.calls.saves[0].linkOperations, [
+    { action: "create", id: uuid(901), url: "https://example.test/new", displayTitle: "New manual", sortOrder: 8 },
+    { action: "delete", id: uuid(851), expectedVersion: 3 },
+  ]);
+});
+
+test("Key Information URL/title validation follows the committed HTTPS and length rules", async () => {
+  for (const url of ["http://example.test", "javascript:alert(1)", "/relative", "https://user:pass@example.test",
+    "https://example.test\\@evil.test", " https://example.test", "https://example.test/\u0001", "https://example.test/" + "x".repeat(2048)]) {
+    const ui = keyHarness(null, [keyLink()]);
+    await ui.settle();
+    openKeyInformation(ui);
+    ui.button("Edit").props.onClick();
+    ui.render();
+    ui.input(`vehicles-key-url-${uuid(851)}`).props.onChange({ target: { value: url } });
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.equal(ui.calls.saves.length, 0, url);
+    assert(ui.nodes().some((node) => node.props?.role === "alert"));
+  }
+  const ui = keyHarness(null, [keyLink()]);
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input(`vehicles-key-title-${uuid(851)}`).props.onChange({ target: { value: "x".repeat(301) } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Key Information applies its aggregate 50,000-unit limit, not the service Description limit", async () => {
+  const makeDocument = (text) => ({ schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text }] }] });
+  assert.equal(keyDocumentHelpers.keyDocumentLength(makeDocument("\u{1f600}".repeat(25000))), 50000);
+  for (const [length, accepted] of [[10001, true], [50000, true], [50001, false]]) {
+    const ui = keyHarness();
+    await ui.settle();
+    openKeyInformation(ui);
+    ui.button("Add Key Information").props.onClick();
+    ui.render();
+    keyEditor(ui).props.onChange(makeDocument("X".repeat(length)));
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.equal(ui.calls.saves.length, accepted ? 1 : 0);
+  }
+});
+
+test("Key Information exact structured draft and links survive every section; Cancel restores both", async () => {
+  const original = keyNotes();
+  const ui = keyHarness(original, [keyLink()]);
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  const changed = keyDocumentFixture();
+  changed.blocks[0].runs.push({ text: " updated", bold: true });
+  keyEditor(ui).props.onChange(changed);
+  ui.input(`vehicles-key-title-${uuid(851)}`).props.onChange({ target: { value: "Changed title" } });
+  ui.render();
+  for (const section of ["ongoing", "recommended", "completed", "intervals", "key-information"]) {
+    ui.find((node) => node.props?.["data-vehicles-section"] === section).props.onClick();
+    ui.render();
+  }
+  assert.equal(JSON.stringify(keyEditor(ui).props.value), JSON.stringify(changed));
+  assert.equal(ui.input(`vehicles-key-title-${uuid(851)}`).props.value, "Changed title");
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.calls.saves.length, 0);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(JSON.stringify(keyEditor(ui).props.value), JSON.stringify(original.document));
+  assert.equal(ui.input(`vehicles-key-title-${uuid(851)}`).props.value, "Owner manual");
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+});
+
+test("Key Information shares one atomic save with dated sections without changing intervals", async () => {
+  const ui = keyHarness(keyNotes());
+  await ui.settle();
+  enterOngoingEdit(ui);
+  ui.input("vehicles-mechanic").props.onChange({ target: { value: "Synthetic shop" } });
+  ui.render();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  keyEditor(ui).props.onChange({ schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "Updated", bold: true }] }] });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves.length, 1);
+  assert.equal(ui.calls.saves[0].ongoingOperations.length, 1);
+  assert.equal(ui.calls.saves[0].keyInformationOperation.expectedVersion, 4);
+  assert.deepEqual(ui.calls.saves[0].intervalOperations, []);
+});
+
+test("Key Information conflicts preserve documents; unknown saves lock editing and replay exact requests once", async () => {
+  let release;
+  const requests = [];
+  let retry;
+  const ui = keyHarness(keyNotes(), [], { saveVehicleChanges: async (draft) => {
+    requests.push(structuredClone(draft));
+    if (requests.length === 1) {
+      await new Promise((resolve) => { release = resolve; });
+      retry = { ...structuredClone(draft), requestId: uuid(990) };
+      throw { code: "unknown_outcome", retryDraft: retry };
+    }
+    return { status: "saved", replayed: true, assetVersion: 5, entityVersions: { key_information: { [uuid(801)]: 5 } } };
+  } });
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  const changed = { schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "Stable retry" }] }] };
+  keyEditor(ui).props.onChange(changed);
+  ui.render();
+  const submit = ui.button("Save Changes").props.onClick;
+  const pending = submit();
+  await submit();
+  assert.equal(requests.length, 1);
+  release();
+  await pending;
+  await ui.settle();
+  assert.equal(keyEditor(ui).props.disabled, true);
+  assert.equal(ui.button("Cancel Changes").props.disabled, true);
+  await ui.button("Retry same save").props.onClick();
+  await ui.settle();
+  assert.deepEqual(requests[1], retry);
+  assert.deepEqual(requests[1].keyInformationOperation.document, changed);
+
+  const conflicted = keyHarness(keyNotes(), [], { saveVehicleChanges: async () => { throw { code: "version_conflict" }; } });
+  await conflicted.settle();
+  openKeyInformation(conflicted);
+  conflicted.button("Edit").props.onClick();
+  conflicted.render();
+  keyEditor(conflicted).props.onChange(changed);
+  conflicted.render();
+  await conflicted.button("Save Changes").props.onClick();
+  await conflicted.settle();
+  assert.equal(JSON.stringify(keyEditor(conflicted).props.value), JSON.stringify(changed));
+  assert.match(conflicted.text(), /changed elsewhere/);
+});
+
+test("Key Information cancels stale title lookup and preserves manually entered titles", async () => {
+  let finish;
+  const ui = keyHarness(null, [keyLink(851, { url: "https://example.com/manual", displayTitle: null })], {
+    resolveLinkTitle: () => new Promise((resolve) => { finish = resolve; }),
+  });
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  const pending = ui.input(`vehicles-key-url-${uuid(851)}`).props.onBlur();
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  finish({ title: "Late metadata", url: "https://example.com/manual" });
+  await pending;
+  await ui.settle();
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(ui.input(`vehicles-key-title-${uuid(851)}`).props.value, "");
+  const lookup = ui.input(`vehicles-key-url-${uuid(851)}`).props.onBlur();
+  ui.input(`vehicles-key-title-${uuid(851)}`).props.onChange({ target: { value: "Manual title" } });
+  ui.render();
+  finish({ title: "Retrieved title", url: "https://example.com/manual" });
+  await lookup;
+  await ui.settle();
+  assert.equal(ui.input(`vehicles-key-title-${uuid(851)}`).props.value, "Manual title");
+});
+
+test("Key Information uses Slide 6's bounded 65/35 regions, stacked mobile flow and accessible controls", async () => {
+  const ui = keyHarness(keyNotes(), [keyLink()]);
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert(ui.find((node) => node.type === "label" && node.props.htmlFor === `vehicles-key-url-${uuid(851)}`));
+  assert(ui.find((node) => node.type === "label" && node.props.htmlFor === `vehicles-key-title-${uuid(851)}`));
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.keyRegions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1\.85fr\) minmax\(0, 1fr\)/s);
+  assert.match(css, /\.keyDocument ul\s*\{[^}]*padding-inline-start:\s*var\(--lm-space-4\)/s);
+  assert.match(css.slice(css.indexOf("@media (max-width: 600px)")), /\.keyRegions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);[^}]*height:\s*auto/s);
+  const source = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx"), "utf8");
+  assert.doesNotMatch(source, /dangerouslySetInnerHTML|\.rpc\s*\(|\.from\s*\(/);
+});
+
+test("Key Information actual service round trip retains exact document schema, runs and list structure", () => {
+  const loadSource = (file) => fs.readFileSync(path.join(root, file), "utf8")
+    .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
+  const { mapKeyInformation, mapSaveRequest, cloneKeyDocument } = vm.runInNewContext(`(() => {
+    ${loadSource("src/services/vehiclesService.js")}; return { mapKeyInformation, mapSaveRequest, cloneKeyDocument };
+  })()`, { getSupabaseClient: () => { throw Error("No production client in Key Information tests"); } });
+  const persisted = { id: uuid(801), asset_id: uuid(1), document: keyDocumentFixture(), version: 4 };
+  const mapped = mapKeyInformation(persisted);
+  const edited = keyDocumentHelpers.readKeyDocument(keyDocumentDom(mapped.document), mapped.document);
+  const request = mapSaveRequest({ assetId: uuid(1), expectedAssetVersion: 4,
+    keyInformationOperation: { action: "update", id: mapped.id, expectedVersion: mapped.version, document: edited },
+  }, uuid(990));
+  assert.equal(JSON.stringify(request.key_information_operation.document), JSON.stringify(persisted.document));
+  const remapped = mapKeyInformation({ ...persisted, document: request.key_information_operation.document, version: 5 });
+  assert.equal(JSON.stringify(remapped.document), JSON.stringify(persisted.document));
+  const nearLimit = { schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "\u{1f600}".repeat(25000), bold: true }] }] };
+  assert.equal(JSON.stringify(cloneKeyDocument(nearLimit)), JSON.stringify(nearLimit));
+  assert.throws(() => cloneKeyDocument({ schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "X".repeat(50001) }] }] }));
+  assert.throws(() => cloneKeyDocument({ schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "<b>HTML</b>" }] }] }));
+  assert.equal(request.link_operations, undefined);
+});
+
+test("Key Information confirmed-save fallback retains notes/link versions and clearing removes only notes", async () => {
+  let loads = 0;
+  const ui = keyHarness(keyNotes(), [keyLink()], {
+    loadVehicleWorkspace: async () => {
+      if (loads++ > 0) throw Error("Synthetic refresh failure");
+      return { ...workspace(assets[0], []), keyInformation: keyNotes(), links: [keyLink()] };
+    },
+    saveVehicleChanges: async (draft) => {
+      ui.calls.saves.push(structuredClone(draft));
+      return { status: "saved", assetVersion: 5, entityVersions: {
+        key_information: { [uuid(801)]: 5 }, links: { [uuid(851)]: 4 },
+      } };
+    },
+  });
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  const changed = { schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "Confirmed", bold: true }] }] };
+  keyEditor(ui).props.onChange(changed);
+  ui.input(`vehicles-key-title-${uuid(851)}`).props.onChange({ target: { value: "Confirmed title" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.match(ui.text(), /saved, but the latest workspace could not be reloaded/);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+  assert.equal(JSON.stringify(keyEditor(ui).props.value), JSON.stringify(changed));
+  keyEditor(ui).props.onChange({ schemaVersion: 1, blocks: [] });
+  ui.input(`vehicles-key-title-${uuid(851)}`).props.onChange({ target: { value: "Another title" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves[1].expectedAssetVersion, 5);
+  assert.equal(ui.calls.saves[1].keyInformationOperation.expectedVersion, 5);
+  assert.equal(ui.calls.saves[1].linkOperations[0].expectedVersion, 4);
+  assert.match(ui.text(), /No key maintenance information/);
+  assert.match(ui.text(), /Another title/);
+  assert.equal(ui.button("Delete Record"), undefined);
+});
+
+test("Key Information best-effort title lookup updates only an eligible link in the active session", async () => {
+  const ui = keyHarness(keyNotes(), [keyLink(851, { displayTitle: null })], {
+    resolveLinkTitle: async (url) => ({ url, title: "Retrieved manual title" }),
+  });
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  await ui.input(`vehicles-key-url-${uuid(851)}`).props.onBlur();
+  await ui.settle();
+  assert.equal(ui.input(`vehicles-key-title-${uuid(851)}`).props.value, "Retrieved manual title");
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves[0].keyInformationOperation, null);
+  assert.deepEqual(ui.calls.saves[0].linkOperations, [{ action: "update", id: uuid(851), expectedVersion: 3,
+    displayTitle: "Retrieved manual title" }]);
+});
+
+test("Key Information title lookup cannot mutate a frozen unknown-outcome save request", async () => {
+  let finishTitle;
+  const requests = [];
+  let retry;
+  const ui = keyHarness(null, [keyLink(851, { displayTitle: null })], {
+    resolveLinkTitle: () => new Promise((resolve) => { finishTitle = resolve; }),
+    saveVehicleChanges: async (draft) => {
+      requests.push(structuredClone(draft));
+      if (requests.length === 1) {
+        retry = { ...structuredClone(draft), requestId: uuid(990) };
+        throw { code: "unknown_outcome", retryDraft: retry };
+      }
+      return { status: "saved", replayed: true, assetVersion: 5, entityVersions: {} };
+    },
+  });
+  await ui.settle();
+  openKeyInformation(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input(`vehicles-key-url-${uuid(851)}`).props.onChange({ target: { value: "https://example.test/updated" } });
+  ui.render();
+  const pendingTitle = ui.input(`vehicles-key-url-${uuid(851)}`).props.onBlur();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  finishTitle({ url: "https://example.test/updated", title: "Late metadata" });
+  await pendingTitle;
+  await ui.settle();
+  assert.equal(ui.input(`vehicles-key-title-${uuid(851)}`).props.value, "");
+  assert.equal(ui.input(`vehicles-key-title-${uuid(851)}`).props.disabled, true);
+  assert.equal(keyEditor(ui).props.disabled, true);
+  await ui.button("Retry same save").props.onClick();
+  await ui.settle();
+  assert.deepEqual(requests[1], retry);
+  assert.deepEqual(requests[1].linkOperations, [{ action: "update", id: uuid(851), expectedVersion: 3,
+    url: "https://example.test/updated" }]);
 });
 
 test("Maintenance Intervals section reads existing data and opens the existing manager", async () => {

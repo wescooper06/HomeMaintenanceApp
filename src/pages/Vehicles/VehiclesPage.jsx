@@ -1,4 +1,4 @@
-import { List } from "lucide-react";
+import { Bold, List } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useBlocker } from "react-router-dom";
 
@@ -8,6 +8,7 @@ import {
   createVehicleChangesDraft,
   vehiclesService,
 } from "../../services/vehiclesService.js";
+import { resolveLinkTitle } from "../../utils/resolveLinkTitle.js";
 
 import styles from "./VehiclesPage.module.css";
 
@@ -97,6 +98,185 @@ function toggleDescriptionBullets(text, selectionStart, selectionEnd) {
     text: text.slice(0, start) + replacement + text.slice(end), start, end, replacement,
     selectionStart: positionAfter(selectionStart), selectionEnd: positionAfter(selectionEnd),
   };
+}
+
+function keyDocumentLength(value) {
+  return value.blocks.reduce((total, block) => total + (block.type === "paragraph" ? [block.runs] : block.items)
+    .reduce((sum, runs) => sum + runs.reduce((length, run) => length + run.text.length, 0), 0), 0);
+}
+
+function keyBlockSignature(block) {
+  const normalize = (runs) => runs.reduce((result, run) => {
+    if (!run.text) return result;
+    const bold = Boolean(run.bold);
+    if (result.length && result[result.length - 1].bold === bold) result[result.length - 1].text += run.text;
+    else result.push({ text: run.text, bold });
+    return result;
+  }, []);
+  return JSON.stringify(block.type === "paragraph" ? ["paragraph", normalize(block.runs)]
+    : ["bullet_list", block.items.map(normalize)]);
+}
+
+function readKeyDocument(root, previous) {
+  const runsFrom = (parent) => {
+    const runs = [];
+    const visit = (node, inheritedBold = false) => {
+      if (node.nodeType === 3) {
+        if (node.textContent) runs.push(inheritedBold ? { text: node.textContent, bold: true } : { text: node.textContent });
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      if (node.nodeName === "BR") {
+        if (node.parentNode.childNodes.length > 1) runs.push({ text: "\n" });
+        return;
+      }
+      const weight = node.style?.fontWeight;
+      const bold = weight === "normal" || weight === "400" ? false
+        : inheritedBold || node.nodeName === "B" || node.nodeName === "STRONG" || weight === "bold" || Number(weight) >= 600;
+      node.childNodes.forEach((child) => visit(child, bold));
+    };
+    parent.childNodes.forEach((child) => visit(child));
+    return runs;
+  };
+  const blocks = [];
+  const visitBlock = (node) => {
+    if (node.nodeType === 3) {
+      if (node.textContent) blocks.push({ type: "paragraph", runs: [{ text: node.textContent }] });
+    } else if (node.nodeType === 1 && node.nodeName === "UL") {
+      blocks.push({ type: "bullet_list", items: [...node.children]
+        .filter((child) => child.nodeName === "LI").map(runsFrom) });
+    } else if (node.nodeType === 1) {
+      if ([...node.children].some((child) => ["P", "DIV", "UL"].includes(child.nodeName))) {
+        node.childNodes.forEach(visitBlock);
+      } else blocks.push({ type: "paragraph", runs: runsFrom(node) });
+    }
+  };
+  root.childNodes.forEach(visitBlock);
+  const value = { schemaVersion: 1, blocks: blocks.map((block, index) => {
+    const original = previous.blocks[index];
+    return original && keyBlockSignature(original) === keyBlockSignature(block) ? original : block;
+  }) };
+  if (value.blocks.length === previous.blocks.length
+    && value.blocks.every((block, index) => keyBlockSignature(block) === keyBlockSignature(previous.blocks[index]))) return previous;
+  return value.blocks.some((block) => (block.type === "paragraph" ? [block.runs] : block.items)
+    .some((runs) => runs.some((run) => run.text.trim()))) ? value : { schemaVersion: 1, blocks: [] };
+}
+
+function KeyDocumentContent({ value }) {
+  const renderRuns = (runs) => runs.map((run, index) => run.bold
+    ? <strong key={index}>{run.text}</strong> : <span key={index}>{run.text}</span>);
+  return value.blocks.length ? value.blocks.map((block, index) => block.type === "paragraph"
+    ? <p key={index}>{block.runs.length ? renderRuns(block.runs) : <br />}</p>
+    : <ul key={index}>{block.items.map((runs, itemIndex) => <li key={itemIndex}>{renderRuns(runs)}</li>)}</ul>)
+    : <p><br /></p>;
+}
+
+function KeyDocumentEditor({ value, onChange, onError, disabled }) {
+  const [initial, setInitial] = useState(value);
+  const current = useRef(value);
+  const editor = useRef(null);
+  const selection = useRef(null);
+  const restoring = useRef(false);
+  const [revision, setRevision] = useState(0);
+  const [format, setFormat] = useState({ bold: false, bullets: false });
+  const rememberSelection = () => {
+    const selected = document.getSelection();
+    if (selected?.rangeCount && editor.current?.contains(selected.anchorNode)) selection.current = selected.getRangeAt(0).cloneRange();
+    setFormat({ bold: Boolean(document.queryCommandState?.("bold")), bullets: Boolean(document.queryCommandState?.("insertUnorderedList")) });
+  };
+  const commit = () => {
+    if (restoring.current) return;
+    const next = readKeyDocument(editor.current, current.current);
+    const invalid = keyDocumentLength(next) > 50000 || next.blocks.some((block) => (
+      block.type === "paragraph" ? [block.runs] : block.items
+    ).some((runs) => runs.some((run) => /<[/!?]?[A-Za-z][^>]*>|<\s*script/i.test(run.text))));
+    if (invalid) {
+      restoring.current = true;
+      document.execCommand?.("undo");
+      restoring.current = false;
+      if (JSON.stringify(readKeyDocument(editor.current, current.current)) !== JSON.stringify(current.current)) {
+        setInitial(current.current);
+        selection.current = null;
+        setRevision((number) => number + 1);
+      }
+      onError("Key Maintenance Information allows at most 50,000 text units and no HTML markup. The edit was not applied.");
+      return;
+    }
+    if (JSON.stringify(next) !== JSON.stringify(current.current)) {
+      current.current = next;
+      onChange(next);
+    }
+    rememberSelection();
+  };
+  const command = (name, text) => {
+    if (disabled) return;
+    editor.current.focus({ preventScroll: true });
+    if (selection.current && editor.current.contains(selection.current.commonAncestorContainer)) {
+      const selected = document.getSelection();
+      selected.removeAllRanges();
+      selected.addRange(selection.current);
+    }
+    document.execCommand(name, false, text);
+    commit();
+  };
+  const pasteText = (event) => {
+    event.preventDefault();
+    const text = event.clipboardData?.getData("text/plain") || event.dataTransfer?.getData("text/plain") || "";
+    const selectedLength = document.getSelection()?.toString().length || 0;
+    if (keyDocumentLength(current.current) - selectedLength + text.length > 50000) {
+      onError("Key Maintenance Information exceeds its 50,000-text-unit limit. No text was inserted.");
+      return;
+    }
+    command("insertText", text);
+  };
+  return <div className={styles.keyEditor}>
+    <div className={styles.keyFormatting} role="group" aria-label="Key Maintenance Information formatting">
+      <button type="button" className={`lm-button lm-button--secondary ${styles.descriptionBullets}`}
+        aria-label="Bold" aria-pressed={format.bold} title="Bold" disabled={disabled}
+        onMouseDown={(event) => event.preventDefault()} onClick={() => command("bold")}><Bold size={16} aria-hidden="true" />Bold</button>
+      <button type="button" className={`lm-button lm-button--secondary ${styles.descriptionBullets}`}
+        aria-label="Toggle bullets" aria-pressed={format.bullets} title="Toggle bullets" disabled={disabled}
+        onMouseDown={(event) => event.preventDefault()} onClick={() => command("insertUnorderedList")}>
+        <List size={16} aria-hidden="true" />Bullets</button>
+    </div>
+    <div key={revision} ref={editor} className={styles.keyDocument} contentEditable={!disabled}
+      suppressContentEditableWarning role="textbox" aria-label="Key Maintenance Information" aria-multiline="true"
+      aria-disabled={disabled} onInput={commit} onMouseUp={rememberSelection} onKeyUp={rememberSelection}
+      onBlur={rememberSelection} onPaste={pasteText} onDrop={pasteText}
+      onKeyDown={(event) => {
+        if ((event.ctrlKey || event.metaKey) && (["i", "u"].includes(event.key.toLowerCase())
+          || (event.shiftKey && event.key === "7"))) event.preventDefault();
+      }}
+      onBeforeInput={(event) => {
+        const type = event.nativeEvent.inputType || "";
+        if ((type.startsWith("format") && type !== "formatBold") || type === "insertOrderedList") event.preventDefault();
+      }}>
+      <KeyDocumentContent value={initial} />
+    </div>
+  </div>;
+}
+
+function keyLinksValue(links) {
+  return JSON.stringify(links.map(({ id, url, displayTitle, sortOrder }) => ({ id, url, displayTitle, sortOrder })));
+}
+
+function validKeyLink(link) {
+  try {
+    const url = new URL(link.url);
+    const hasControl = [...link.url].some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || code === 127;
+    });
+    return link.url === link.url.trim() && /^https:\/\/[^\s/?#]+([/?#].*)?$/i.test(link.url)
+      && !/^https:\/\/[^/?#]*@/i.test(link.url) && !hasControl && link.url.length <= 2048
+      && url.protocol === "https:" && Boolean(url.hostname) && !url.username && !url.password
+      && (link.displayTitle === null || (typeof link.displayTitle === "string" && link.displayTitle.length <= 300))
+      && Number.isInteger(link.sortOrder) && link.sortOrder >= 0 && link.sortOrder <= 2147483647;
+  } catch { return false; }
+}
+
+function keyLinkLabel(link) {
+  return link.displayTitle?.trim() || new URL(link.url).hostname.replace(/^www\./iu, "");
 }
 
 function getErrorMessage(error) {
@@ -267,6 +447,11 @@ export default function VehiclesPage() {
   const [completedDeleted, setCompletedDeleted] = useState([]);
   const [completedRecordId, setCompletedRecordId] = useState("");
   const [completedEditing, setCompletedEditing] = useState(false);
+  const [keyBaseline, setKeyBaseline] = useState({ notes: null, links: [] });
+  const [keyDocument, setKeyDocument] = useState({ schemaVersion: 1, blocks: [] });
+  const [keyLinks, setKeyLinks] = useState([]);
+  const [keyNoteId, setKeyNoteId] = useState("");
+  const [keyEditing, setKeyEditing] = useState(false);
   const [selectedRecordId, setSelectedRecordId] = useState("");
   const [ongoingEditing, setOngoingEditing] = useState(false);
   const [activeSection, setActiveSection] = useState("ongoing");
@@ -323,6 +508,7 @@ export default function VehiclesPage() {
   const manageDetailsRef = useRef(null);
   const recommendedDescriptionRef = useRef(null);
   const completedDescriptionRef = useRef(null);
+  const keySession = useRef(0);
 
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
   const selectedMaintenanceItem = maintenanceItems?.find((item) => item.id === selectedMaintenanceItemId);
@@ -362,8 +548,10 @@ export default function VehiclesPage() {
     record.isNew || completedValue(record) !== completedValue(
       completedBaseline.find((entry) => entry.id === record.id) || record)
   ));
-  const dirty = ongoingDirty || recommendedDirty || completedDirty;
-  const sessionEditing = ongoingEditing || recommendedEditing || completedEditing;
+  const keyDirty = JSON.stringify(keyDocument) !== JSON.stringify(keyBaseline.notes?.document || { schemaVersion: 1, blocks: [] })
+    || keyLinksValue(keyLinks) !== keyLinksValue(keyBaseline.links);
+  const dirty = ongoingDirty || recommendedDirty || completedDirty || keyDirty;
+  const sessionEditing = ongoingEditing || recommendedEditing || completedEditing || keyEditing;
   const saveUncertain = retryDraft !== null;
   const manageAssetDraftDirty = manageDraftIsDirty();
   const hasMaintenanceItemDraft = Boolean(maintenanceItemDraft);
@@ -421,6 +609,7 @@ export default function VehiclesPage() {
       setSelectedRecordId(vehiclesService.newestRecord(records)?.id || "");
       loadRecommendedState(result);
       loadCompletedState(result);
+      loadKeyState(result);
       setRetryDraft(null);
     }).catch(() => {
       if (active) setWorkspaceError("The Vehicles workspace could not be loaded. Retry loading it.");
@@ -514,6 +703,11 @@ export default function VehiclesPage() {
     setCompletedDeleted([]);
     setCompletedRecordId(vehiclesService.newestRecord(completedBaseline)?.id || "");
     setCompletedEditing(false);
+    keySession.current += 1;
+    setKeyDocument(JSON.parse(JSON.stringify(keyBaseline.notes?.document || { schemaVersion: 1, blocks: [] })));
+    setKeyLinks(keyBaseline.links.map((link) => ({ ...link })));
+    setKeyNoteId(keyBaseline.notes?.id || "");
+    setKeyEditing(false);
     setSaveError("");
     setStatus("Changes canceled. The last saved records are restored.");
   }
@@ -541,6 +735,60 @@ export default function VehiclesPage() {
     setCompletedDeleted([]);
     setCompletedRecordId(vehiclesService.newestRecord(records)?.id || "");
     setCompletedEditing(false);
+  }
+
+  function loadKeyState(source) {
+    keySession.current += 1;
+    const notes = source.keyInformation ? JSON.parse(JSON.stringify(source.keyInformation)) : null;
+    const links = (source.links || []).map((link) => ({ ...link }));
+    setKeyBaseline({ notes, links });
+    setKeyDocument(notes ? JSON.parse(JSON.stringify(notes.document)) : { schemaVersion: 1, blocks: [] });
+    setKeyLinks(links.map((link) => ({ ...link })));
+    setKeyNoteId(notes?.id || "");
+    setKeyEditing(false);
+  }
+
+  function beginKeyEdit() {
+    if (saving || saveUncertain) return;
+    keySession.current += 1;
+    if (!keyNoteId) setKeyNoteId(crypto.randomUUID());
+    setKeyEditing(true);
+    setSaveError("");
+    setStatus("");
+  }
+
+  function updateKeyDocument(value) {
+    setKeyDocument(value);
+    setSaveError("");
+    setStatus("");
+  }
+
+  function updateKeyLink(id, update) {
+    setKeyLinks((links) => links.map((link) => link.id === id ? { ...link, ...update } : link));
+    setSaveError("");
+    setStatus("");
+  }
+
+  function addKeyLink() {
+    const order = Math.max(-1, ...keyLinks.map((link) => link.sortOrder)) + 1;
+    if (order > 2147483647) {
+      setSaveError("The link ordering limit has been reached.");
+      return;
+    }
+    setKeyLinks((links) => [...links, { id: crypto.randomUUID(), url: "", displayTitle: null,
+      sortOrder: order, version: 1, isNew: true }]);
+    setSaveError("");
+  }
+
+  async function lookupKeyLinkTitle(link) {
+    if (link.displayTitle?.trim() || !validKeyLink(link)) return;
+    const session = keySession.current;
+    try {
+      const result = await resolveLinkTitle(link.url);
+      if (keySession.current !== session || !result.title || result.title === link.url || result.title.length > 300) return;
+      setKeyLinks((links) => links.map((current) => current.id === link.id && current.url === link.url
+        && !current.displayTitle?.trim() ? { ...current, displayTitle: result.title } : current));
+    } catch { return; }
   }
 
   function updateCompleted(update) {
@@ -1511,6 +1759,25 @@ export default function VehiclesPage() {
     draft.completedOperations.push(...completedDeleted.map((record) => (
       buildRecordDeleteOperation("completed", record, workspace.asset.id).operation
     )));
+    if (JSON.stringify(keyDocument) !== JSON.stringify(keyBaseline.notes?.document || { schemaVersion: 1, blocks: [] })) {
+      draft.keyInformationOperation = keyBaseline.notes
+        ? { action: "update", id: keyBaseline.notes.id, expectedVersion: keyBaseline.notes.version, document: keyDocument }
+        : { action: "create", id: keyNoteId, document: keyDocument };
+    }
+    for (const link of keyLinks) {
+      const original = keyBaseline.links.find((entry) => entry.id === link.id);
+      if (!original) draft.linkOperations.push({ action: "create", id: link.id, url: link.url,
+        displayTitle: link.displayTitle, sortOrder: link.sortOrder });
+      else {
+        const operation = { action: "update", id: link.id, expectedVersion: original.version };
+        for (const field of ["url", "displayTitle", "sortOrder"]) {
+          if (link[field] !== original[field]) operation[field] = link[field];
+        }
+        if (Object.keys(operation).length > 3) draft.linkOperations.push(operation);
+      }
+    }
+    draft.linkOperations.push(...keyBaseline.links.filter((link) => !keyLinks.some((entry) => entry.id === link.id))
+      .map((link) => ({ action: "delete", id: link.id, expectedVersion: link.version })));
     return draft;
   }
 
@@ -1526,6 +1793,7 @@ export default function VehiclesPage() {
       setOngoingEditing(false);
       loadRecommendedState(fresh);
       loadCompletedState(fresh);
+      loadKeyState(fresh);
       setStatus("Changes saved.");
     } catch {
       const records = workingRecords.map((record) => ({
@@ -1555,6 +1823,12 @@ export default function VehiclesPage() {
       setCompletedRecords(completed.map((record) => ({ ...record })));
       setCompletedDeleted([]);
       setCompletedEditing(false);
+      loadKeyState({
+        keyInformation: keyDocument.blocks.length ? { id: keyNoteId, document: keyDocument,
+          version: result.entityVersions?.key_information?.[keyNoteId] || keyBaseline.notes?.version || 1 } : null,
+        links: keyLinks.map((link) => ({ ...link, isNew: false,
+          version: result.entityVersions?.links?.[link.id] || link.version })),
+      });
       setStatus("Changes were saved, but the latest workspace could not be reloaded. Retry loading before further edits.");
     }
   }
@@ -1598,6 +1872,11 @@ export default function VehiclesPage() {
       setSaveError("Review Completed Service: use a unique valid date, a nonnegative reading with at most two decimals, and a trimmed Service Description (1-10,000 characters).");
       return;
     }
+    if (keyDocumentLength(keyDocument) > 50000 || keyLinks.some((link) => !validKeyLink(link))) {
+      setSaveError("Review Key Information: notes allow 50,000 text units; links need an HTTPS URL (up to 2,048 characters), an optional title up to 300 characters, and valid ordering.");
+      return;
+    }
+    keySession.current += 1;
     saveLock.current = true;
     setSaving(true);
     setSaveError("");
@@ -1614,6 +1893,7 @@ export default function VehiclesPage() {
         setRecommendedDeleted([]);
         setCompletedBaseline(completedRecords.map((record) => ({ ...record })));
         setCompletedDeleted([]);
+        loadKeyState({ keyInformation: keyBaseline.notes, links: keyLinks });
       }
     } catch (error) {
       if (error?.code === "unknown_outcome" && error.retryDraft) {
@@ -1663,11 +1943,13 @@ export default function VehiclesPage() {
   const recommendedActive = activeSection === "recommended";
   const completedActive = activeSection === "completed";
   const ongoingActive = activeSection === "ongoing";
+  const keyActive = activeSection === "key-information";
   const activeRecord = completedActive ? completedRecord
     : recommendedActive ? recommendedRecord : ongoingActive ? selectedRecord : null;
   const activeEditing = completedActive ? completedEditing : recommendedActive ? recommendedEditing : ongoingEditing;
   const sectionDirty = (sectionId) => sectionId === "ongoing" ? ongoingDirty
-    : sectionId === "recommended" ? recommendedDirty : sectionId === "completed" ? completedDirty : false;
+    : sectionId === "recommended" ? recommendedDirty : sectionId === "completed" ? completedDirty
+      : sectionId === "key-information" ? keyDirty : false;
   const showUsageField = workspace?.asset?.usageUnit !== "none";
   const usageLabelUnit = selectedRecord?.usageReadingUnit === "none"
     ? workspace?.asset?.usageUnit : selectedRecord?.usageReadingUnit;
@@ -1753,7 +2035,7 @@ export default function VehiclesPage() {
             <span className="lm-form-label">Vehicle</span>
             <select id="vehicles-asset-select" className={`lm-form-control ${styles.assetSelectorControl}`}
               value={selectedAssetId}
-              disabled={!assets?.length || saving || saveUncertain || recommendedDirty || completedDirty}
+              disabled={!assets?.length || saving || saveUncertain || recommendedDirty || completedDirty || keyDirty}
               onChange={(event) => selectAsset(event.target.value)}>
               {assets?.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
             </select>
@@ -1796,6 +2078,11 @@ export default function VehiclesPage() {
               </button>
             </div>
           </details>
+          {workspace && keyActive && !keyEditing && <button type="button"
+            className={`lm-button ${keyBaseline.notes || keyBaseline.links.length ? "lm-button--secondary" : "lm-button--primary"}`}
+            onClick={beginKeyEdit} disabled={saving || saveUncertain}>
+            {keyBaseline.notes || keyBaseline.links.length ? "Edit" : "Add Key Information"}
+          </button>}
           {activeRecord && !activeRecord.isNew && !activeEditing && (
             <button type="button" className="lm-button lm-button--secondary"
               onClick={completedActive ? () => setCompletedEditing(true)
@@ -1878,14 +2165,14 @@ export default function VehiclesPage() {
             </select>
           </label>
 
-          {completedEditing && !ongoingActive && !recommendedActive && !completedActive && saveError && (
+          {(completedEditing || keyEditing) && !ongoingActive && !recommendedActive && !completedActive && !keyActive && saveError && (
             <div className="lm-feedback lm-feedback--error" role="alert">
               <p>{saveError}</p>
               {saveUncertain && <button type="button" className="lm-button lm-button--secondary"
                 onClick={retryUnknownSave} disabled={saving}>Retry same save</button>}
             </div>
           )}
-          {completedEditing && !ongoingActive && !recommendedActive && !completedActive && status && (
+          {(completedEditing || keyEditing) && !ongoingActive && !recommendedActive && !completedActive && !keyActive && status && (
             <p role="status" aria-live="polite">{status}</p>
           )}
 
@@ -2209,12 +2496,58 @@ export default function VehiclesPage() {
               </section>
             )}
 
-            {activeSection !== "ongoing" && activeSection !== "intervals" && !recommendedActive && !completedActive && (
-              <section className={styles.sectionContent} aria-labelledby="vehicles-unavailable-section-title">
-                <h2 id="vehicles-unavailable-section-title">
-                  {vehicleSections.find((section) => section.id === activeSection)?.label}
-                </h2>
-                <p>This section is not yet available in this Vehicles workspace.</p>
+            {keyActive && (
+              <section aria-labelledby="vehicles-key-title">
+                <h2 id="vehicles-key-title" className={styles.visuallyHidden}>Key Information</h2>
+                {saveError && <div className="lm-feedback lm-feedback--error" role="alert">
+                  <p>{saveError}</p>
+                  {saveUncertain && <button type="button" className="lm-button lm-button--secondary"
+                    onClick={retryUnknownSave} disabled={saving}>Retry same save</button>}
+                </div>}
+                {status && <p role="status" aria-live="polite">{status}</p>}
+                <div className={styles.keyRegions}>
+                  <section className={styles.keyPanel} aria-labelledby="vehicles-key-notes-title">
+                    <h3 id="vehicles-key-notes-title">Key Maintenance Information</h3>
+                    {keyEditing ? <KeyDocumentEditor key={`${selectedAssetId}-${keyNoteId}`} value={keyDocument}
+                      onChange={updateKeyDocument} onError={setSaveError} disabled={saving || saveUncertain} />
+                      : keyDocument.blocks.length ? <div className={`${styles.keyDocument} ${styles.keyReadOnly}`}>
+                        <KeyDocumentContent value={keyDocument} />
+                      </div> : <p className="lm-empty-state">No key maintenance information recorded for this asset.</p>}
+                  </section>
+                  <section className={styles.keyPanel} aria-labelledby="vehicles-key-links-title">
+                    <div className={styles.keyLinksHeading}>
+                      <h3 id="vehicles-key-links-title">Links &amp; References</h3>
+                      {keyEditing && <button type="button" className="lm-button lm-button--secondary"
+                        onClick={addKeyLink} disabled={saving || saveUncertain}>Add Link</button>}
+                    </div>
+                    <div className={styles.keyScroll}>
+                      {keyLinks.length === 0 && <p className="lm-empty-state">No links recorded for this asset.</p>}
+                      {[...keyLinks].sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
+                        .map((link, index) => keyEditing ? <div key={link.id} className={styles.keyLinkEditor}>
+                          <label className="lm-form-field" htmlFor={`vehicles-key-url-${link.id}`}>
+                            <span className="lm-form-label">URL</span>
+                            <input id={`vehicles-key-url-${link.id}`} className="lm-form-control" type="url" maxLength="2048"
+                              value={link.url} disabled={saving || saveUncertain}
+                              onChange={(event) => updateKeyLink(link.id, { url: event.target.value })}
+                              onBlur={() => lookupKeyLinkTitle(link)} />
+                          </label>
+                          <label className="lm-form-field" htmlFor={`vehicles-key-title-${link.id}`}>
+                            <span className="lm-form-label">Display Title</span>
+                            <input id={`vehicles-key-title-${link.id}`} className="lm-form-control" maxLength="300"
+                              value={link.displayTitle || ""} disabled={saving || saveUncertain}
+                              onChange={(event) => updateKeyLink(link.id, { displayTitle: event.target.value || null })} />
+                          </label>
+                          <button type="button" className="lm-button lm-button--secondary"
+                            aria-label={`Remove link ${link.displayTitle || index + 1}`} disabled={saving || saveUncertain}
+                            onClick={() => { setKeyLinks((links) => links.filter((entry) => entry.id !== link.id)); setStatus("Link removal queued."); }}>
+                            Remove
+                          </button>
+                        </div> : <p key={link.id} className={styles.keyLink}>
+                          <a href={link.url} target="_blank" rel="noopener noreferrer">{keyLinkLabel(link)}</a>
+                        </p>)}
+                    </div>
+                  </section>
+                </div>
               </section>
             )}
           </div>
