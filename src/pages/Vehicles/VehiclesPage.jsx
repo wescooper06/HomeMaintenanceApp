@@ -329,7 +329,7 @@ function makeMaintenanceItemDraft(item = null, currentAssetId = "") {
       expectedVersion: null,
       displayName: "",
       group: "routine",
-      availabilityMode: "all_assets",
+      availabilityMode: "current_asset_only",
       currentAssetId,
       selectedAssetIds: [],
     };

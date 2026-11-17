@@ -728,7 +728,7 @@ test("Create errors are safe and unknown or retryable outcomes retry the same ID
   }
 });
 
-test("Manage Maintenance Items shows an empty catalog and creates a local All Assets draft through the service", async () => {
+test("Manage Maintenance Items defaults new items to the current asset and maps that stable scope", async () => {
   const ui = harness({ initialMaintenanceItems: [] });
   await ui.settle();
   ui.button("Manage Maintenance Items").props.onClick();
@@ -740,6 +740,10 @@ test("Manage Maintenance Items shows an empty catalog and creates a local All As
   assert(ui.button("Add Maintenance Item"));
   ui.button("Add Maintenance Item").props.onClick();
   ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "current_asset_only");
+  assert.deepEqual(ui.input("vehicles-maintenance-item-applicability").children.map((option) => ui.text(option)),
+    ["All Assets", "Current Asset Only", "Selected Assets"]);
+  assert.match(ui.text(), /Current asset: Synthetic car/);
   ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic oil change" } });
   ui.render();
   const form = ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"));
@@ -752,11 +756,144 @@ test("Manage Maintenance Items shows an empty catalog and creates a local All As
   assert.match(request.requestId, /^[0-9a-f-]{36}$/);
   assert.equal(request.displayName, "Synthetic oil change");
   assert.equal(request.group, "routine");
-  assert.equal(request.availabilityMode, "all_assets");
-  assert.equal(request.currentAssetId, null);
+  assert.equal(request.availabilityMode, "current_asset_only");
+  assert.equal(request.currentAssetId, uuid(1));
   assert.deepEqual(request.selectedAssetIds, []);
   assert.match(ui.text(), /Synthetic oil change/);
   assert.match(ui.text(), /Active/);
+});
+
+test("Changing asset before Add changes the Current Asset Only UUID and Cancel persists nothing", async () => {
+  for (const asset of [assets[0], assets[1], { id: uuid(3), name: "Synthetic unitless tool", usageUnit: "none", version: 1 }]) {
+    const ui = harness({ initialAssets: [...assets, { id: uuid(3), name: "Synthetic unitless tool", usageUnit: "none", version: 1 }],
+      initialMaintenanceItems: [] });
+    await ui.settle();
+    ui.input("vehicles-asset-select").props.onChange({ target: { value: asset.id } });
+    ui.render();
+    await ui.settle();
+    assert.equal(ui.input("vehicles-asset-select").props.value, asset.id);
+    ui.button("Manage Maintenance Items").props.onClick();
+    ui.render();
+    await ui.settle();
+    ui.button("Add Maintenance Item").props.onClick();
+    ui.render();
+    const draft = ui.input("vehicles-maintenance-item-applicability");
+    assert.equal(draft.props.value, "current_asset_only");
+    assert.match(ui.text(), new RegExp(`Current asset: ${asset.name}`));
+    assert.equal(ui.calls.catalogSaves.length, 0);
+    ui.button("Cancel").props.onClick();
+    ui.render();
+    assert.equal(ui.calls.catalogSaves.length, 0);
+  }
+});
+
+test("New Current Asset Only draft can explicitly switch to All Assets without stale scope", async () => {
+  const ui = harness({ initialMaintenanceItems: [] });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic all-assets item" } });
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "all_assets" } });
+  ui.render();
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  const form = ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"));
+  await form.props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(ui.calls.catalogSaves[0], {
+    operation: "create",
+    id: uuid(900),
+    displayName: "Synthetic all-assets item",
+    group: "routine",
+    availabilityMode: "all_assets",
+    currentAssetId: null,
+    selectedAssetIds: [],
+    requestId: uuid(901),
+  });
+});
+
+test("New Current Asset Only draft maps an explicit selection of all three asset UUIDs", async () => {
+  const allAssets = [...assets, { id: uuid(3), name: "Synthetic trailer", usageUnit: "none", version: 1 }];
+  const ui = harness({ initialAssets: allAssets, initialMaintenanceItems: [] });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "current_asset_only");
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic selected ABC" } });
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  for (const asset of allAssets) {
+    ui.input(`vehicles-maintenance-item-asset-${asset.id}`).props.onChange({ target: { checked: true } });
+    ui.render();
+  }
+  await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+    .props.onSubmit({ preventDefault() {} });
+  assert.equal(ui.calls.catalogSaves.length, 1);
+  assert.deepEqual(ui.calls.catalogSaves[0], {
+    operation: "create",
+    id: uuid(900),
+    displayName: "Synthetic selected ABC",
+    group: "routine",
+    availabilityMode: "selected_assets",
+    currentAssetId: null,
+    selectedAssetIds: allAssets.map((asset) => asset.id),
+    requestId: uuid(901),
+  });
+});
+
+test("Editing existing applicability preserves All Assets, Current Asset Only, and selected UUID sets", async () => {
+  const assetsWithC = [...assets, { id: uuid(3), name: "Synthetic trailer", usageUnit: "hours", version: 1 }];
+  const existing = [
+    catalogItem(701, { displayName: "Existing all-assets", availabilityMode: "all_assets" }),
+    catalogItem(702, { displayName: "Existing current-only", availabilityMode: "current_asset_only", currentAssetId: uuid(2) }),
+    catalogItem(703, { displayName: "Existing selected", availabilityMode: "selected_assets", selectedAssetIds: [uuid(3), uuid(2)] }),
+  ];
+  for (const itemEntry of existing) {
+    const ui = harness({ initialAssets: assetsWithC, initialMaintenanceItems: existing });
+    await ui.settle();
+    ui.button("Manage Maintenance Items").props.onClick();
+    ui.render();
+    await ui.settle();
+    ui.find((node) => node.type === "button" && ui.text(node).includes(itemEntry.displayName)).props.onClick();
+    ui.render();
+    const draft = ui.input("vehicles-maintenance-item-applicability");
+    assert.equal(draft.props.value, itemEntry.availabilityMode);
+    assert.equal(ui.input("vehicles-managed-asset-select"), undefined);
+    if (itemEntry.availabilityMode === "current_asset_only") {
+      assert.match(ui.text(), /Current asset: Synthetic truck/);
+    }
+    if (itemEntry.availabilityMode === "selected_assets") {
+      assert.deepEqual(assetsWithC.map((asset) => ui.input(`vehicles-maintenance-item-asset-${asset.id}`).props.checked),
+        [false, true, true]);
+    }
+    assert.equal(ui.button("Save Changes").props.disabled, true);
+    assert.equal(ui.calls.catalogSaves.length, 0);
+    ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: {
+      value: itemEntry.availabilityMode === "all_assets" ? "current_asset_only" : "all_assets",
+    } });
+    ui.render();
+    ui.button("Cancel").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, itemEntry.availabilityMode);
+    assert.equal(ui.button("Save Changes").props.disabled, true);
+    assert.equal(ui.calls.catalogSaves.length, 0);
+    ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: `${itemEntry.displayName} renamed` } });
+    ui.render();
+    await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
+      .props.onSubmit({ preventDefault() {} });
+    assert.equal(ui.calls.catalogSaves.length, 1);
+    const request = ui.calls.catalogSaves[0];
+    assert.equal(request.operation, "update");
+    assert.equal(request.id, itemEntry.id);
+    assert.equal(request.expectedVersion, itemEntry.version);
+    assert.equal(request.availabilityMode, itemEntry.availabilityMode);
+    assert.equal(request.currentAssetId, itemEntry.currentAssetId);
+    assert.deepEqual(request.selectedAssetIds, [...itemEntry.selectedAssetIds].sort());
+  }
 });
 
 test("Manage Maintenance Items announces loading and retries catalog errors without exposing backend details", async () => {
@@ -783,18 +920,27 @@ test("Manage Maintenance Items announces loading and retries catalog errors with
 });
 
 test("Manage Maintenance Items validates names and Selected Assets and supports multiple stable asset IDs", async () => {
-  const ui = harness({ initialMaintenanceItems: [] });
+  const ui = harness({ initialAssets: [...assets, { id: uuid(3), name: "Synthetic trailer", usageUnit: "hours", version: 1 }],
+    initialMaintenanceItems: [] });
   await ui.settle();
   ui.button("Manage Maintenance Items").props.onClick();
   ui.render();
   await ui.settle();
   ui.button("Add Maintenance Item").props.onClick();
   ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "current_asset_only");
+  assert.equal(ui.input("vehicles-maintenance-item-name").props.value, "");
+  assert.equal(ui.nodes().some((node) => node.type === "input"
+    && node.props.id === `vehicles-maintenance-item-asset-${uuid(1)}`), false);
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.match(ui.text(), /Current asset: Synthetic car/);
   ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic selected item" } });
   ui.render();
   const applicability = ui.input("vehicles-maintenance-item-applicability");
   applicability.props.onChange({ target: { value: "selected_assets" } });
   ui.render();
+  assert.deepEqual([uuid(1), uuid(2), uuid(3)].map((assetId) =>
+    ui.input(`vehicles-maintenance-item-asset-${assetId}`).props.checked), [false, false, false]);
   ui.input("vehicles-maintenance-item-group").props.onChange({ target: { value: "invalid" } });
   ui.render();
   await ui.find((node) => node.type === "form" && node.props.className?.includes("maintenanceItemForm"))
@@ -817,9 +963,9 @@ test("Manage Maintenance Items validates names and Selected Assets and supports 
   assert.match(ui.text(), /nonblank Maintenance Item name/);
   ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Synthetic filter" } });
   ui.render();
-  ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`).props.onChange({ target: { checked: true } });
-  ui.render();
   ui.input(`vehicles-maintenance-item-asset-${uuid(2)}`).props.onChange({ target: { checked: true } });
+  ui.render();
+  ui.input(`vehicles-maintenance-item-asset-${uuid(3)}`).props.onChange({ target: { checked: true } });
   ui.render();
   ui.input("vehicles-maintenance-item-group").props.onChange({ target: { value: "components_other" } });
   ui.render();
@@ -827,7 +973,8 @@ test("Manage Maintenance Items validates names and Selected Assets and supports 
   await form.props.onSubmit({ preventDefault() {} });
   assert.equal(ui.calls.catalogSaves.length, 1);
   assert.equal(ui.calls.catalogSaves[0].availabilityMode, "selected_assets");
-  assert.deepEqual(ui.calls.catalogSaves[0].selectedAssetIds, [uuid(1), uuid(2)]);
+  assert.equal(ui.calls.catalogSaves[0].currentAssetId, null);
+  assert.deepEqual(ui.calls.catalogSaves[0].selectedAssetIds, [uuid(2), uuid(3)]);
   assert.equal(ui.calls.catalogSaves[0].group, "components_other");
 });
 
@@ -875,9 +1022,14 @@ test("Maintenance Item Cancel restores persisted values and Archive requires con
   ui.render();
   ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Unsaved name" } });
   ui.render();
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  ui.input(`vehicles-maintenance-item-asset-${uuid(2)}`).props.onChange({ target: { checked: true } });
+  ui.render();
   ui.button("Cancel").props.onClick();
   ui.render();
   assert.equal(ui.input("vehicles-maintenance-item-name").props.value, "Synthetic Maintenance 301");
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "all_assets");
   assert.equal(ui.button("Save Changes").props.disabled, true);
   ui.button("Archive").props.onClick();
   ui.render();
