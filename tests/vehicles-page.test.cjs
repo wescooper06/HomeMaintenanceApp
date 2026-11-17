@@ -91,7 +91,7 @@ function harness(overrides = {}) {
   const effects = [];
   const documentListeners = new Map();
   const calls = {
-    listAssets: 0, workspaces: [], templates: 0, saves: [], creates: [], catalogReads: 0, catalogSaves: [],
+    listAssets: 0, workspaces: [], templates: 0, saves: [], creates: [], catalogReads: 0, catalogSaves: [], deletes: [],
   };
   let hookIndex = 0;
   let refIndex = 0;
@@ -108,6 +108,21 @@ function harness(overrides = {}) {
     || (entry.availabilityMode === "current_asset_only" && entry.currentAssetId === assetId)
     || (entry.availabilityMode === "selected_assets" && entry.selectedAssetIds.includes(assetId));
   let service = {
+    getAsset: async (id) => structuredClone(assetStore.find((entry) => entry.id === id)),
+    getAssetDeletionDependencies: async (id) => structuredClone(catalogStore.flatMap((entry) => {
+      const reason = entry.availabilityMode === "current_asset_only" && entry.currentAssetId === id
+        ? "current_asset_only" : entry.availabilityMode === "selected_assets" && !entry.archivedAt
+          && entry.selectedAssetIds.length === 1 && entry.selectedAssetIds[0] === id ? "last_selected_asset" : null;
+      return reason ? [{ id: entry.id, displayName: entry.displayName, reason, archived: Boolean(entry.archivedAt) }] : [];
+    })),
+    deleteAsset: async (request) => {
+      calls.deletes.push(structuredClone(request));
+      const index = assetStore.findIndex((entry) => entry.id === request.id);
+      assert(index >= 0);
+      assert.equal(assetStore[index].name, request.confirmationName);
+      assetStore.splice(index, 1);
+      return { status: "deleted", assetId: request.id, requestId: request.requestId };
+    },
     listAssets: async () => {
       calls.listAssets += 1;
       return structuredClone(assetStore);
@@ -419,8 +434,8 @@ test("Vehicles route resolves by path and hash and renders the authenticated des
 test("No assets renders a stable empty state without calling the workspace loader", async () => {
   const ui = harness({ initialAssets: [] });
   await ui.settle();
-  assert.match(ui.text(), /No vehicles yet/);
-  assert.match(ui.text(), /No vehicles yet/);
+  assert.match(ui.text(), /No vehicles or small engines yet\./);
+  assert(ui.button("+ Add Vehicle / Small Engine"));
   assert(ui.button("Manage Assets"));
   assert.equal(ui.calls.workspaces.length, 0);
   assert.equal(ui.button("Add Ongoing Record"), undefined);
@@ -431,7 +446,7 @@ test("Asset loading failure is distinct from a legitimate empty asset list", asy
   await ui.settle();
   assert.match(ui.text(), /assets could not be loaded/i);
   assert.doesNotMatch(ui.text(), /private backend detail/);
-  assert.doesNotMatch(ui.text(), /No vehicles yet/);
+  assert.doesNotMatch(ui.text(), /No vehicles or small engines yet/);
   assert(ui.button("Retry loading assets"));
 });
 
@@ -439,8 +454,8 @@ test("Manage Assets is available in the empty state and opens an accessible crea
   const ui = harness({ initialAssets: [] });
   await ui.settle();
   assert(ui.button("Manage Assets"));
-  assert(ui.button("Add an asset"));
-  assert.match(ui.text(), /No vehicles yet/);
+  assert(ui.button("+ Add Vehicle / Small Engine"));
+  assert.match(ui.text(), /No vehicles or small engines yet/);
   ui.button("Manage Assets").props.onClick();
   ui.render();
   assert.equal(ui.manageDialog.open, true);
@@ -1256,10 +1271,273 @@ test("Opening Manage Maintenance Items protects unsaved Ongoing and Asset editin
   assert.equal(assetUi.maintenanceDialog.open, true);
 });
 
-test("Manage Assets does not expose database writes or Delete Asset", () => {
+async function openAssetDeletion(ui) {
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.button("Delete Asset").props.disabled, false);
+  await ui.button("Delete Asset").props.onClick();
+  await ui.settle();
+}
+
+function typeAssetDeletionName(ui, name) {
+  ui.input("vehicles-delete-asset-name").props.onChange({ target: { value: name } });
+  ui.render();
+}
+
+test("Delete Asset warning displays every mixed blocker and excludes non-blocking associations without mutation", async () => {
+  const ui = harness({ initialMaintenanceItems: [
+    catalogItem(701, { displayName: "Current-only blocker", availabilityMode: "current_asset_only",
+      currentAssetId: uuid(1), archivedAt: "2026-01-01T00:00:00Z" }),
+    catalogItem(702, { displayName: "Final selection blocker", availabilityMode: "selected_assets", selectedAssetIds: [uuid(1)] }),
+    catalogItem(703, { displayName: "Active current-only blocker", availabilityMode: "current_asset_only", currentAssetId: uuid(1) }),
+    catalogItem(704, { displayName: "Second final selection blocker", availabilityMode: "selected_assets", selectedAssetIds: [uuid(1)] }),
+    catalogItem(705, { displayName: "Non-blocking shared selection", availabilityMode: "selected_assets", selectedAssetIds: [uuid(1), uuid(2)] }),
+    catalogItem(706, { displayName: "Non-blocking all assets" }),
+    catalogItem(707, { displayName: "Non-blocking archived selection", availabilityMode: "selected_assets",
+      selectedAssetIds: [uuid(1)], archivedAt: "2026-01-01T00:00:00Z" }),
+  ] });
+  await ui.settle();
+  await openAssetDeletion(ui);
+  assert.match(ui.text(), /Current-only blocker \(archived\): Current Asset Only/);
+  assert.match(ui.text(), /Final selection blocker: Last Selected Asset/);
+  assert.match(ui.text(), /Active current-only blocker: Current Asset Only/);
+  assert.match(ui.text(), /Second final selection blocker: Last Selected Asset/);
+  const warning = ui.find((node) => node.props.role === "alert"
+    && JSON.stringify(node).includes("Resolve their applicability"));
+  const displayed = ui.nodes().filter((node) => node.type === "li");
+  assert.equal(displayed.length, 4);
+  assert.doesNotMatch(JSON.stringify(warning), /Non-blocking/);
+  assert.match(ui.text(), /Resolve their applicability before deleting it/);
+  assert.equal(ui.button("Delete Asset").props.disabled, true);
+  assert.equal(ui.input("vehicles-delete-asset-name"), undefined);
+  await ui.button("Delete Asset").props.onClick();
+  assert.equal(ui.calls.deletes.length, 0);
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Synthetic car");
+  await ui.button("Delete Asset").props.onClick();
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  await ui.settle();
+  assert.equal(ui.manageDialog.open, false);
+  assert.equal(ui.maintenanceDialog.open, true);
+  assert.match(ui.text(), /Current-only blocker/);
+});
+
+test("Delete Asset exact typed-name contract, repeated Cancel, and stale confirmation cannot mutate", async () => {
+  const ui = harness();
+  await ui.settle();
+  await openAssetDeletion(ui);
+  assert.match(ui.text(), /permanently remove/);
+  assert.equal(ui.input("vehicles-delete-asset-name").props["aria-describedby"], "vehicles-delete-asset-warning");
+  assert(ui.nodes().some((node) => node.type === "label" && node.props.htmlFor === "vehicles-delete-asset-name"));
+  for (const value of ["", "Synthetic", "synthetic car", "Synthetic car "]) {
+    typeAssetDeletionName(ui, value);
+    assert.equal(ui.button("Delete Asset").props.disabled, true);
+    await ui.button("Delete Asset").props.onClick();
+    assert.equal(ui.calls.deletes.length, 0);
+  }
+  typeAssetDeletionName(ui, "Synthetic car");
+  assert.equal(ui.button("Delete Asset").props.disabled, false);
+  const staleConfirm = ui.button("Delete Asset").props.onClick;
+  const staleInput = ui.input("vehicles-delete-asset-name").props.onChange;
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  assert(ui.input("vehicles-managed-asset-name"));
+  assert.equal(ui.calls.deletes.length, 0);
+  await ui.button("Delete Asset").props.onClick();
+  await ui.settle();
+  staleInput({ target: { value: "Synthetic car" } });
+  ui.render();
+  assert.equal(ui.input("vehicles-delete-asset-name").props.value, "");
+  typeAssetDeletionName(ui, "Synthetic car");
+  await staleConfirm();
+  assert.equal(ui.calls.deletes.length, 0);
+  ui.find((node) => node.type === "dialog" && node.props["aria-labelledby"] === "vehicles-manage-assets-title")
+    .props.onCancel({ preventDefault() {} });
+  ui.render();
+  assert.equal(ui.manageDialog.open, true, "Escape cancels confirmation, not the manager");
+  assert.equal(ui.calls.deletes.length, 0);
+});
+
+test("Delete Asset removes exactly the managed identity, clears selected workspace, and supports last-asset empty state", async () => {
+  for (const initialAssets of [assets, [assets[0]]]) {
+    const ui = harness({ initialAssets });
+    await ui.settle();
+    await openAssetDeletion(ui);
+    typeAssetDeletionName(ui, "Synthetic car");
+    const submit = ui.button("Delete Asset").props.onClick;
+    await submit();
+    await ui.settle();
+    assert.equal(ui.calls.deletes.length, 1);
+    assert.equal(ui.calls.deletes[0].id, uuid(1));
+    assert.equal(ui.calls.deletes[0].expectedVersion, 4);
+    assert.equal(ui.calls.deletes[0].confirmationName, "Synthetic car");
+    assert.equal(ui.input("vehicles-delete-asset-name"), undefined);
+    assert.equal(ui.assetStore.some((entry) => entry.id === uuid(1)), false);
+    assert.equal(ui.manageDialog.open, true);
+    assert.equal(ui.calls.catalogSaves.length, 0);
+    await submit();
+    assert.equal(ui.calls.deletes.length, 1, "stale successful submit cannot repeat");
+    if (initialAssets.length > 1) {
+      assert.equal(ui.input("vehicles-asset-select").props.value, uuid(2));
+      assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Synthetic truck");
+      assert.doesNotMatch(ui.text(), /2026-02-01/);
+    } else {
+      assert.match(ui.text(), /No vehicles or small engines yet\./);
+      assert(ui.button("+ Add Vehicle / Small Engine"));
+      assert.equal(ui.button("Add Ongoing Record"), undefined);
+      ui.button("Add Asset").props.onClick();
+      ui.render();
+      assert.equal(ui.input("vehicles-managed-asset-name").props.value, "");
+    }
+  }
+});
+
+test("Delete Asset binds nonselected manager target and rejects stale manager renders", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  const staleOpen = ui.button("Delete Asset").props.onClick;
+  ui.find((node) => node.type === "button" && node.props.role === "listitem" && ui.text(node).includes("Synthetic truck"))
+    .props.onClick();
+  ui.render();
+  await staleOpen();
+  ui.render();
+  assert.equal(ui.input("vehicles-delete-asset-name"), undefined);
+  await ui.button("Delete Asset").props.onClick();
+  await ui.settle();
+  typeAssetDeletionName(ui, "Synthetic truck");
+  await ui.button("Delete Asset").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.deletes[0].id, uuid(2));
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+});
+
+test("Delete Asset refuses changed asset/preflight failures and never bypasses pending edits", async () => {
+  for (const overrides of [
+    { getAsset: async () => ({ ...assets[0], version: 99 }) },
+    { getAssetDeletionDependencies: async () => { throw new Error("private read failure"); } },
+  ]) {
+    const ui = harness(overrides);
+    await ui.settle();
+    await openAssetDeletion(ui);
+    assert(ui.nodes().some((node) => node.props.role === "alert"));
+    assert.equal(ui.button("Delete Asset").props.disabled, true);
+    assert.doesNotMatch(ui.text(), /private read failure/);
+    await ui.button("Delete Asset").props.onClick();
+    assert.equal(ui.calls.deletes.length, 0);
+  }
+  const ui = harness();
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  const staleOpen = ui.button("Delete Asset").props.onClick;
+  ui.input("vehicles-managed-asset-name").props.onChange({ target: { value: "Unsaved rename" } });
+  ui.render();
+  assert.equal(ui.button("Delete Asset").props.disabled, true);
+  await staleOpen();
+  ui.render();
+  assert.equal(ui.input("vehicles-delete-asset-name"), undefined);
+  assert.equal(ui.calls.deletes.length, 0);
+});
+
+test("Delete Asset pending/unknown result locks target and retries the exact request until reconciled", async () => {
+  let release;
+  const sent = [];
+  const ui = harness({ deleteAsset: (request) => {
+    sent.push(structuredClone(request));
+    if (sent.length === 1) return new Promise((_resolve, reject) => {
+      release = () => reject({ code: "unknown_outcome", retryDraft: request });
+    });
+    return Promise.resolve({ status: "deleted", assetId: request.id });
+  } });
+  await ui.settle();
+  await openAssetDeletion(ui);
+  typeAssetDeletionName(ui, "Synthetic car");
+  const submit = ui.button("Delete Asset").props.onClick;
+  const pending = submit();
+  ui.render();
+  assert.equal(ui.button("Cancel").props.disabled, true);
+  assert.equal(ui.shouldBlock(), true);
+  ui.blocker.state = "blocked";
+  ui.render();
+  assert.equal(ui.button("Discard changes"), undefined);
+  assert.match(ui.text(), /Stay on this page until asset deletion is confirmed/);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.blocker.state, "unblocked");
+  await submit();
+  assert.equal(sent.length, 1);
+  release();
+  await pending;
+  ui.render();
+  assert.equal(ui.input("vehicles-delete-asset-name").props.disabled, true);
+  assert.equal(ui.button("Cancel").props.disabled, true);
+  ui.blocker.state = "blocked";
+  ui.render();
+  assert.equal(ui.button("Discard changes"), undefined);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  assert(ui.button("Retry same deletion"));
+  await ui.button("Retry same deletion").props.onClick();
+  await ui.settle();
+  assert.deepEqual(sent[0], sent[1]);
+  assert.equal(ui.shouldBlock(), false);
+  assert.equal(ui.input("vehicles-delete-asset-name"), undefined);
+});
+
+test("Delete Asset cannot discard or operate during a shared Vehicles editing session", async () => {
+  const ui = harness();
+  await ui.settle();
+  enterOngoingEdit(ui);
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.button("Delete Asset").props.disabled, true, "unchanged Edit must be closed first");
+  await ui.button("Delete Asset").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-delete-asset-name"), undefined);
+  ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+  ui.render();
+  ui.input("vehicles-mechanic").props.onChange({ target: { value: "Keep exact Ongoing draft" } });
+  ui.render();
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.manageDialog.open, false);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-mechanic").props.value, "Keep exact Ongoing draft");
+  assert.equal(ui.calls.deletes.length, 0);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Delete Asset authorization/conflict/service failures preserve asset and show no false success", async () => {
+  for (const code of ["authorization_error", "version_conflict", "save_rejected", "asset_in_use"]) {
+    const ui = harness({ deleteAsset: async () => { throw { code }; } });
+    await ui.settle();
+    await openAssetDeletion(ui);
+    typeAssetDeletionName(ui, "Synthetic car");
+    await ui.button("Delete Asset").props.onClick();
+    ui.render();
+    assert.equal(ui.assetStore.length, 2);
+    assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+    assert.doesNotMatch(ui.text(), /Synthetic car deleted/);
+    assert(ui.nodes().some((node) => node.props.role === "alert"));
+    ui.button("Cancel").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Synthetic car");
+  }
+});
+
+test("Manage Assets uses service operations rather than direct database writes", () => {
   const source = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.jsx"), "utf8");
   assert.doesNotMatch(source, /\.from\s*\(|\.insert\s*\(|\.update\s*\(|\.delete\s*\(|create_vehicle_asset/);
-  assert.doesNotMatch(source, />\s*Delete Asset\s*</);
+  assert.match(source, /vehiclesService\.deleteAsset\(request\)/);
   assert.doesNotMatch(source, /\.from\s*\(|\.insert\s*\(|\.update\s*\(|\.delete\s*\(|save_maintenance_item/);
   assert.doesNotMatch(source, />\s*Delete Maintenance Item\s*</);
   assert.match(source, /vehiclesService\.saveMaintenanceItem/);

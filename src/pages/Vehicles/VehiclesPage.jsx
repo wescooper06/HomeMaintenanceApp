@@ -464,6 +464,7 @@ export default function VehiclesPage() {
   const [manageSaving, setManageSaving] = useState(false);
   const [manageError, setManageError] = useState("");
   const [manageStatus, setManageStatus] = useState("");
+  const [assetDeletion, setAssetDeletion] = useState(null);
   const [manageMaintenanceItemsOpen, setManageMaintenanceItemsOpen] = useState(false);
   const [maintenanceItems, setMaintenanceItems] = useState(null);
   const [maintenanceItemsLoading, setMaintenanceItemsLoading] = useState(false);
@@ -493,6 +494,11 @@ export default function VehiclesPage() {
   const manageDetailsRef = useRef(null);
   const recommendedDescriptionRef = useRef(null);
   const completedDescriptionRef = useRef(null);
+  const assetDeletionRef = useRef(null);
+  const assetDeletionInputRef = useRef(null);
+  const assetDeletionCancelRef = useRef(null);
+  const assetDeleteButtonRef = useRef(null);
+  const assetDeletionAllowedRef = useRef(null);
   const keySession = useRef(0);
 
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
@@ -567,9 +573,23 @@ export default function VehiclesPage() {
   const saveUncertain = retryDraft !== null;
   const manageAssetDraftDirty = manageDraftIsDirty();
   const hasMaintenanceItemDraft = Boolean(maintenanceItemDraft);
+  const assetDeletionBlocked = dirty || sessionEditing || saving || saveUncertain || manageSaving
+    || Boolean(manageRetryDraft) || manageAssetDraftDirty || maintenanceItemDirty
+    || maintenanceItemSaving || Boolean(maintenanceItemRetryDraft);
+  assetDeletionAllowedRef.current = { id: manageDraft?.id, blocked: assetDeletionBlocked };
+  const assetDeletionUnresolved = Boolean(assetDeletion?.pending || assetDeletion?.retryDraft);
   const blocker = useBlocker(() => dirty || saving || saveUncertain
     || maintenanceItemDirty || maintenanceItemSaving || maintenanceItemRetryDraft !== null
-    || (manageAssetsOpen && manageAssetDraftDirty) || manageSaving || manageRetryDraft !== null);
+    || (manageAssetsOpen && manageAssetDraftDirty) || manageSaving || manageRetryDraft !== null
+    || assetDeletionUnresolved);
+
+  const deletionFocusToken = assetDeletion?.token;
+  const deletionInputReady = Boolean(assetDeletion && !assetDeletion.loading && !assetDeletion.blockers.length);
+  useEffect(() => {
+    if (deletionInputReady) assetDeletionInputRef.current?.focus();
+    else if (deletionFocusToken) assetDeletionCancelRef.current?.focus();
+    else if (!deletionFocusToken) assetDeleteButtonRef.current?.focus();
+  }, [deletionFocusToken, deletionInputReady]);
 
   useEffect(() => {
     if (!manageMenuOpen) return undefined;
@@ -677,7 +697,8 @@ export default function VehiclesPage() {
   useEffect(() => {
     if (!dirty && !saving && !saveUncertain && !maintenanceItemDirty
       && !maintenanceItemSaving && !maintenanceItemRetryDraft
-      && !(manageAssetsOpen && manageAssetDraftDirty) && !manageSaving && !manageRetryDraft) return undefined;
+      && !(manageAssetsOpen && manageAssetDraftDirty) && !manageSaving && !manageRetryDraft
+      && !assetDeletionUnresolved) return undefined;
     const beforeUnload = (event) => {
       event.preventDefault();
       event.returnValue = "";
@@ -685,7 +706,7 @@ export default function VehiclesPage() {
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
   }, [dirty, saving, saveUncertain, maintenanceItemDirty, maintenanceItemSaving, maintenanceItemRetryDraft,
-    manageAssetsOpen, manageAssetDraftDirty, manageSaving, manageRetryDraft]);
+    manageAssetsOpen, manageAssetDraftDirty, manageSaving, manageRetryDraft, assetDeletionUnresolved]);
 
   function resetDraft() {
     setWorkingRecords(copyRecords(baselineRecords));
@@ -853,6 +874,7 @@ export default function VehiclesPage() {
   }
 
   function selectAsset(assetId) {
+    if (assetDeletionRef.current) return;
     if (assetId === selectedAssetId) return;
     if (dirty || saveUncertain) {
       setConfirmation({ kind: "asset", value: assetId });
@@ -901,7 +923,8 @@ export default function VehiclesPage() {
 
   function openManageMaintenanceItems() {
     if (manageMaintenanceItemsOpen) return;
-    if (saving || saveUncertain || manageSaving || manageRetryDraft || maintenanceItemSaving) return;
+    if (saving || saveUncertain || manageSaving || manageRetryDraft || maintenanceItemSaving
+      || assetDeletionRef.current?.pending || assetDeletionRef.current?.retryDraft) return;
     if (manageAssetsOpen) {
       if (manageDraftIsDirty()) {
         setConfirmation({ kind: "manage-items-open-assets" });
@@ -1249,6 +1272,10 @@ export default function VehiclesPage() {
 
   function requestCloseManageAssets() {
     if (manageSaving) return;
+    if (assetDeletionRef.current) {
+      cancelAssetDeletion();
+      return;
+    }
     if (manageDraftIsDirty() || manageRetryDraft) {
       setConfirmation({ kind: "manage-assets-close" });
       return;
@@ -1257,6 +1284,9 @@ export default function VehiclesPage() {
   }
 
   function closeManageAssets() {
+    if (assetDeletionRef.current?.pending || assetDeletionRef.current?.retryDraft) return;
+    assetDeletionRef.current = null;
+    setAssetDeletion(null);
     setManageAssetsOpen(false);
     setManageDraft(null);
     setManageRetryDraft(null);
@@ -1266,7 +1296,7 @@ export default function VehiclesPage() {
   }
 
   function chooseManageAsset(nextDraft) {
-    if (manageSaving || nextDraft.id === manageDraft?.id) return;
+    if (assetDeletionRef.current || manageSaving || nextDraft.id === manageDraft?.id) return;
     if (manageDraftIsDirty() || manageRetryDraft) {
       setConfirmation({ kind: "manage-assets-switch", value: nextDraft });
       return;
@@ -1279,6 +1309,7 @@ export default function VehiclesPage() {
   }
 
   function editManagedAsset(update) {
+    if (assetDeletionRef.current) return;
     setManageDraft((current) => current ? { ...current, ...update } : current);
     setManageError("");
     setManageStatus("");
@@ -1320,7 +1351,7 @@ export default function VehiclesPage() {
 
   async function saveManagedAsset(event) {
     event?.preventDefault();
-    if (!manageDraft || manageSaveLock.current || manageSaving || !manageDraftIsDirty()) return;
+    if (assetDeletionRef.current || !manageDraft || manageSaveLock.current || manageSaving || !manageDraftIsDirty()) return;
     const name = manageDraft.name.trim();
     if (!name || [...name].length > 120 || !["miles", "hours", "none"].includes(manageDraft.usageUnit)) {
       setManageError("Enter a nonblank asset name of 1–120 characters and choose a supported Usage Unit.");
@@ -1378,6 +1409,103 @@ export default function VehiclesPage() {
   function retryManagedAsset() {
     if (!manageRetryDraft || manageSaveLock.current) return;
     saveManagedAsset();
+  }
+
+  function updateAssetDeletion(session, update) {
+    if (assetDeletionRef.current !== session) return;
+    Object.assign(session, update);
+    setAssetDeletion({ ...session });
+  }
+
+  function cancelAssetDeletion() {
+    const session = assetDeletionRef.current;
+    if (session?.pending || session?.retryDraft) return;
+    assetDeletionRef.current = null;
+    setAssetDeletion(null);
+    assetDeleteButtonRef.current?.focus();
+  }
+
+  async function beginAssetDeletion() {
+    if (assetDeletionRef.current || !manageDraft || manageDraft.isNew || manageDraftIsDirty()
+      || dirty || sessionEditing || saving || saveUncertain || manageSaving || manageRetryDraft
+      || maintenanceItemDirty || maintenanceItemSaving || maintenanceItemRetryDraft
+      || assetDeletionAllowedRef.current?.id !== manageDraft.id || assetDeletionAllowedRef.current?.blocked) return;
+    const asset = assets?.find((entry) => entry.id === manageDraft.id);
+    if (!asset) {
+      setManageError("This asset is no longer available. Reload the asset list.");
+      return;
+    }
+    const session = { token: crypto.randomUUID(), asset: { ...asset }, loading: true, pending: false,
+      blockers: [], text: "", error: "", retryDraft: null };
+    assetDeletionRef.current = session;
+    setAssetDeletion({ ...session });
+    try {
+      const [fresh, blockers] = await Promise.all([
+        vehiclesService.getAsset(asset.id), vehiclesService.getAssetDeletionDependencies(asset.id),
+      ]);
+      if (fresh.id !== asset.id || fresh.version !== asset.version || fresh.name !== asset.name) {
+        updateAssetDeletion(session, { loading: false, error: "This asset changed. Cancel and reload assets before deleting.", stale: true });
+        return;
+      }
+      updateAssetDeletion(session, { loading: false, blockers });
+    } catch {
+      updateAssetDeletion(session, { loading: false, stale: true, error: "Deletion dependencies could not be checked. Cancel and try again." });
+    }
+  }
+
+  async function confirmAssetDeletion(token) {
+    const session = assetDeletionRef.current;
+    if (!session || session.token !== token || session.pending || session.loading || session.stale || session.blockers.length
+      || session.text !== session.asset.name || dirty || saving || saveUncertain || manageSaving
+      || assetDeletionAllowedRef.current?.blocked) return;
+    const request = session.retryDraft || {
+      id: session.asset.id, expectedVersion: session.asset.version,
+      confirmationName: session.text, requestId: crypto.randomUUID(),
+    };
+    updateAssetDeletion(session, { pending: true, error: "" });
+    try {
+      const result = await vehiclesService.deleteAsset(request);
+      if (result?.status !== "deleted" || result.assetId !== session.asset.id) {
+        updateAssetDeletion(session, { pending: false, retryDraft: request,
+          error: "Deletion could not be confirmed. Retry the same deletion to reconcile its outcome." });
+        return;
+      }
+      const remaining = assets.filter((entry) => entry.id !== session.asset.id);
+      setAssets(remaining);
+      if (selectedAssetId === session.asset.id) {
+        resetDraft();
+        setStatus("");
+        setWorkspace(null);
+        setWorkingRecords([]);
+        setBaselineRecords([]);
+        setRecommendedRecords([]);
+        setCompletedRecords([]);
+        setSelectedRecordId("");
+        setSelectedAssetId(remaining[0]?.id || "");
+        setWorkspaceLoading(Boolean(remaining.length));
+        setWorkspaceError("");
+      } else {
+        setWorkspaceAttempt((attempt) => attempt + 1);
+      }
+      setManageAssetId(remaining[0]?.id || "");
+      setManageDraft(remaining.length ? persistedAssetDraft(remaining[0]) : null);
+      setManageStatus(`${session.asset.name} deleted. Shared Maintenance Items were preserved.`);
+      assetDeletionRef.current = null;
+      setAssetDeletion(null);
+      assetsNameRef.current?.focus();
+    } catch (error) {
+      updateAssetDeletion(session, {
+        pending: false, retryDraft: error?.retryDraft || session.retryDraft || null,
+        blockers: error?.blockers || [],
+        stale: !error?.retryDraft && !session.retryDraft
+          && error?.code !== "unknown_outcome" && error?.code !== "asset_in_use",
+        error: error?.code === "unknown_outcome"
+          ? "Deletion could not be confirmed. Keep this dialog open and retry the same deletion to reconcile its outcome."
+          : error?.code === "asset_in_use"
+            ? "This asset is still used by Maintenance Items. Cancel and reopen Delete Asset to refresh the blocking items."
+            : serviceErrorMessages[error?.code] || "The asset could not be deleted. Cancel and reload before trying again.",
+      });
+    }
   }
 
   function selectRecord(recordId) {
@@ -1465,6 +1593,7 @@ export default function VehiclesPage() {
   }
 
   function finishConfirmation() {
+    if (assetDeletionRef.current?.pending || assetDeletionRef.current?.retryDraft) return;
     const action = confirmation;
     setConfirmation(null);
     if (!action) return;
@@ -1795,7 +1924,8 @@ export default function VehiclesPage() {
   }
 
   function handleRouteDiscard() {
-    if (saveUncertain || saving || maintenanceItemSaving || maintenanceItemRetryDraft) return;
+    if (saveUncertain || saving || maintenanceItemSaving || maintenanceItemRetryDraft
+      || assetDeletionRef.current?.pending || assetDeletionRef.current?.retryDraft) return;
     resetDraft();
     if (maintenanceItemDirty) closeManageMaintenanceItems();
     if (manageAssetsOpen && manageDraftIsDirty()) closeManageAssets();
@@ -1842,7 +1972,9 @@ export default function VehiclesPage() {
     }
     return options.sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
   };
-  const confirmationTitle = confirmation?.kind === "completed-delete"
+  const confirmationTitle = assetDeletionUnresolved
+    ? "Asset deletion needs confirmation"
+    : confirmation?.kind === "completed-delete"
     ? "Queue deletion of this Completed Service record?"
     : confirmation?.kind === "recommended-delete"
     ? "Queue deletion of this Recommended Service record?"
@@ -1887,7 +2019,7 @@ export default function VehiclesPage() {
             <span className="lm-form-label">Vehicle</span>
             <select id="vehicles-asset-select" className={`lm-form-control ${styles.assetSelectorControl}`}
               value={selectedAssetId}
-              disabled={!assets?.length || saving || saveUncertain || dirty}
+              disabled={!assets?.length || saving || saveUncertain || dirty || Boolean(assetDeletion)}
               onChange={(event) => selectAsset(event.target.value)}>
               {assets?.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
             </select>
@@ -1969,10 +2101,10 @@ export default function VehiclesPage() {
       </div>}
       {assets?.length === 0 && !assetError && <section className={`lm-surface ${styles.empty}`}
         aria-labelledby="vehicles-no-assets-title">
-        <h2 id="vehicles-no-assets-title">No vehicles yet</h2>
+        <h2 id="vehicles-no-assets-title">No vehicles or small engines yet.</h2>
         <p>Add a vehicle or small engine to begin its maintenance workspace.</p>
         <button ref={manageButtonRef} type="button" className="lm-button lm-button--primary"
-          onClick={openManageAssets} disabled={saving || saveUncertain}>Add an asset</button>
+          onClick={openManageAssets} disabled={saving || saveUncertain}>+ Add Vehicle / Small Engine</button>
       </section>}
       {assets?.length > 0 && (workspaceLoading || !workspace) && !workspaceError
         && <p className="lm-loading-state" role="status">Loading vehicle maintenance...</p>}
@@ -2505,9 +2637,51 @@ export default function VehiclesPage() {
             <p>Vehicles and small engines share the same asset list.</p>
           </div>
           <button type="button" className="lm-button lm-button--secondary" onClick={requestCloseManageAssets}
-            disabled={manageSaving} aria-label="Close Manage Assets">Close</button>
+            disabled={manageSaving || Boolean(assetDeletion?.pending || assetDeletion?.retryDraft)}
+            aria-label="Close Manage Assets">Close</button>
         </div>
-        <div className={styles.assetManager}>
+        {assetDeletion ? <section className={styles.assetDeletion} aria-labelledby="vehicles-delete-asset-title"
+          aria-busy={assetDeletion.loading || assetDeletion.pending}>
+          <h3 id="vehicles-delete-asset-title">Delete {assetDeletion.asset.name}?</h3>
+          <p id="vehicles-delete-asset-warning">Deleting this asset will permanently remove the vehicle and its associated
+            maintenance information, including its service history, intervals, notes, and links. Shared Maintenance Items are kept.</p>
+          {assetDeletion.loading && <p role="status">Checking Maintenance Item dependencies...</p>}
+          {assetDeletion.blockers.length > 0 && <div role="alert">
+            <p>This asset is still used by Maintenance Items. Resolve their applicability before deleting it.</p>
+            <ul>{assetDeletion.blockers.map((entry) => <li key={entry.id}>
+              {entry.displayName}{entry.archived ? " (archived)" : ""}: {entry.reason === "current_asset_only"
+                ? "Current Asset Only" : "Last Selected Asset"}
+            </li>)}</ul>
+            <button type="button" className="lm-button lm-button--secondary" onClick={openManageMaintenanceItems}>
+              Manage Maintenance Items
+            </button>
+          </div>}
+          {!assetDeletion.loading && assetDeletion.blockers.length === 0 && <label className="lm-form-field"
+            htmlFor="vehicles-delete-asset-name">
+            <span className="lm-form-label">Type: {assetDeletion.asset.name}</span>
+            <input ref={assetDeletionInputRef} id="vehicles-delete-asset-name" className="lm-form-control"
+              type="text" autoComplete="off" value={assetDeletion.text}
+              aria-describedby="vehicles-delete-asset-warning"
+              disabled={assetDeletion.pending || Boolean(assetDeletion.retryDraft) || assetDeletion.stale}
+              onChange={(event) => {
+                const session = assetDeletionRef.current;
+                if (session?.token === assetDeletion.token && !session.pending && !session.retryDraft) {
+                  updateAssetDeletion(session, { text: event.target.value });
+                }
+              }} />
+          </label>}
+          {assetDeletion.error && <p role="alert" className="lm-feedback lm-feedback--error">{assetDeletion.error}</p>}
+          <div className={styles.dialogActions}>
+            <button ref={assetDeletionCancelRef} type="button" className="lm-button lm-button--secondary" onClick={cancelAssetDeletion}
+              disabled={assetDeletion.pending || Boolean(assetDeletion.retryDraft)}>Cancel</button>
+            <button type="button" className="lm-button lm-button--danger"
+              onClick={() => confirmAssetDeletion(assetDeletion.token)}
+              disabled={assetDeletion.loading || assetDeletion.pending || assetDeletion.stale
+                || assetDeletion.blockers.length > 0 || assetDeletion.text !== assetDeletion.asset.name}>
+              {assetDeletion.pending ? "Deleting..." : assetDeletion.retryDraft ? "Retry same deletion" : "Delete Asset"}
+            </button>
+          </div>
+        </section> : <div className={styles.assetManager}>
           <section aria-label="Assets">
             <div className={styles.sectionHeading}>
               <h3>Assets</h3>
@@ -2567,9 +2741,12 @@ export default function VehiclesPage() {
                 disabled={manageSaving || Boolean(manageRetryDraft) || !manageDraftIsDirty()}>
                 {manageSaving ? "Saving..." : manageDraft.isNew ? "Save Asset" : "Save Changes"}
               </button>
+              {!manageDraft.isNew && <button ref={assetDeleteButtonRef} type="button" className="lm-button lm-button--danger"
+                onClick={beginAssetDeletion} disabled={assetDeletionBlocked}>Delete Asset</button>}
             </div>
+            {!manageDraft.isNew && assetDeletionBlocked && <p>Finish or cancel pending edits and saves before deleting an asset.</p>}
           </form>}
-        </div>
+        </div>}
       </dialog>
 
       <dialog ref={maintenanceItemsDialogRef} className={`${styles.dialog} ${styles.maintenanceItemsDialog}`}
@@ -2752,7 +2929,9 @@ export default function VehiclesPage() {
           else setConfirmation(null);
         }}>
         <h2 id="vehicles-confirm-title">{confirmationTitle}</h2>
-        <p>{["delete", "recommended-delete", "completed-delete"].includes(confirmation?.kind)
+        <p>{assetDeletionUnresolved
+          ? "Stay on this page until asset deletion is confirmed. If its outcome is unknown, retry the same deletion."
+          : ["delete", "recommended-delete", "completed-delete"].includes(confirmation?.kind)
           ? "The record will be removed from the draft and deleted only after Save Changes."
           : confirmation?.kind === "maintenance-item-archive"
             ? "The item will be archived, not deleted. It remains available to historical records and is excluded from future Ongoing drafts."
@@ -2786,7 +2965,7 @@ export default function VehiclesPage() {
             </button>
           )}
           {confirmation && !["delete", "recommended-delete", "completed-delete", "maintenance-item-archive"].includes(confirmation.kind)
-            && !saveUncertain && !saving
+            && !saveUncertain && !saving && !assetDeletionUnresolved
             && !maintenanceItemSaving && !maintenanceItemRetryDraft
             && <button type="button"
               className="lm-button lm-button--danger" onClick={finishConfirmation}>
@@ -2794,7 +2973,7 @@ export default function VehiclesPage() {
                 ? "Discard edits" : "Discard and continue"}
             </button>}
           {blocker.state === "blocked" && !confirmation && !saving && !saveUncertain
-            && !maintenanceItemSaving && !maintenanceItemRetryDraft
+            && !maintenanceItemSaving && !maintenanceItemRetryDraft && !assetDeletionUnresolved
             && <button type="button" className="lm-button lm-button--danger" onClick={handleRouteDiscard}>
               Discard changes
             </button>}

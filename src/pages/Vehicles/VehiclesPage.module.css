@@ -723,6 +723,11 @@
   overflow: auto;
 }
 
+.assetDeletion {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .maintenanceItemsDialog {
   width: min(68rem, calc(100vw - 32px));
   max-height: min(52rem, calc(100vh - 32px));

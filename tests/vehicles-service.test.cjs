@@ -147,6 +147,82 @@ test("VEHICLES: asset list uses mapped fields and deterministic case-insensitive
   assert.deepEqual(asPlain(await setup().service.listAssets()), []);
 });
 
+test("VEHICLES: Delete Asset preflight identifies both dependency classes without RPC or catalog writes", async () => {
+  const { service, client } = setup({
+    maintenance_items: [
+      makeItem(90, { availability_mode: "current_asset_only", current_asset_id: uuid(1), archived_at: now }),
+      makeItem(91, { availability_mode: "selected_assets" }),
+      makeItem(92, { availability_mode: "selected_assets" }),
+      makeItem(93, { availability_mode: "selected_assets", archived_at: now }),
+      makeItem(94, { availability_mode: "current_asset_only", current_asset_id: uuid(1) }),
+      makeItem(95, { availability_mode: "selected_assets" }),
+      makeItem(96),
+    ],
+    vehicle_maintenance_item_assets: [
+      { maintenance_item_id: uuid(91), asset_id: uuid(1) },
+      { maintenance_item_id: uuid(92), asset_id: uuid(1) },
+      { maintenance_item_id: uuid(92), asset_id: uuid(2) },
+      { maintenance_item_id: uuid(93), asset_id: uuid(1) },
+      { maintenance_item_id: uuid(95), asset_id: uuid(1) },
+    ],
+  });
+  const expected = [
+    [uuid(90), "current_asset_only", true], [uuid(91), "last_selected_asset", false],
+    [uuid(94), "current_asset_only", false], [uuid(95), "last_selected_asset", false],
+  ];
+  assert.deepEqual(asPlain(await service.getAssetDeletionDependencies(uuid(1)))
+    .map((entry) => [entry.id, entry.reason, entry.archived]), expected);
+  await assert.rejects(service.deleteAsset({ id: uuid(1), expectedVersion: 3, confirmationName: "Synthetic vehicle" }),
+    (error) => {
+      assert.equal(error.code, "asset_in_use");
+      assert.deepEqual(asPlain(error.blockers).map((entry) => [entry.id, entry.reason, entry.archived]), expected);
+      return true;
+    });
+  assert.equal(client.control.calls.some((call) => call.rpc), false);
+});
+
+test("VEHICLES: Delete Asset maps exact identity/name/version and reconciles only a matching receipt", async () => {
+  const { service, client } = setup();
+  const input = { id: uuid(1), expectedVersion: 3, confirmationName: "Exact name ", requestId: uuid(99) };
+  client.control.rpcResult = { ok: true, deleted: true, asset_id: input.id, request_id: input.requestId, replayed: true };
+  assert.equal((await service.deleteAsset(input)).status, "deleted");
+  assert.deepEqual(asPlain(client.control.calls.find((call) => call.rpc)), {
+    rpc: "delete_vehicle_asset", payload: { p_request: {
+      asset_id: input.id, expected_version: 3, confirmation_name: "Exact name ", request_id: input.requestId,
+    } },
+  });
+  client.control.rpcResult.asset_id = uuid(2);
+  await assert.rejects(service.deleteAsset(input),
+    (error) => error.code === "unknown_outcome" && JSON.stringify(error.retryDraft) === JSON.stringify(input));
+});
+
+test("VEHICLES: Delete Asset normalizes rejection/authorization/unknown outcomes and rejects invalid input", async () => {
+  const { service, client } = setup();
+  const input = { id: uuid(1), expectedVersion: 3, confirmationName: "Synthetic vehicle", requestId: uuid(98) };
+  for (const code of ["asset_in_use", "version_conflict", "not_found", "authorization_error"]) {
+    client.control.rpcError = { code: "P0001", details: JSON.stringify({ code }), message: "private details" };
+    await assert.rejects(service.deleteAsset(input), (error) => error.code === code && !error.message.includes("private"));
+  }
+  client.control.rpcError = { code: "P0001", details: JSON.stringify({
+    code: "asset_in_use", context: { items: [
+      { id: uuid(44), display_name: "Concurrent blocker", reason: "current_asset_only", archived: true },
+    ] },
+  }) };
+  await assert.rejects(service.deleteAsset(input), (error) => error.code === "asset_in_use"
+    && error.blockers[0].displayName === "Concurrent blocker" && error.blockers[0].archived === true);
+  client.control.rpcError = { code: "42501" };
+  await assert.rejects(service.deleteAsset(input), (error) => error.code === "authorization_error");
+  client.control.rpcError = null;
+  client.control.rpcReject = new Error("transport lost after commit");
+  await assert.rejects(service.deleteAsset(input), (error) => error.code === "unknown_outcome"
+    && error.retryDraft.requestId === input.requestId);
+  for (const patch of [{ expectedVersion: 0 }, { confirmationName: "" }, { confirmationName: null }, { extra: true }]) {
+    const before = client.control.calls.length;
+    await assert.rejects(service.deleteAsset({ ...input, ...patch }), (error) => error.code === "validation_error");
+    assert.equal(client.control.calls.length, before);
+  }
+});
+
 test("VEHICLES: asset creation trims and maps the atomic RPC response without table writes", async () => {
   const { service, client } = setup();
   const serviceSource = fs.readFileSync(path.join(root, "src", "services", "vehiclesService.js"), "utf8");

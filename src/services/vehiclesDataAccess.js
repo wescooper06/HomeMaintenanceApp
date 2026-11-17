@@ -195,6 +195,18 @@ export function createVehiclesDataAccess(client) {
       }
       return response.data;
     },
+    async deleteAsset(request) {
+      let response;
+      try {
+        response = assertResponse(
+          await client.rpc("delete_vehicle_asset", { p_request: request }), "delete asset"
+        );
+      } catch (error) {
+        if (error instanceof VehiclesDataAccessError) throw error;
+        throw new VehiclesDataAccessError("delete asset", error);
+      }
+      return response.data;
+    },
     async saveMaintenanceItem(request) {
       let response;
       try {

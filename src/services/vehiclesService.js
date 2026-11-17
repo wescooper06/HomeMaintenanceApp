@@ -111,6 +111,7 @@ export class VehiclesServiceError extends Error {
     this.code = code;
     if (metadata.requestId) this.requestId = metadata.requestId;
     if (metadata.retryDraft) this.retryDraft = metadata.retryDraft;
+    if (metadata.blockers) this.blockers = metadata.blockers;
   }
 }
 
@@ -555,6 +556,7 @@ const SAVE_ERROR_MESSAGES = {
   duplicate_interval: "An interval already exists for that Maintenance Item.",
   item_id_conflict: "This Maintenance Item ID is already assigned to incompatible data.",
   item_archived_or_unavailable: "A Maintenance Item is no longer available for this asset.",
+  asset_in_use: "This asset is still used by Maintenance Items. Resolve applicability before deleting it.",
 };
 
 function validResult(data, request) {
@@ -902,7 +904,17 @@ function mapMaintenanceItemSaveResult(data, request) {
   };
 }
 
-// Asset deletion is intentionally omitted because no approved persistence operation exists.
+function assetDeletionDependencies(catalog, assetId) {
+  return catalog.flatMap((item) => {
+    const reason = item.availabilityMode === "current_asset_only" && item.currentAssetId === assetId
+      ? "current_asset_only"
+      : item.availabilityMode === "selected_assets" && item.archivedAt === null
+        && item.selectedAssetIds.includes(assetId) && item.selectedAssetIds.length === 1
+        ? "last_selected_asset" : null;
+    return reason ? [{ id: item.id, displayName: item.displayName, reason, archived: item.archivedAt !== null }] : [];
+  });
+}
+
 export function createVehiclesService(clientProvider = getSupabaseClient) {
   if (typeof clientProvider !== "function") {
     throw new TypeError("Vehicles service requires a Supabase client provider.");
@@ -995,6 +1007,64 @@ export function createVehiclesService(clientProvider = getSupabaseClient) {
       selectedAssets.get(itemId).push(assetId);
     }
     return rows.map((row) => mapMaintenanceItem(row, selectedAssets.get(row.id)));
+  }
+
+  async function getAssetDeletionDependencies(assetId) {
+    assertUuid(assetId, "Asset ID");
+    return read(async (access) => assetDeletionDependencies(await readCatalog(access), assetId));
+  }
+
+  async function deleteAsset(input) {
+    assertObject(input, "Asset deletion");
+    assertAllowedKeys(input, ["id", "expectedVersion", "confirmationName", "requestId"], "Asset deletion");
+    const id = assertUuid(input.id, "Asset ID");
+    if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion <= 0) {
+      throw new VehiclesServiceError("validation_error", "Asset deletion requires an expected version.");
+    }
+    const expectedVersion = input.expectedVersion;
+    if (typeof input.confirmationName !== "string" || !input.confirmationName.trim()
+      || [...input.confirmationName].length > 120) {
+      throw new VehiclesServiceError("validation_error", "Type the exact asset name to confirm deletion.");
+    }
+    const requestId = input.requestId === undefined ? newRequestId() : assertUuid(input.requestId, "Request ID");
+    const retryDraft = { id, expectedVersion, confirmationName: input.confirmationName, requestId };
+    const blockers = await getAssetDeletionDependencies(id);
+    if (blockers.length) {
+      throw new VehiclesServiceError("asset_in_use", SAVE_ERROR_MESSAGES.asset_in_use, { blockers });
+    }
+    let response;
+    try {
+      response = await getAccess().deleteAsset({
+        request_id: requestId, asset_id: id, expected_version: expectedVersion,
+        confirmation_name: input.confirmationName,
+      });
+    } catch (error) {
+      const cause = error instanceof VehiclesDataAccessError ? error.cause : error;
+      const code = cause?.code === "42501" ? "authorization_error" : parseRpcCode(cause);
+      if (code && SAVE_ERROR_MESSAGES[code]) {
+        const items = code === "asset_in_use" ? JSON.parse(cause.details).context?.items : null;
+        const rpcBlockers = Array.isArray(items) ? items.map((item) => {
+          assertObject(item, "Blocking Maintenance Item");
+          if (!["current_asset_only", "last_selected_asset"].includes(item.reason)) failData();
+          return {
+            id: assertUuid(item.id, "Blocking Maintenance Item ID"),
+            displayName: requiredText(item.display_name), reason: item.reason, archived: item.archived === true,
+          };
+        }) : [];
+        throw new VehiclesServiceError(code, SAVE_ERROR_MESSAGES[code], { requestId, blockers: rpcBlockers });
+      }
+      const translated = translateSaveError(error, retryDraft, requestId);
+      throw new VehiclesServiceError(translated.code, translated.code === "unknown_outcome"
+        ? "Asset deletion could not be confirmed. Retry this exact request to reconcile its outcome."
+        : translated.message, { requestId, ...(translated.retryDraft ? { retryDraft } : {}) });
+    }
+    if (!response || response.ok !== true || response.deleted !== true || response.asset_id !== id
+      || response.request_id !== requestId || typeof response.replayed !== "boolean") {
+      throw new VehiclesServiceError("unknown_outcome",
+        "Asset deletion could not be confirmed. Retry this exact request to reconcile its outcome.",
+        { requestId, retryDraft });
+    }
+    return { status: "deleted", assetId: id, requestId, replayed: response.replayed };
   }
 
   async function readAsset(access, assetId) {
@@ -1195,6 +1265,8 @@ export function createVehiclesService(clientProvider = getSupabaseClient) {
   return Object.freeze({
     listAssets: () => read(async (access) => sortAssets((await access.listAssets()).map(mapAsset))),
     createAsset,
+    deleteAsset,
+    getAssetDeletionDependencies,
     getAsset: (assetId) => read((access) => readAsset(access, assetId)),
     loadVehicleWorkspace: readWorkspace,
     listMaintenanceItems: () => read(readCatalog),

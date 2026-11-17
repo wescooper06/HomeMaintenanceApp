@@ -13,6 +13,7 @@ const migrations = [
   "202611110002_vehicles_save_changes_rpc.sql",
   "202611130001_vehicles_asset_creation_rpc.sql",
   "202611130002_vehicles_maintenance_item_catalog_rpc.sql",
+  "202611170001_vehicles_asset_deletion_rpc.sql",
 ].map((name) => fs.readFileSync(path.join(root, "supabase", "migrations", name), "utf8"));
 const ownerA = "10000000-0000-4000-8000-000000000001";
 const ownerB = "10000000-0000-4000-8000-000000000002";
@@ -306,6 +307,51 @@ test("real PostgreSQL 18.6 validates catalog migration, atomic applicability, lo
           FROM public.vehicle_maintenance_item_assets WHERE maintenance_item_id=${quote(itemId)}::uuid`),
         [assets[0], assets[2]].sort());
         assert.equal(await sql(`SELECT version FROM public.maintenance_items WHERE id=${quote(itemId)}::uuid`), "2");
+      });
+      await t.test("concurrent asset deletions serialize and cannot remove the last active applicability", async () => {
+        const ids = [uuid(), uuid()].sort();
+        await sql(`INSERT INTO public.vehicles_assets(owner_id,id,name,usage_unit) VALUES
+          ${ids.map((id) => `(${quote(ownerA)}::uuid,${quote(id)}::uuid,'Concurrent deletion','miles')`).join(",")}`);
+        const itemId = uuid();
+        await json(catalogSql(createRequest(itemId, "Concurrent deletion catalog", "selected_assets", ids)));
+        const before = await json(`SELECT to_jsonb(mi) FROM public.maintenance_items mi WHERE id=${quote(itemId)}::uuid`);
+        const deletion = (id) => {
+          const payload = {
+            request_id: uuid(), asset_id: id, expected_version: 1, confirmation_name: "Concurrent deletion",
+          };
+          return `SET ROLE authenticated; SET request.jwt.claim.sub=${quote(ownerA)};
+            SELECT public.delete_vehicle_asset(${quote(JSON.stringify(payload))}::jsonb);`;
+        };
+        const first = sql(`SET application_name='vehicles_delete_first'; BEGIN;
+          ${deletion(ids[0])} SELECT pg_sleep(0.5); COMMIT;`);
+        await until(async () => (await sql(`SELECT count(*) FROM pg_stat_activity
+          WHERE application_name='vehicles_delete_first' AND wait_event='PgSleep'`, "postgres")) === "1",
+        "first deletion to hold catalog lock");
+        await assert.rejects(sql(deletion(ids[1])), /"code":\s*"asset_in_use"/);
+        await first;
+        assert.deepEqual(await json(`SELECT jsonb_agg(asset_id::text) FROM public.vehicle_maintenance_item_assets
+          WHERE maintenance_item_id=${quote(itemId)}::uuid`), [ids[1]]);
+        assert.deepEqual(await json(`SELECT to_jsonb(mi) FROM public.maintenance_items mi WHERE id=${quote(itemId)}::uuid`), before);
+      });
+
+      await t.test("asset deletion sees a concurrently committed Current Asset Only blocker", async () => {
+        const id = uuid();
+        await sql(`INSERT INTO public.vehicles_assets(owner_id,id,name,usage_unit)
+          VALUES (${quote(ownerA)}::uuid,${quote(id)}::uuid,'Concurrent blocker asset','none')`);
+        const itemId = uuid();
+        const first = sql(`SET application_name='vehicles_delete_blocker'; BEGIN;
+          ${catalogSql(createRequest(itemId, "Concurrent current-only blocker", "current_asset_only", [], { current_asset_id: id }))}
+          SELECT pg_sleep(0.5); COMMIT;`);
+        await until(async () => (await sql(`SELECT count(*) FROM pg_stat_activity
+          WHERE application_name='vehicles_delete_blocker' AND wait_event='PgSleep'`, "postgres")) === "1",
+        "catalog creation to hold asset lock");
+        const payload = {
+          request_id: uuid(), asset_id: id, expected_version: 1, confirmation_name: "Concurrent blocker asset",
+        };
+        await assert.rejects(sql(`SET ROLE authenticated; SET request.jwt.claim.sub=${quote(ownerA)};
+          SELECT public.delete_vehicle_asset(${quote(JSON.stringify(payload))}::jsonb)`), /"code":\s*"asset_in_use"/);
+        await first;
+        assert.equal(await sql(`SELECT count(*) FROM public.vehicles_assets WHERE id=${quote(id)}::uuid`), "1");
       });
     } finally {
       if (started) {
