@@ -500,6 +500,30 @@ export default function VehiclesPage() {
   const assetDeleteButtonRef = useRef(null);
   const assetDeletionAllowedRef = useRef(null);
   const keySession = useRef(0);
+  const ongoingRecordRef = useRef(null);
+  const restoreOngoingRecordFocus = useRef(false);
+  const [recordPickerOpen, setRecordPickerOpen] = useState(false);
+  const [expandedRecordYears, setExpandedRecordYears] = useState([]);
+  const [activeRecordNode, setActiveRecordNode] = useState("");
+  const recordPickerRef = useRef(null);
+  const recordTreeRef = useRef(null);
+
+  useEffect(() => {
+    if (!recordPickerOpen) return;
+    recordTreeRef.current?.focus();
+    const dismiss = (event) => {
+      if (dialogRef.current?.open) return;
+      if (!recordPickerRef.current?.contains(event.target)) setRecordPickerOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [recordPickerOpen]);
+
+  useEffect(() => {
+    if (recordPickerOpen) {
+      recordTreeRef.current?.querySelector?.(`[id="${activeRecordNode}"]`)?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [recordPickerOpen, activeRecordNode]);
 
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
   const selectedMaintenanceItem = maintenanceItems?.find((item) => item.id === selectedMaintenanceItemId);
@@ -656,6 +680,10 @@ export default function VehiclesPage() {
       if (dialog && !dialog.open) dialog.showModal();
     } else if (dialog?.open) {
       dialog.close();
+      if (restoreOngoingRecordFocus.current) {
+        ongoingRecordRef.current?.focus();
+        restoreOngoingRecordFocus.current = false;
+      }
     }
   }, [confirmation, blocker.state]);
 
@@ -709,6 +737,7 @@ export default function VehiclesPage() {
     manageAssetsOpen, manageAssetDraftDirty, manageSaving, manageRetryDraft, assetDeletionUnresolved]);
 
   function resetDraft() {
+    setRecordPickerOpen(false);
     setWorkingRecords(copyRecords(baselineRecords));
     setDeletedRecords([]);
     setSelectedRecordId(vehiclesService.newestRecord(baselineRecords)?.id || "");
@@ -880,6 +909,7 @@ export default function VehiclesPage() {
       setConfirmation({ kind: "asset", value: assetId });
       return;
     }
+    setRecordPickerOpen(false);
     setWorkspace(null);
     setWorkspaceLoading(true);
     setWorkspaceError("");
@@ -1519,6 +1549,7 @@ export default function VehiclesPage() {
 
   async function addRecord() {
     if (!workspace || saving || saveUncertain) return;
+    setRecordPickerOpen(false);
     setSaveError("");
     try {
       const template = await vehiclesService.createOngoingMaintenanceDraftTemplate(workspace.asset.id);
@@ -1566,6 +1597,7 @@ export default function VehiclesPage() {
 
   function editSelectedRecord() {
     if (!selectedRecord || selectedRecord.isNew || saving || saveUncertain) return;
+    setRecordPickerOpen(false);
     setOngoingEditing(true);
   }
 
@@ -1580,6 +1612,7 @@ export default function VehiclesPage() {
 
     event.preventDefault();
     const nextSection = vehicleSections[nextIndex];
+    setRecordPickerOpen(false);
     setActiveSection(nextSection.id);
     event.currentTarget?.parentElement?.querySelector(
       `[data-vehicles-section="${nextSection.id}"]`,
@@ -1653,6 +1686,8 @@ export default function VehiclesPage() {
       setWorkspaceError("");
       setSelectedAssetId(action.value);
     } else if (action.kind === "record") {
+      restoreOngoingRecordFocus.current = true;
+      setRecordPickerOpen(false);
       resetDraft();
       setSelectedRecordId(action.value);
     } else if (action.kind === "delete") {
@@ -1972,6 +2007,120 @@ export default function VehiclesPage() {
     }
     return options.sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id));
   };
+  const recordYears = [...new Set(workingRecords.map((record) => record.serviceDate.slice(0, 4) || "Undated"))]
+    .sort((left, right) => right.localeCompare(left));
+  const recordsForYear = (year) => workingRecords
+    .filter((record) => (record.serviceDate.slice(0, 4) || "Undated") === year)
+    .sort((left, right) => right.serviceDate.localeCompare(left.serviceDate) || left.id.localeCompare(right.id));
+  const yearNodeId = (year) => `vehicles-record-year-${year}`;
+  const recordNodeId = (id) => `vehicles-record-${id}`;
+  const visibleRecordNodes = recordYears.flatMap((year) => [
+    { id: yearNodeId(year), year },
+    ...(expandedRecordYears.includes(year)
+      ? recordsForYear(year).map((record) => ({ id: recordNodeId(record.id), year, record }))
+      : []),
+  ]);
+  function closeRecordPicker() {
+    setRecordPickerOpen(false);
+    ongoingRecordRef.current?.focus();
+  }
+  function openRecordPicker() {
+    const year = selectedRecord?.serviceDate.slice(0, 4) || "Undated";
+    setExpandedRecordYears([year]);
+    setActiveRecordNode(recordNodeId(selectedRecordId));
+    setRecordPickerOpen(true);
+  }
+  function toggleRecordYear(year) {
+    setExpandedRecordYears((current) => current.includes(year)
+      ? current.filter((entry) => entry !== year) : [...current, year]);
+    setActiveRecordNode(yearNodeId(year));
+  }
+  function pickOngoingRecord(id) {
+    if (saving || saveUncertain) return;
+    selectRecord(id);
+    if (id === selectedRecordId || (!dirty && !saveUncertain)) closeRecordPicker();
+  }
+  function recordTreeKeyDown(event) {
+    const index = visibleRecordNodes.findIndex((entry) => entry.id === activeRecordNode);
+    const node = visibleRecordNodes[index];
+    if (event.key === "Tab") {
+      setRecordPickerOpen(false);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Home", "End", "Enter", " ", "Escape"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Escape") closeRecordPicker();
+    else if (event.key === "Home") setActiveRecordNode(visibleRecordNodes[0]?.id || "");
+    else if (event.key === "End") setActiveRecordNode(visibleRecordNodes.at(-1)?.id || "");
+    else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const next = Math.max(0, Math.min(visibleRecordNodes.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
+      setActiveRecordNode(visibleRecordNodes[next]?.id || "");
+    } else if (node && event.key === "ArrowRight" && !node.record) {
+      if (!expandedRecordYears.includes(node.year)) toggleRecordYear(node.year);
+      else setActiveRecordNode(visibleRecordNodes[index + 1]?.id || node.id);
+    } else if (node && event.key === "ArrowLeft") {
+      if (node.record) setActiveRecordNode(yearNodeId(node.year));
+      else if (expandedRecordYears.includes(node.year)) toggleRecordYear(node.year);
+    } else if (node && (event.key === "Enter" || event.key === " ")) {
+      if (node.record) pickOngoingRecord(node.record.id);
+      else toggleRecordYear(node.year);
+    }
+  }
+  const ongoingRecordPicker = (
+    <div ref={recordPickerRef} className={styles.recordPicker}>
+      <button ref={ongoingRecordRef} id="vehicles-ongoing-record" type="button"
+        className={`lm-form-control ${styles.recordSelector}`}
+        aria-labelledby="vehicles-ongoing-record-label vehicles-ongoing-record-value"
+        aria-haspopup="tree" aria-expanded={recordPickerOpen}
+        aria-controls={recordPickerOpen ? "vehicles-record-tree" : undefined}
+        disabled={saving || saveUncertain}
+        onClick={() => recordPickerOpen ? closeRecordPicker() : openRecordPicker()}
+        onKeyDown={(event) => {
+          if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+            event.preventDefault();
+            openRecordPicker();
+          }
+        }}>
+        <span id="vehicles-ongoing-record-value">{selectedRecord?.serviceDate || "No service date"}{selectedRecord?.isNew ? " - New draft" : ""}</span>
+        <span aria-hidden="true">{recordPickerOpen ? "\u25b4" : "\u25be"}</span>
+      </button>
+      {recordPickerOpen && <ul ref={recordTreeRef} id="vehicles-record-tree" role="tree"
+        aria-label="Date of Service records" aria-multiselectable="false"
+        aria-disabled={saving || saveUncertain}
+        aria-activedescendant={activeRecordNode} tabIndex={0} className={styles.recordTree}
+        onKeyDown={recordTreeKeyDown}>
+        {recordYears.map((year) => (
+          <li key={year} id={yearNodeId(year)} role="treeitem" aria-label={year}
+            aria-expanded={expandedRecordYears.includes(year)}
+            onClick={() => { toggleRecordYear(year); recordTreeRef.current?.focus(); }}>
+            <span className={`${styles.recordTreeRow} ${activeRecordNode === yearNodeId(year) ? styles.recordTreeActive : ""}`}>
+              <span aria-hidden="true">{expandedRecordYears.includes(year) ? "\u25be" : "\u25b8"}</span> {year}
+            </span>
+            {expandedRecordYears.includes(year) && <ul role="group">
+              {recordsForYear(year).map((record) => (
+                <li key={record.id} id={recordNodeId(record.id)} role="treeitem"
+                  aria-selected={selectedRecordId === record.id}
+                  aria-label={`${record.serviceDate || "No service date"}${record.isNew ? " - New draft" : ""}`}
+                  className={`${styles.recordTreeRow} ${styles.recordTreeDate} ${activeRecordNode === recordNodeId(record.id) ? styles.recordTreeActive : ""}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setActiveRecordNode(recordNodeId(record.id));
+                    recordTreeRef.current?.focus();
+                    pickOngoingRecord(record.id);
+                  }}>
+                  <span>{record.serviceDate ? new Intl.DateTimeFormat("en-US", {
+                    month: "short", day: "numeric", timeZone: "UTC",
+                  }).format(new Date(`${record.serviceDate}T00:00:00Z`)) : "No service date"}
+                    {record.isNew ? " - New draft" : ""}</span>
+                  {selectedRecordId === record.id && <span aria-hidden="true">{"\u2713"}</span>}
+                </li>
+              ))}
+            </ul>}
+          </li>
+        ))}
+      </ul>}
+    </div>
+  );
   const confirmationTitle = assetDeletionUnresolved
     ? "Asset deletion needs confirmation"
     : confirmation?.kind === "completed-delete"
@@ -2054,6 +2203,7 @@ export default function VehiclesPage() {
               <button type="button" className="lm-button lm-button--secondary"
                 onClick={() => {
                   setManageMenuOpen(false);
+                  setRecordPickerOpen(false);
                   setActiveSection("intervals");
                 }} disabled={!workspace || saving || saveUncertain}>
                 Maintenance Intervals
@@ -2129,7 +2279,7 @@ export default function VehiclesPage() {
                   ? `${section.label}, unsaved changes` : section.label}
                 tabIndex={activeSection === section.id ? 0 : -1}
                 className={`${styles.sectionTab} ${activeSection === section.id ? styles.sectionTabActive : ""}`}
-                onClick={() => setActiveSection(section.id)}
+                onClick={() => { setRecordPickerOpen(false); setActiveSection(section.id); }}
                 onKeyDown={handleVehicleSectionKeyDown}>
                 <span>{section.label}</span>
                 {sectionDirty(section.id) && (
@@ -2141,7 +2291,7 @@ export default function VehiclesPage() {
           <label className={styles.mobileSectionSelector} htmlFor="vehicles-section-select">
             <span className="lm-form-label">Section</span>
             <select id="vehicles-section-select" className="lm-form-control" value={activeSection}
-              onChange={(event) => setActiveSection(event.target.value)}>
+              onChange={(event) => { setRecordPickerOpen(false); setActiveSection(event.target.value); }}>
               {vehicleSections.map((section) => (
                 <option key={section.id} value={section.id}>
                   {section.label}{sectionDirty(section.id) ? " *" : ""}
@@ -2185,26 +2335,6 @@ export default function VehiclesPage() {
                   role="status" aria-live="polite">{status}</p>}
 
                 <div className={styles.workspace}>
-            <section className={`lm-surface ${styles.recordList}`} aria-labelledby="ongoing-record-list-title">
-              <h3 id="ongoing-record-list-title">Service records</h3>
-              {workingRecords.length === 0
-                ? <p className="lm-empty-state">{deletedRecords.length
-                  ? "All existing records are queued for deletion. Save Changes to confirm."
-                  : "No Ongoing Maintenance records for this vehicle."}</p>
-                : <div className="lm-dense-list" aria-label="Ongoing Maintenance records">
-                  {workingRecords.map((record) => (
-                    <button key={record.id} type="button"
-                      className={`${styles.recordButton} ${selectedRecordId === record.id ? styles.selected : ""}`}
-                      aria-current={selectedRecordId === record.id ? "true" : undefined}
-                      disabled={saving || saveUncertain}
-                      onClick={() => selectRecord(record.id)}>
-                      <strong>{record.serviceDate}</strong>
-                      {record.isNew && <span className="lm-badge">New draft</span>}
-                    </button>
-                  ))}
-                </div>}
-            </section>
-
             {selectedRecord ? (
               <form id="vehicles-edit-form" className={`lm-surface ${styles.detail}`}
                 onSubmit={saveChanges} noValidate>
@@ -2215,6 +2345,11 @@ export default function VehiclesPage() {
                   </div>
                 </div>
 
+                {ongoingEditing && <div className={`lm-form-field ${styles.recordNavigation}`}>
+                  <label id="vehicles-ongoing-record-label" className="lm-form-label"
+                    htmlFor="vehicles-ongoing-record">Date of Service</label>
+                  {ongoingRecordPicker}
+                </div>}
                 {ongoingEditing ? <div className={`${styles.fields} ${showUsageField ? "" : styles.fieldsWithoutUsage}`}>
                   <label className="lm-form-field" htmlFor="vehicles-service-date">
                     <span className="lm-form-label">Service date</span>
@@ -2258,7 +2393,10 @@ export default function VehiclesPage() {
                       onChange={(event) => updateRecord(selectedRecord.id, { mechanic: event.target.value || null })} />
                   </label>
                 </div> : <dl className={`${styles.recordSummary} ${showUsageSummary ? "" : styles.recordSummaryWithoutUsage}`}>
-                  <div><dt>Service date</dt><dd>{selectedRecord.serviceDate}</dd></div>
+                  <div className={styles.recordNavigation}>
+                    <dt><label id="vehicles-ongoing-record-label" htmlFor="vehicles-ongoing-record">Date of Service</label></dt>
+                    <dd>{ongoingRecordPicker}</dd>
+                  </div>
                   {showUsageSummary && (
                     <div>
                       <dt>{selectedRecord.usageReadingUnit === "miles" ? "Mileage" : "Hours"}</dt>
@@ -2298,7 +2436,9 @@ export default function VehiclesPage() {
               </form>
             ) : <section className={`lm-surface ${styles.empty}`} aria-labelledby="ongoing-empty-title">
               <h3 id="ongoing-empty-title">Select or add an Ongoing record</h3>
-              <p>This vehicle has no saved Ongoing records yet.</p>
+              <p>{deletedRecords.length
+                ? "All existing records are queued for deletion. Save Changes to confirm."
+                : "No Ongoing Maintenance records for this vehicle."}</p>
             </section>}
                 </div>
               </>

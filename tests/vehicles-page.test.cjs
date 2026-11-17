@@ -416,6 +416,24 @@ function enterOngoingEdit(ui) {
   assert(ui.button("Cancel Changes"), "Edit enters the page-level Ongoing editing session");
 }
 
+function openOngoingPicker(ui) {
+  if (!ui.input("vehicles-ongoing-record").props["aria-expanded"]) {
+    ui.input("vehicles-ongoing-record").props.onClick();
+    ui.render();
+  }
+}
+
+function chooseOngoingRecord(ui, id, date) {
+  openOngoingPicker(ui);
+  const year = ui.input(`vehicles-record-year-${date.slice(0, 4) || "Undated"}`);
+  if (!year.props["aria-expanded"]) {
+    year.props.onClick();
+    ui.render();
+  }
+  ui.input(`vehicles-record-${id}`).props.onClick({ stopPropagation() {} });
+  ui.render();
+}
+
 test("Vehicles route resolves by path and hash and renders the authenticated desktop navigation entry", () => {
   const routes = fs.readFileSync(path.join(root, "src", "router", "lifeManagerRoutes.js"), "utf8")
     .replace(/^export /gm, "");
@@ -3431,6 +3449,198 @@ test("Empty Ongoing list is shown when a loaded asset has no history", async () 
   await ui.settle();
   assert.match(ui.text(), /No Ongoing Maintenance records for this vehicle/);
   assert.match(ui.text(), /Select or add an Ongoing record/);
+  assert.equal(ui.input("vehicles-ongoing-record"), undefined);
+  assert(ui.button("Add Ongoing Record"));
+  assert.equal(ui.button("Edit"), undefined);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Ongoing date tree groups one, multiple and ten-year histories with stable IDs and newest-first ordering", async () => {
+  for (const count of [1, 4, 36, 120]) {
+    const records = Array.from({ length: count }, (_, index) => record(
+      200 + index, new Date(Date.UTC(2026, 9 - index, 15)).toISOString().slice(0, 10),
+      { usageReadingValue: 80000 - index * 100, mechanic: `Historical mechanic ${index}` },
+    ));
+    const ui = harness({ loadVehicleWorkspace: async () => workspace(assets[0], [...records].reverse()) });
+    await ui.settle();
+    const picker = ui.input("vehicles-ongoing-record");
+    assert.equal(picker.type, "button");
+    assert.equal(picker.props["aria-haspopup"], "tree");
+    assert.equal(picker.props["aria-expanded"], false);
+    assert.equal(picker.props["aria-labelledby"], "vehicles-ongoing-record-label vehicles-ongoing-record-value");
+    assert.equal(picker.props.disabled, false);
+    const label = ui.find((node) => node.type === "label" && node.props.htmlFor === picker.props.id);
+    assert.equal(ui.text(label), "Date of Service");
+    assert.match(ui.text(picker), new RegExp(records[0].serviceDate));
+    assert.equal(ui.nodes().some((node) => String(node.props.className).includes("recordButton")), false);
+    openOngoingPicker(ui);
+    const years = ui.nodes().filter((node) => node.props.role === "treeitem" && node.props["aria-expanded"] !== undefined);
+    const expectedYears = [...new Set(records.map((entry) => entry.serviceDate.slice(0, 4)))].sort().reverse();
+    assert.deepEqual(years.map((node) => node.props["aria-label"]), expectedYears);
+    assert.deepEqual(years.map((node) => node.props["aria-expanded"]), expectedYears.map((year) => year === "2026"));
+    assert.equal(ui.input("vehicles-record-tree").props["aria-multiselectable"], "false");
+    assert.equal(ui.input("vehicles-ongoing-record").props["aria-controls"], "vehicles-record-tree");
+    assert.equal(ui.input("vehicles-record-tree").props["aria-activedescendant"], `vehicles-record-${records[0].id}`);
+    for (const year of expectedYears) {
+      if (!ui.input(`vehicles-record-year-${year}`).props["aria-expanded"]) {
+        ui.input(`vehicles-record-year-${year}`).props.onClick();
+        ui.render();
+      }
+      const entries = ui.nodes(ui.input(`vehicles-record-year-${year}`))
+        .filter((node) => node.props["aria-selected"] !== undefined);
+      assert.deepEqual(entries.map((node) => node.props["aria-label"]),
+        records.filter((entry) => entry.serviceDate.startsWith(year)).map((entry) => entry.serviceDate));
+    }
+    assert.equal(ui.nodes().filter((node) => node.props["aria-selected"] === true && node.props.role === "treeitem").length, 1);
+    const historical = records.at(-1);
+    chooseOngoingRecord(ui, historical.id, historical.serviceDate);
+    assert.equal(ui.input("vehicles-ongoing-record").props["aria-expanded"], false);
+    assert.match(ui.text(ui.input("vehicles-ongoing-record")), new RegExp(historical.serviceDate));
+    openOngoingPicker(ui);
+    assert.equal(ui.input(`vehicles-record-${historical.id}`).props["aria-selected"], true);
+    assert.equal(ui.input(`vehicles-record-year-${historical.serviceDate.slice(0, 4)}`).props["aria-expanded"], true);
+    assert.match(ui.text(), new RegExp(historical.mechanic));
+    assert.match(ui.text(), new RegExp(historical.usageReadingValue.toLocaleString()));
+    assert.equal(ui.calls.saves.length, 0);
+  }
+});
+
+test("Ongoing selection uses IDs for matching dates, regroups date edits, and restores saved history on Cancel", async () => {
+  const records = [
+    record(201, "2026-03-01", { mechanic: "First identity" }),
+    record(202, "2026-03-01", { mechanic: "Second identity" }),
+    record(203, "2026-01-01"),
+  ];
+  const ui = harness({ loadVehicleWorkspace: async () => workspace(assets[0], records) });
+  await ui.settle();
+  chooseOngoingRecord(ui, records[1].id, records[1].serviceDate);
+  assert.match(ui.text(), /Second identity/);
+  enterOngoingEdit(ui);
+  ui.input("vehicles-service-date").props.onChange({ target: { value: "2025-01-01" } });
+  ui.render();
+  openOngoingPicker(ui);
+  assert.equal(ui.input(`vehicles-record-${records[1].id}`).props["aria-selected"], true);
+  assert.equal(ui.input("vehicles-record-year-2025").props["aria-expanded"], true);
+  assert.equal(ui.input("vehicles-record-year-2026").props["aria-expanded"], false);
+  assert.match(ui.text(ui.input("vehicles-ongoing-record")), /2025-01-01/);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-ongoing-record").props["aria-expanded"], false);
+  assert.match(ui.text(ui.input("vehicles-ongoing-record")), /2026-03-01/);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Ongoing tree keyboard expands years, navigates dates, selects once, and restores trigger focus on Escape", async () => {
+  const records = [record(201, "2026-03-18"), record(202, "2026-01-07"), record(203, "2017-05-04")];
+  const ui = harness({ loadVehicleWorkspace: async () => workspace(assets[0], records) });
+  await ui.settle();
+  let triggerFocus = 0;
+  ui.input("vehicles-ongoing-record").props.ref.current = { focus() { triggerFocus += 1; } };
+  const key = (value) => {
+    let prevented = false;
+    ui.input("vehicles-record-tree").props.onKeyDown({ key: value, preventDefault() { prevented = true; } });
+    ui.render();
+    assert.equal(prevented, value !== "Tab");
+  };
+  const active = () => ui.input("vehicles-record-tree").props["aria-activedescendant"];
+  ui.input("vehicles-ongoing-record").props.onKeyDown({ key: "ArrowDown", preventDefault() {} });
+  ui.render();
+  assert.equal(active(), `vehicles-record-${records[0].id}`);
+  key("ArrowDown");
+  assert.equal(active(), `vehicles-record-${records[1].id}`);
+  key("ArrowUp");
+  assert.equal(active(), `vehicles-record-${records[0].id}`);
+  key("ArrowLeft");
+  assert.equal(active(), "vehicles-record-year-2026");
+  key("ArrowLeft");
+  assert.equal(ui.input("vehicles-record-year-2026").props["aria-expanded"], false);
+  key("ArrowRight");
+  assert.equal(ui.input("vehicles-record-year-2026").props["aria-expanded"], true);
+  key("ArrowRight");
+  assert.equal(active(), `vehicles-record-${records[0].id}`);
+  key("Home");
+  assert.equal(active(), "vehicles-record-year-2026");
+  key("End");
+  assert.equal(active(), "vehicles-record-year-2017");
+  key(" ");
+  assert.equal(ui.input("vehicles-record-year-2017").props["aria-expanded"], true);
+  key("ArrowRight");
+  assert.equal(active(), `vehicles-record-${records[2].id}`);
+  key("Escape");
+  assert.equal(ui.input("vehicles-record-tree"), undefined);
+  assert.match(ui.text(ui.input("vehicles-ongoing-record")), /2026-03-18/);
+  assert.equal(triggerFocus, 1);
+  openOngoingPicker(ui);
+  assert.equal(ui.input("vehicles-record-year-2017").props["aria-expanded"], false);
+  key("End");
+  key("Enter");
+  key("ArrowDown");
+  key(" ");
+  assert.equal(ui.input("vehicles-record-tree"), undefined);
+  assert.match(ui.text(ui.input("vehicles-ongoing-record")), /2017-05-04/);
+  assert.equal(triggerFocus, 2);
+  openOngoingPicker(ui);
+  key("Enter");
+  assert.equal(ui.input("vehicles-record-tree"), undefined, "Enter on the selected leaf closes without changing it");
+  assert.equal(triggerFocus, 3);
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Ongoing picker bounds long history, expands only the chosen year, and dismisses outside without selecting", async () => {
+  const records = Array.from({ length: 120 }, (_, index) => record(
+    400 + index, new Date(Date.UTC(2026, 9 - index, 15)).toISOString().slice(0, 10),
+  ));
+  const ui = harness({ loadVehicleWorkspace: async () => workspace(assets[0], records) });
+  await ui.settle();
+  const countBefore = ui.documentListenerCount("pointerdown");
+  openOngoingPicker(ui);
+  const years = ui.nodes().filter((node) => node.props.role === "treeitem" && node.props["aria-expanded"] !== undefined);
+  assert(years.length >= 10);
+  const dates = ui.nodes().filter((node) => node.props.role === "treeitem" && node.props["aria-selected"] !== undefined);
+  assert(dates.length <= 12, "collapsed years must not render every individual service record");
+  const oldest = records.at(-1);
+  chooseOngoingRecord(ui, oldest.id, oldest.serviceDate);
+  assert.match(ui.text(ui.input("vehicles-ongoing-record")), new RegExp(oldest.serviceDate));
+  openOngoingPicker(ui);
+  assert.equal(ui.documentListenerCount("pointerdown"), countBefore + 1);
+  ui.dispatchDocumentEvent("pointerdown", { target: "outside-picker" });
+  ui.render();
+  assert.equal(ui.input("vehicles-record-tree"), undefined);
+  assert.equal(ui.documentListenerCount("pointerdown"), countBefore);
+  assert.match(ui.text(ui.input("vehicles-ongoing-record")), new RegExp(oldest.serviceDate));
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  assert.match(css, /\.recordTree\s*\{[^}]*max-height:\s*min\(20rem,\s*50dvh\)[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.recordTree:focus\s+\.recordTreeActive/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.recordTreeRow\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);
+});
+
+test("Ongoing Add option and dirty selection survive mobile section traversal until Cancel", async () => {
+  const ui = harness();
+  await ui.settle();
+  await ui.button("Add Ongoing Record").props.onClick();
+  ui.render();
+  openOngoingPicker(ui);
+  const selected = ui.nodes().find((node) => node.props.role === "treeitem" && node.props["aria-selected"] === true);
+  const draftId = selected.props.id;
+  assert.match(ui.text(selected), /New draft/);
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  ui.input("vehicles-mechanic").props.onChange({ target: { value: "Unsaved mechanic" } });
+  ui.render();
+  for (const section of ["recommended", "completed", "intervals", "key-information", "ongoing"]) {
+    ui.input("vehicles-section-select").props.onChange({ target: { value: section } });
+    ui.render();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+    assert.equal(ui.button("Discard and continue"), undefined);
+  }
+  openOngoingPicker(ui);
+  assert.equal(ui.input(draftId).props["aria-selected"], true);
+  assert.equal(ui.input("vehicles-mechanic").props.value, "Unsaved mechanic");
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  openOngoingPicker(ui);
+  assert.equal(ui.input(draftId), undefined);
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+  assert.equal(ui.calls.saves.length, 0);
 });
 
 test("Workspace load failure is not presented as an empty history", async () => {
@@ -3566,13 +3776,17 @@ test("Ongoing checklist groups stored snapshots and preserves IDs, states, and p
 
 test("Ongoing layout has compact desktop rows, full grouped content, and unbounded checklist flow", async () => {
   const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
-  assert.match(css, /\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(11rem,\s*0\.45fr\)\s+minmax\(0,\s*3\.55fr\)/s);
+  assert.match(css, /\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(css, /\.fields\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
   assert.match(css, /\.recordSummary\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
   assert.match(css, /\.itemGroups\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/s);
   assert.match(css, /@media\s*\(max-width:\s*900px\)[\s\S]*?\.itemGroups\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.itemGroups\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(css, /@media\s*\(max-width:\s*900px\)[\s\S]*?\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.recordNavigation\s*\{[^}]*width:\s*min\(100%,\s*15rem\)/s);
+  assert.match(css, /\.recordSelector\s*\{[^}]*width:\s*100%/s);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.recordNavigation\s*\{[^}]*width:\s*100%/);
+  assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.recordSelector\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);
+  assert.doesNotMatch(css, /\.recordButton|\.recordList/);
   assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.fields\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*?\.recordSummary\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(css, /\.itemToggle\s*\{[^}]*min-height:\s*36px/s);
@@ -3613,10 +3827,12 @@ test("Ongoing layout has compact desktop rows, full grouped content, and unbound
   assert.match(ui.text(summary), /2023-02-27/);
   assert.match(ui.text(summary), /81,513 miles/);
   assert.match(ui.text(summary), /G&L Automotive/);
-  const recordList = ui.find((node) => node.props?.["aria-label"] === "Ongoing Maintenance records");
-  const navigationEntries = ui.nodes(recordList).filter((node) => node.type === "button"
-    && String(node.props.className).includes("recordButton"));
-  assert.deepEqual(navigationEntries.map((node) => ui.text(node)), ["2023-02-27"]);
+  const recordSelector = ui.input("vehicles-ongoing-record");
+  assert.equal(recordSelector.type, "button");
+  openOngoingPicker(ui);
+  const navigationEntries = ui.nodes().filter((node) => node.props.role === "treeitem"
+    && node.props["aria-selected"] !== undefined);
+  assert.deepEqual(navigationEntries.map((node) => node.props["aria-label"]), ["2023-02-27"]);
   assert.doesNotMatch(ui.text(navigationEntries[0]), /81513|miles|hours|G&L Automotive/i);
   const groupNodes = ui.nodes().filter((node) => node.type === "section" && node.props.className === "itemGroup");
   assert.deepEqual(groupNodes.map((group) => ui.text(ui.nodes(group).find((node) => node.type === "h4"))), [
@@ -3994,15 +4210,29 @@ test("Switching records with unsaved edits requires explicit discard", async () 
   enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-04" } });
   ui.render();
-  const previousRecord = ui.nodes().find((node) => node.type === "button"
-    && node.props.className?.includes("recordButton")
-    && ui.text(node).includes("2026-01-01"));
-  previousRecord.props.onClick();
-  ui.render();
+  chooseOngoingRecord(ui, uuid(11), "2026-01-01");
   assert.match(ui.text(), /Discard changes and switch records/);
   assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-04");
+  assert.equal(ui.input(`vehicles-record-${uuid(12)}`).props["aria-selected"], true);
+  ui.dispatchDocumentEvent("pointerdown", { target: "stay-button-in-modal" });
+  ui.render();
+  assert(ui.input("vehicles-record-tree"), "clicking the modal must not dismiss the tree before Stay restores focus");
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.input(`vehicles-record-${uuid(12)}`).props["aria-selected"], true);
+  assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-04");
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.button("Discard and continue"), undefined);
+  chooseOngoingRecord(ui, uuid(11), "2026-01-01");
+  let restoredFocus = 0;
+  ui.input("vehicles-ongoing-record").props.ref.current = { focus() { restoredFocus += 1; } };
   ui.button("Discard and continue").props.onClick();
   ui.render();
+  assert.equal(restoredFocus, 1);
+  assert.equal(ui.input("vehicles-ongoing-record").props["aria-expanded"], false);
+  openOngoingPicker(ui);
+  assert.equal(ui.input(`vehicles-record-${uuid(11)}`).props["aria-selected"], true);
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
   assert.equal(ui.input("vehicles-service-date"), undefined);
   assert.match(ui.text(), /2026-01-01/);
   assert.equal(ui.button("Cancel Changes"), undefined);

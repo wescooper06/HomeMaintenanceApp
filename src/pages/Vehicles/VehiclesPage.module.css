@@ -443,61 +443,86 @@
 .workspace {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(11rem, 0.45fr) minmax(0, 3.55fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: var(--lm-space-3);
 }
 
-.recordList,
 .detail {
   min-width: 0;
   padding: var(--lm-space-3);
 }
 
-.recordList h3 {
-  margin: 0 0 var(--lm-space-2);
+.recordNavigation {
+  min-width: 0;
+  width: min(100%, 15rem);
 }
 
-.recordButton {
-  display: grid;
+.recordSelector {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--lm-space-2);
   width: 100%;
-  min-height: 48px;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--lm-space-1) var(--lm-space-3);
-  border: 0;
-  border-bottom: 1px solid var(--lm-color-border);
-  padding: var(--lm-space-2);
-  background: transparent;
-  color: var(--lm-color-text);
-  font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.recordButton strong {
+.recordPicker {
+  position: relative;
   min-width: 0;
 }
 
-.recordButton > span {
-  color: var(--lm-color-text-secondary);
-  font-size: var(--lm-font-secondary);
+.recordTree {
+  position: absolute;
+  z-index: 20;
+  inset-inline: 0;
+  top: 100%;
+  max-height: min(20rem, 50dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: var(--lm-space-1) 0 0;
+  border: 1px solid var(--lm-color-border);
+  border-radius: var(--lm-radius-control);
+  padding: var(--lm-space-1);
+  background: var(--lm-color-surface);
+  color: var(--lm-color-text);
+  list-style: none;
 }
 
-.recordButton .lm-badge {
-  grid-column: 1 / -1;
-  justify-self: start;
+.recordTree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.recordButton:hover:not(:disabled) {
-  background: var(--lm-color-surface-subtle);
+.recordTreeRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--lm-space-2);
+  min-height: 40px;
+  padding: var(--lm-space-2);
+  overflow-wrap: anywhere;
+  cursor: pointer;
 }
 
-.recordButton.selected {
-  border-inline-start: 3px solid var(--lm-color-primary);
+.recordTreeDate {
+  justify-content: space-between;
+  padding-inline-start: var(--lm-space-4);
+}
+
+.recordTreeRow[aria-selected="true"] {
   background: var(--lm-color-surface-selected);
+  font-weight: 700;
 }
 
-.recordButton:focus-visible,
+.recordTree:focus .recordTreeActive,
+.recordSelector:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: -3px;
+}
+
 .itemToggle:focus-within {
   outline: 3px solid var(--lm-color-focus);
   outline-offset: 2px;
@@ -954,16 +979,24 @@
     font-size: 0.8125rem;
   }
 
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .maintenanceItemManager {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 600px) {
+  .recordNavigation {
+    width: 100%;
+  }
+
+  .recordSelector {
+    min-height: var(--lm-control-mobile);
+  }
+
+  .recordTreeRow {
+    min-height: var(--lm-control-mobile);
+  }
+
   .keyRegions {
     grid-template-columns: minmax(0, 1fr);
     height: auto;
