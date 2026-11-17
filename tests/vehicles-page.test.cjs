@@ -957,6 +957,308 @@ test("Manage Maintenance Items announces loading and retries catalog errors with
   assert.match(ui.text(), /No saved Maintenance Items yet/);
 });
 
+async function openSelectedAssetsManager(ui, name = "Synthetic Maintenance 302") {
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  ui.find((node) => node.type === "button" && ui.text(node).includes(name)).props.onClick();
+  ui.render();
+}
+
+function searchMaintenanceItemAssets(ui, query) {
+  ui.input("vehicles-maintenance-item-asset-search").props.onChange({ target: { value: query } });
+  ui.render();
+}
+
+function visibleMaintenanceItemAssets(ui) {
+  return ui.nodes().filter((node) => node.type === "input" && node.props.type === "checkbox"
+    && node.props.id?.startsWith("vehicles-maintenance-item-asset-"));
+}
+
+test("Selected Assets search handles empty, partial, case-insensitive, multiple and absent matches on short and long lists", async () => {
+  for (const count of [4, 64]) {
+    const manyAssets = Array.from({ length: count }, (_, index) => ({
+      id: uuid(index + 1), name: index % 2 ? `Generator ${index}` : `Truck ${index}`,
+      usageUnit: "hours", version: 1,
+    }));
+    const ui = harness({ initialAssets: manyAssets });
+    await openSelectedAssetsManager(ui);
+    const search = ui.input("vehicles-maintenance-item-asset-search");
+    assert.equal(search.props.type, "search");
+    assert(ui.find((node) => node.type === "label" && node.props.htmlFor === search.props.id
+      && ui.text(node) === "Search assets"));
+    assert.equal(visibleMaintenanceItemAssets(ui).length, count);
+    assert.equal(ui.button("Save Changes").props.disabled, true);
+    for (const query of ["GENeR", "  generator  "]) {
+      searchMaintenanceItemAssets(ui, query);
+      assert.equal(visibleMaintenanceItemAssets(ui).length, count / 2);
+      assert.equal(ui.shouldBlock(), false, "filter-only state is not a dirty session");
+      assert.equal(ui.button("Save Changes").props.disabled, true);
+    }
+    searchMaintenanceItemAssets(ui, "generator 1");
+    assert.equal(visibleMaintenanceItemAssets(ui).length,
+      manyAssets.filter((asset) => asset.name.toLowerCase().includes("generator 1")).length);
+    searchMaintenanceItemAssets(ui, "nothing matches");
+    assert.equal(visibleMaintenanceItemAssets(ui).length, 0);
+    assert.match(ui.text(), /No assets match your search/);
+    assert.match(ui.text(), /2 selected across all assets/);
+    let restored = 0;
+    ui.input(search.props.id).props.ref.current = { focus() { restored += 1; } };
+    ui.button("Clear asset search").props.onClick();
+    ui.render();
+    assert.equal(restored, 1);
+    assert.equal(ui.input(search.props.id).props.value, "");
+    assert.equal(visibleMaintenanceItemAssets(ui).length, count);
+    assert.equal(visibleMaintenanceItemAssets(ui).filter((node) => node.props.checked).length, 2);
+    assert.equal(ui.calls.catalogSaves.length, 0);
+  }
+});
+
+test("Filtered selection merges with hidden selections and Save sends the complete intended stable set", async () => {
+  const manyAssets = Array.from({ length: 64 }, (_, index) => ({
+    id: uuid(index + 1), name: index < 2 ? `Hidden truck ${index}` : `Generator ${index}`,
+    usageUnit: "hours", version: 1,
+  }));
+  const ui = harness({ initialAssets: manyAssets });
+  await openSelectedAssetsManager(ui);
+  searchMaintenanceItemAssets(ui, "Generator");
+  assert.equal(ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`), undefined);
+  for (const id of [3, 64]) {
+    ui.input(`vehicles-maintenance-item-asset-${uuid(id)}`).props.onChange({ target: { checked: true } });
+    ui.render();
+  }
+  assert.equal(ui.shouldBlock(), true);
+  ui.button("Clear asset search").props.onClick();
+  ui.render();
+  assert.deepEqual(visibleMaintenanceItemAssets(ui).filter((node) => node.props.checked)
+    .map((node) => node.props.id), [1, 2, 3, 64].map((id) => `vehicles-maintenance-item-asset-${uuid(id)}`));
+  searchMaintenanceItemAssets(ui, "Hidden truck 1");
+  ui.input(`vehicles-maintenance-item-asset-${uuid(2)}`).props.onChange({ target: { checked: false } });
+  ui.render();
+  searchMaintenanceItemAssets(ui, "no visible assets");
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "selected_assets");
+  const save = ui.button("Save Changes");
+  assert.equal(save.props.form, "vehicles-maintenance-item-form");
+  await ui.input(save.props.form).props.onSubmit({ preventDefault() {} });
+  await ui.settle();
+  assert.equal(ui.calls.catalogSaves.length, 1);
+  assert.deepEqual(ui.calls.catalogSaves[0].selectedAssetIds, [uuid(1), uuid(3), uuid(64)]);
+  assert.equal(ui.calls.catalogSaves[0].availabilityMode, "selected_assets");
+  assert.equal(ui.calls.catalogSaves[0].currentAssetId, null);
+  assert.equal(ui.shouldBlock(), false);
+});
+
+test("Search Enter cannot submit even a dirty item and search alone closes without discard or persistence", async () => {
+  const ui = harness();
+  await openSelectedAssetsManager(ui);
+  searchMaintenanceItemAssets(ui, "truck");
+  let prevented = 0;
+  const key = (value) => ui.input("vehicles-maintenance-item-asset-search").props.onKeyDown({
+    key: value, preventDefault() { prevented += 1; },
+  });
+  key("ArrowDown");
+  assert.equal(prevented, 0);
+  key("Enter");
+  assert.equal(prevented, 1);
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Changed but unsaved" } });
+  ui.render();
+  key("Enter");
+  assert.equal(prevented, 2);
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  searchMaintenanceItemAssets(ui, "unmatched");
+  const focusedBefore = ui.focusCounts.manageButton;
+  ui.find((node) => node.props["aria-label"] === "Close Manage Maintenance Items").props.onClick();
+  ui.render();
+  assert.equal(ui.dialog.open, false);
+  assert.equal(ui.maintenanceDialog.open, false);
+  assert.equal(ui.shouldBlock(), false);
+  assert.equal(ui.focusCounts.manageButton, focusedBefore + 1, "restore visible Manage trigger, not its hidden menu item");
+  assert.equal(ui.calls.catalogSaves.length, 0);
+});
+
+test("Selected Assets validates an actual empty set independently of search and Cancel restores complete applicability", async () => {
+  const ui = harness();
+  await openSelectedAssetsManager(ui);
+  for (const [id, query] of [[1, "car"], [2, "truck"]]) {
+    searchMaintenanceItemAssets(ui, query);
+    ui.input(`vehicles-maintenance-item-asset-${uuid(id)}`).props.onChange({ target: { checked: false } });
+    ui.render();
+  }
+  searchMaintenanceItemAssets(ui, "nothing");
+  await ui.input("vehicles-maintenance-item-form").props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.match(ui.text(), /Select one or more available assets/);
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-asset-search").props.value, "");
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "selected_assets");
+  assert.deepEqual(visibleMaintenanceItemAssets(ui).map((node) => node.props.checked), [true, true]);
+  assert.equal(ui.shouldBlock(), false);
+});
+
+test("Search survives dirty-switch Stay and resets on confirmed item switches, mode changes, Add, Cancel and reopen", async () => {
+  const ui = harness();
+  await openSelectedAssetsManager(ui);
+  searchMaintenanceItemAssets(ui, "car");
+  ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`).props.onChange({ target: { checked: false } });
+  ui.render();
+  const firstItem = () => ui.find((node) => node.type === "button" && ui.text(node).includes("Synthetic Maintenance 301"));
+  firstItem().props.onClick();
+  ui.render();
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-asset-search").props.value, "car");
+  assert.equal(ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`).props.checked, false);
+  firstItem().props.onClick();
+  ui.render();
+  ui.button("Discard edits").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "all_assets");
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-asset-search").props.value, "");
+  searchMaintenanceItemAssets(ui, "truck");
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "current_asset_only" } });
+  ui.render();
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-asset-search").props.value, "");
+  searchMaintenanceItemAssets(ui, "car");
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  ui.button("Discard edits").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "current_asset_only");
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-asset-search").props.value, "");
+  searchMaintenanceItemAssets(ui, "truck");
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-maintenance-item-asset-search"), undefined);
+  ui.find((node) => node.props["aria-label"] === "Close Manage Maintenance Items").props.onClick();
+  ui.render();
+  await openSelectedAssetsManager(ui);
+  assert.equal(ui.input("vehicles-maintenance-item-asset-search").props.value, "");
+  assert.deepEqual(visibleMaintenanceItemAssets(ui).map((node) => node.props.checked), [true, true]);
+});
+
+test("Zero available assets exposes search and an honest empty state without saving an invalid Selected Assets item", async () => {
+  const ui = harness({ initialAssets: [], initialMaintenanceItems: [] });
+  await ui.settle();
+  ui.button("Manage Maintenance Items").props.onClick();
+  ui.render();
+  await ui.settle();
+  ui.button("Add Maintenance Item").props.onClick();
+  ui.render();
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "No available assets" } });
+  ui.input("vehicles-maintenance-item-applicability").props.onChange({ target: { value: "selected_assets" } });
+  ui.render();
+  assert.match(ui.text(), /No assets are available to select/);
+  searchMaintenanceItemAssets(ui, "Generator");
+  assert.equal(visibleMaintenanceItemAssets(ui).length, 0);
+  await ui.input("vehicles-maintenance-item-form").props.onSubmit({ preventDefault() {} });
+  ui.render();
+  assert.match(ui.text(), /Select one or more available assets/);
+  assert.equal(ui.calls.catalogSaves.length, 0);
+});
+
+test("Search stays independent during unknown-save recovery and retries preserve the complete selection payload", async () => {
+  const requests = [];
+  const ui = harness({ saveMaintenanceItem: async (request) => {
+    requests.push(structuredClone(request));
+    throw { code: "unknown_outcome", retryDraft: request };
+  } });
+  await openSelectedAssetsManager(ui);
+  searchMaintenanceItemAssets(ui, "car");
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Unsure item" } });
+  ui.render();
+  await ui.input("vehicles-maintenance-item-form").props.onSubmit({ preventDefault() {} });
+  ui.render();
+  searchMaintenanceItemAssets(ui, "truck");
+  assert.equal(ui.input(`vehicles-maintenance-item-asset-${uuid(2)}`).props.disabled, true);
+  assert.equal(ui.button("Cancel").props.disabled, true);
+  assert.equal(ui.shouldBlock(), true);
+  await ui.button("Retry same request").props.onClick();
+  ui.render();
+  assert.deepEqual(requests[0], requests[1]);
+  assert.deepEqual(requests[1].selectedAssetIds, [uuid(1), uuid(2)]);
+  assert.equal(requests.length, 2);
+});
+
+test("Maintenance Item sheet keeps native dialog Escape, guarded close, visible-trigger focus and external form association", async () => {
+  const ui = harness();
+  await openSelectedAssetsManager(ui);
+  const currentDialog = () => ui.find((node) => node.type === "dialog"
+    && node.props["aria-labelledby"] === "vehicles-manage-items-title");
+  const dialog = currentDialog();
+  assert.equal(dialog.props["aria-describedby"], "vehicles-manage-items-description");
+  const body = ui.find((node) => node.props.className === "maintenanceItemsBody");
+  const actions = ui.find((node) => node.props.className === "dialogActions maintenanceItemActions");
+  assert(body && actions);
+  assert.equal(ui.nodes(body).includes(actions), false, "sheet actions remain outside the scroll body");
+  assert.equal(ui.button("Save Changes").props.form, ui.input("vehicles-maintenance-item-form").props.id);
+  ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`).props.onChange({ target: { checked: false } });
+  ui.render();
+  let prevented = 0;
+  currentDialog().props.onKeyDown({ key: "Escape", preventDefault() { prevented += 1; } });
+  ui.render();
+  assert.equal(prevented, 1);
+  assert.equal(ui.maintenanceDialog.open, true);
+  ui.button("Stay").props.onClick();
+  ui.render();
+  assert.equal(ui.input(`vehicles-maintenance-item-asset-${uuid(1)}`).props.checked, false);
+  ui.button("Cancel").props.onClick();
+  ui.render();
+  currentDialog().props.onCancel({ preventDefault() {} });
+  ui.render();
+  assert.equal(ui.maintenanceDialog.open, false);
+  assert(ui.focusCounts.manageButton > 0);
+  assert.equal(ui.calls.catalogSaves.length, 0);
+  const css = fs.readFileSync(path.join(root, "src", "pages", "Vehicles", "VehiclesPage.module.css"), "utf8");
+  const mobile = css.slice(css.indexOf("@media (max-width: 600px)"));
+  assert.match(mobile, /\.maintenanceItemsDialog\s*\{[^}]*box-sizing:\s*border-box;[^}]*width:\s*100%;[^}]*max-height:\s*92dvh;[^}]*margin:\s*auto 0 0;[^}]*overflow:\s*hidden/s);
+  assert.match(mobile, /\.maintenanceItemsDialog\[open\]\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/s);
+  assert.match(mobile, /\.maintenanceItemsBody\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto/s);
+  assert.match(mobile, /\.maintenanceItemsDialog \.maintenanceItemActions\s*\{[^}]*flex:\s*0 0 auto/s);
+  assert.match(mobile, /\.maintenanceItemsDialog :global\(\.lm-form-control\)\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/s);
+  assert.match(css, /\.maintenanceItemAssetResults\s*\{[^}]*max-height:\s*16rem;[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.maintenanceItemForm :focus-visible/);
+});
+
+test("Sheet actions are absent while catalog reload unmounts their associated form", async () => {
+  let catalogReads = 0;
+  let finishReload;
+  const ui = harness({
+    listMaintenanceItems: async () => {
+      catalogReads += 1;
+      if (catalogReads === 1) return [catalogItem(302, {
+        availabilityMode: "selected_assets", selectedAssetIds: [uuid(1), uuid(2)],
+      })];
+      return new Promise((resolve) => { finishReload = resolve; });
+    },
+    saveMaintenanceItem: async () => { throw { code: "version_conflict" }; },
+  });
+  await openSelectedAssetsManager(ui);
+  ui.input("vehicles-maintenance-item-name").props.onChange({ target: { value: "Conflict edit" } });
+  ui.render();
+  await ui.input("vehicles-maintenance-item-form").props.onSubmit({ preventDefault() {} });
+  ui.render();
+  ui.button("Reload catalog").props.onClick();
+  ui.render();
+  await flush();
+  assert.equal(ui.input("vehicles-maintenance-item-form"), undefined);
+  assert.equal(ui.find((node) => node.props.className === "dialogActions maintenanceItemActions"), undefined);
+  finishReload([catalogItem(302, { availabilityMode: "selected_assets", selectedAssetIds: [uuid(1), uuid(2)] })]);
+  await ui.settle();
+  assert(ui.input("vehicles-maintenance-item-form"));
+  assert.equal(ui.button("Save Changes").props.form, "vehicles-maintenance-item-form");
+});
+
 test("Manage Maintenance Items validates names and Selected Assets and supports multiple stable asset IDs", async () => {
   const ui = harness({ initialAssets: [...assets, { id: uuid(3), name: "Synthetic trailer", usageUnit: "hours", version: 1 }],
     initialMaintenanceItems: [] });
@@ -1241,9 +1543,14 @@ test("Maintenance Item duplicate submissions are locked and dirty close requires
   assert.equal(ui.maintenanceDialog.open, true);
   closeCatalog().props.onClick();
   ui.render();
+  const focusBeforeDiscard = ui.focusCounts.manageButton;
   ui.button("Discard edits").props.onClick();
+  assert.equal(ui.focusCounts.manageButton, focusBeforeDiscard,
+    "do not focus the inert page while confirmation is still modal");
   ui.render();
   assert.equal(ui.maintenanceDialog.open, false);
+  assert.equal(ui.focusCounts.manageButton, focusBeforeDiscard + 1,
+    "restore visible Manage only after the confirmation has closed");
   assert(ui.focusCounts.maintenanceItemButton > 0);
 });
 

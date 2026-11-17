@@ -477,6 +477,7 @@ export default function VehiclesPage() {
   const [maintenanceItemSaving, setMaintenanceItemSaving] = useState(false);
   const [maintenanceItemError, setMaintenanceItemError] = useState("");
   const [maintenanceItemStatus, setMaintenanceItemStatus] = useState("");
+  const [maintenanceItemAssetSearch, setMaintenanceItemAssetSearch] = useState("");
   const [maintenanceIntervalOperations, setMaintenanceIntervalOperations] = useState([]);
   const [maintenanceIntervalEditing, setMaintenanceIntervalEditing] = useState(false);
   const [maintenanceIntervalError, setMaintenanceIntervalError] = useState("");
@@ -507,6 +508,8 @@ export default function VehiclesPage() {
   const [activeRecordNode, setActiveRecordNode] = useState("");
   const recordPickerRef = useRef(null);
   const recordTreeRef = useRef(null);
+  const maintenanceItemAssetSearchRef = useRef(null);
+  const restoreMaintenanceItemsFocus = useRef(false);
 
   useEffect(() => {
     if (!recordPickerOpen) return;
@@ -528,6 +531,8 @@ export default function VehiclesPage() {
   const baselineById = new Map(baselineRecords.map((record) => [record.id, record]));
   const selectedMaintenanceItem = maintenanceItems?.find((item) => item.id === selectedMaintenanceItemId);
   const maintenanceItemBaseline = maintenanceItems?.find((item) => item.id === maintenanceItemDraft?.id);
+  const matchingMaintenanceItemAssets = (assets || []).filter((asset) => asset.name.toLowerCase()
+    .includes(maintenanceItemAssetSearch.trim().toLowerCase()));
   const maintenanceIntervals = workspace?.maintenanceIntervals || [];
   const maintenanceIntervalDirty = maintenanceIntervalOperations.length > 0;
   const intervalOperationById = new Map(maintenanceIntervalOperations.map((operation) => [operation.id, operation]));
@@ -680,6 +685,10 @@ export default function VehiclesPage() {
       if (dialog && !dialog.open) dialog.showModal();
     } else if (dialog?.open) {
       dialog.close();
+      if (restoreMaintenanceItemsFocus.current) {
+        manageButtonRef.current?.focus();
+        restoreMaintenanceItemsFocus.current = false;
+      }
       if (restoreOngoingRecordFocus.current) {
         ongoingRecordRef.current?.focus();
         restoreOngoingRecordFocus.current = false;
@@ -939,6 +948,7 @@ export default function VehiclesPage() {
   }
 
   function beginManageMaintenanceItems() {
+    setMaintenanceItemAssetSearch("");
     setMaintenanceItems(null);
     setMaintenanceItemsLoading(true);
     setMaintenanceItemsError("");
@@ -981,7 +991,9 @@ export default function VehiclesPage() {
     setMaintenanceItemRetryDraft(null);
     setMaintenanceItemNeedsReload(false);
     setSelectedMaintenanceItemId("");
-    manageMaintenanceItemsButtonRef.current?.focus();
+    setMaintenanceItemAssetSearch("");
+    if (dialogRef.current?.open) restoreMaintenanceItemsFocus.current = true;
+    else manageButtonRef.current?.focus();
   }
 
   function requestCloseManageMaintenanceItems() {
@@ -1004,6 +1016,7 @@ export default function VehiclesPage() {
       return;
     }
     setSelectedMaintenanceItemId(item.id);
+    setMaintenanceItemAssetSearch("");
     setMaintenanceItemDraft(item.archivedAt ? null : makeMaintenanceItemDraft(item, selectedAssetId));
     setMaintenanceItemNeedsReload(false);
     setMaintenanceItemError("");
@@ -1017,6 +1030,7 @@ export default function VehiclesPage() {
     }
     setSelectedMaintenanceItemId("");
     setMaintenanceItemDraft(makeMaintenanceItemDraft(null, selectedAssetId));
+    setMaintenanceItemAssetSearch("");
     setMaintenanceItemNeedsReload(false);
     setMaintenanceItemError("");
     setMaintenanceItemStatus("");
@@ -1031,6 +1045,7 @@ export default function VehiclesPage() {
 
   function cancelMaintenanceItemDraft() {
     if (!maintenanceItemDraft || maintenanceItemSaving || maintenanceItemRetryDraft) return;
+    setMaintenanceItemAssetSearch("");
     if (maintenanceItemDraft.operation === "create") {
       setMaintenanceItemDraft(null);
       setSelectedMaintenanceItemId("");
@@ -1656,6 +1671,7 @@ export default function VehiclesPage() {
     } else if (action.kind === "manage-items-close") {
       closeManageMaintenanceItems();
     } else if (action.kind === "manage-items-switch") {
+      setMaintenanceItemAssetSearch("");
       const item = maintenanceItems?.find((entry) => entry.id === action.value);
       setSelectedMaintenanceItemId(item?.id || "");
       setMaintenanceItemDraft(item && !item.archivedAt
@@ -1664,6 +1680,7 @@ export default function VehiclesPage() {
       setMaintenanceItemError("");
       setMaintenanceItemStatus("");
     } else if (action.kind === "manage-items-new") {
+      setMaintenanceItemAssetSearch("");
       setSelectedMaintenanceItemId("");
       setMaintenanceItemDraft(makeMaintenanceItemDraft(null, selectedAssetId));
       setMaintenanceItemNeedsReload(false);
@@ -2890,20 +2907,29 @@ export default function VehiclesPage() {
       </dialog>
 
       <dialog ref={maintenanceItemsDialogRef} className={`${styles.dialog} ${styles.maintenanceItemsDialog}`}
-        aria-labelledby="vehicles-manage-items-title" onCancel={(event) => {
+        aria-labelledby="vehicles-manage-items-title" aria-describedby="vehicles-manage-items-description"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          requestCloseManageMaintenanceItems();
+        }}
+        onCancel={(event) => {
           event.preventDefault();
           requestCloseManageMaintenanceItems();
         }}>
         <div className={styles.detailHeading}>
           <div>
             <h2 id="vehicles-manage-items-title">Manage Maintenance Items</h2>
-            <p>Changes apply to future Ongoing drafts. Saved history keeps its captured item details.</p>
+            <p id="vehicles-manage-items-description">
+              Changes apply to future Ongoing drafts. Saved history keeps its captured item details.
+            </p>
           </div>
           <button type="button" className="lm-button lm-button--secondary"
             onClick={requestCloseManageMaintenanceItems} disabled={maintenanceItemSaving}
             aria-label="Close Manage Maintenance Items">Close</button>
         </div>
 
+        <div className={styles.maintenanceItemsBody}>
         {maintenanceItemsLoading && <p className="lm-loading-state" role="status">Loading Maintenance Items...</p>}
         {maintenanceItemsError && <div className="lm-feedback lm-feedback--error" role="alert">
           <p>{maintenanceItemsError}</p>
@@ -2944,7 +2970,8 @@ export default function VehiclesPage() {
             </section>
 
             {maintenanceItemDraft ? (
-              <form className={styles.maintenanceItemForm} onSubmit={saveMaintenanceItemChanges} noValidate>
+              <form id="vehicles-maintenance-item-form" className={styles.maintenanceItemForm}
+                onSubmit={saveMaintenanceItemChanges} noValidate>
                 <h3>{maintenanceItemDraft.operation === "create" ? "New Maintenance Item" : "Edit Maintenance Item"}</h3>
                 <label className="lm-form-field" htmlFor="vehicles-maintenance-item-name">
                   <span className="lm-form-label">Name</span>
@@ -2975,10 +3002,13 @@ export default function VehiclesPage() {
                   <select id="vehicles-maintenance-item-applicability" className="lm-form-control"
                     value={maintenanceItemDraft.availabilityMode}
                     aria-describedby={maintenanceItemError ? "vehicles-maintenance-item-error" : undefined}
-                    onChange={(event) => updateMaintenanceItemDraft({
-                      availabilityMode: event.target.value,
-                      currentAssetId: event.target.value === "current_asset_only" ? selectedAssetId : "",
-                    })}
+                    onChange={(event) => {
+                      setMaintenanceItemAssetSearch("");
+                      updateMaintenanceItemDraft({
+                        availabilityMode: event.target.value,
+                        currentAssetId: event.target.value === "current_asset_only" ? selectedAssetId : "",
+                      });
+                    }}
                     disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft) || maintenanceItemNeedsReload}>
                     <option value="all_assets">All Assets</option>
                     <option value="current_asset_only">Current Asset Only</option>
@@ -2994,8 +3024,32 @@ export default function VehiclesPage() {
                 {maintenanceItemDraft.availabilityMode === "selected_assets" && (
                   <fieldset className={styles.maintenanceItemAssets}>
                     <legend>Selected Assets</legend>
+                    <label className="lm-form-field" htmlFor="vehicles-maintenance-item-asset-search">
+                      <span className="lm-form-label">Search assets</span>
+                      <input ref={maintenanceItemAssetSearchRef} id="vehicles-maintenance-item-asset-search"
+                        type="search" className="lm-form-control" value={maintenanceItemAssetSearch}
+                        aria-describedby="vehicles-maintenance-item-asset-results"
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.preventDefault();
+                        }}
+                        onChange={(event) => setMaintenanceItemAssetSearch(event.target.value)} />
+                    </label>
+                    <button type="button" className="lm-button lm-button--secondary"
+                      disabled={!maintenanceItemAssetSearch}
+                      onClick={() => {
+                        setMaintenanceItemAssetSearch("");
+                        maintenanceItemAssetSearchRef.current?.focus();
+                      }}>Clear asset search</button>
+                    <p id="vehicles-maintenance-item-asset-results" role="status" aria-live="polite">
+                      {matchingMaintenanceItemAssets.length} of {assets?.length || 0} assets shown.
+                      {" "}{maintenanceItemDraft.selectedAssetIds.length} selected across all assets.
+                    </p>
                     {!assets?.length && <p>No assets are available to select.</p>}
-                    {assets?.map((asset) => (
+                    {Boolean(assets?.length) && !matchingMaintenanceItemAssets.length && (
+                      <p>No assets match your search. Clear the search to show all assets.</p>
+                    )}
+                    <div className={styles.maintenanceItemAssetResults}>
+                    {matchingMaintenanceItemAssets.map((asset) => (
                       <label key={asset.id} className={styles.maintenanceItemAsset}>
                         <input id={`vehicles-maintenance-item-asset-${asset.id}`} type="checkbox"
                           checked={maintenanceItemDraft.selectedAssetIds.includes(asset.id)}
@@ -3009,6 +3063,7 @@ export default function VehiclesPage() {
                         <span>{asset.name}</span>
                       </label>
                     ))}
+                    </div>
                   </fieldset>
                 )}
 
@@ -3022,29 +3077,6 @@ export default function VehiclesPage() {
                   <button type="button" className="lm-button lm-button--secondary" onClick={reloadMaintenanceItems}
                     disabled={maintenanceItemsLoading}>Reload catalog</button>
                 </div>}
-                <div className={styles.dialogActions}>
-                  <button type="button" className="lm-button lm-button--secondary"
-                    onClick={cancelMaintenanceItemDraft}
-                    disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
-                      || maintenanceItemNeedsReload}>Cancel</button>
-                  {maintenanceItemRetryDraft && <button type="button" className="lm-button lm-button--secondary"
-                    onClick={retryMaintenanceItemSave} disabled={maintenanceItemSaving}>Retry same request</button>}
-                  <button type="submit" className="lm-button lm-button--primary"
-                    disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
-                      || maintenanceItemNeedsReload || !maintenanceItemDirty}>
-                    {maintenanceItemSaving ? "Saving..." : maintenanceItemDraft.operation === "create"
-                      ? "Save Maintenance Item" : "Save Changes"}
-                  </button>
-                  {maintenanceItemDraft.operation === "update" && !selectedMaintenanceItem?.archivedAt && (
-                    <button type="button" className={`lm-button lm-button--danger ${styles.archiveAction}`}
-                      aria-label="Archive"
-                      onClick={() => setConfirmation({ kind: "maintenance-item-archive", value: selectedMaintenanceItem })}
-                      disabled={maintenanceItemDirty || maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
-                        || maintenanceItemNeedsReload}>
-                      Archive
-                    </button>
-                  )}
-                </div>
               </form>
             ) : selectedMaintenanceItem?.archivedAt ? (
               <section className={`lm-surface ${styles.maintenanceItemReadOnly}`} aria-label="Archived Maintenance Item">
@@ -3057,6 +3089,32 @@ export default function VehiclesPage() {
                 <h3>{maintenanceItems.length ? "Select a Maintenance Item" : "Catalog is empty"}</h3>
                 <p>Maintenance Item edits affect future Ongoing drafts only. Existing history is not changed.</p>
               </section>
+            )}
+          </div>
+        )}
+        </div>
+        {!maintenanceItemsLoading && maintenanceItems && maintenanceItemDraft && (
+          <div className={`${styles.dialogActions} ${styles.maintenanceItemActions}`}>
+            <button type="button" className="lm-button lm-button--secondary"
+              onClick={cancelMaintenanceItemDraft}
+              disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
+                || maintenanceItemNeedsReload}>Cancel</button>
+            {maintenanceItemRetryDraft && <button type="button" className="lm-button lm-button--secondary"
+              onClick={retryMaintenanceItemSave} disabled={maintenanceItemSaving}>Retry same request</button>}
+            <button type="submit" form="vehicles-maintenance-item-form" className="lm-button lm-button--primary"
+              disabled={maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
+                || maintenanceItemNeedsReload || !maintenanceItemDirty}>
+              {maintenanceItemSaving ? "Saving..." : maintenanceItemDraft.operation === "create"
+                ? "Save Maintenance Item" : "Save Changes"}
+            </button>
+            {maintenanceItemDraft.operation === "update" && !selectedMaintenanceItem?.archivedAt && (
+              <button type="button" className={`lm-button lm-button--danger ${styles.archiveAction}`}
+                aria-label="Archive"
+                onClick={() => setConfirmation({ kind: "maintenance-item-archive", value: selectedMaintenanceItem })}
+                disabled={maintenanceItemDirty || maintenanceItemSaving || Boolean(maintenanceItemRetryDraft)
+                  || maintenanceItemNeedsReload}>
+                Archive
+              </button>
             )}
           </div>
         )}
