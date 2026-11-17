@@ -453,6 +453,36 @@ test("Vehicles route resolves by path and hash and renders the authenticated des
   assert.match(router, /vehicles: lazy\(\(\) => import\("\.\.\/\.\.\/pages\/Vehicles\/VehiclesPage\.jsx"\)\)/);
 });
 
+test("Vehicle / Small Engine selector and manager names preserve generic asset controls", async () => {
+  const ui = harness();
+  await ui.settle();
+  const label = ui.find((node) => node.type === "label" && node.props.htmlFor === "vehicles-asset-select");
+  assert.equal(ui.text(label).includes("Vehicle / Small Engine"), true);
+  assert(ui.input("vehicles-asset-select"));
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  const dialog = ui.find((node) => node.type === "dialog"
+    && node.props["aria-labelledby"] === "vehicles-manage-assets-title");
+  const heading = ui.find((node) => node.props.id === dialog.props["aria-labelledby"]);
+  assert.equal(ui.text(heading), "Manage Vehicles / Small Engines");
+  assert(ui.find((node) => node.props["aria-label"] === "Close Manage Vehicles / Small Engines"));
+  assert(ui.button("Add Asset"));
+  assert(ui.button("Delete Asset"));
+  assert.equal(ui.calls.saves.length, 0);
+});
+
+test("Loading maintenance and editing actions use inclusive generic asset terminology", async () => {
+  let resolveWorkspace;
+  const ui = harness({ loadVehicleWorkspace: () => new Promise((resolve) => { resolveWorkspace = resolve; }) });
+  await ui.settle();
+  assert.match(ui.text(), /Loading asset maintenance/);
+  resolveWorkspace(workspace(assets[0], [record(11, "2026-02-01")]));
+  await ui.settle();
+  enterOngoingEdit(ui);
+  assert(ui.find((node) => node.props["aria-label"] === "Asset editing actions"));
+  assert.equal(ui.calls.saves.length, 0);
+});
+
 test("No assets renders a stable empty state without calling the workspace loader", async () => {
   const ui = harness({ initialAssets: [] });
   await ui.settle();
@@ -481,7 +511,7 @@ test("Manage Assets is available in the empty state and opens an accessible crea
   ui.button("Manage Assets").props.onClick();
   ui.render();
   assert.equal(ui.manageDialog.open, true);
-  assert.match(ui.text(), /Manage Assets/);
+  assert.match(ui.text(), /Manage Vehicles \/ Small Engines/);
   assert.match(ui.text(), /No saved assets yet/);
   assert.equal(ui.input("vehicles-managed-asset-name").props["aria-invalid"], false);
   assert(ui.nodes().some((node) => node.type === "label" && ui.text(node).includes("Asset name")));
@@ -529,7 +559,7 @@ test("Manage Assets restores the visible Manage launcher only after clean Close 
         .props.onCancel({ preventDefault() { prevented = true; } });
       assert.equal(prevented, true);
     } else {
-      ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+      ui.find((node) => node.props["aria-label"] === "Close Manage Vehicles / Small Engines").props.onClick();
     }
     assert.equal(ui.focusCounts.manageButton, focusBefore, "the background launcher is inert until the modal closes");
     ui.render();
@@ -550,7 +580,7 @@ test("Empty-state Asset Manager discard restores its visible Manage Assets butto
   await ui.settle();
   ui.button("Manage Assets").props.onClick();
   ui.render();
-  ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+  ui.find((node) => node.props["aria-label"] === "Close Manage Vehicles / Small Engines").props.onClick();
   ui.render();
   assert.equal(ui.dialog.open, true, "the empty-state create draft retains its existing discard guard");
   const focusBefore = ui.focusCounts.manageButton;
@@ -1672,6 +1702,8 @@ async function openAssetDeletion(ui) {
   assert.equal(ui.button("Delete Asset").props.disabled, false);
   await ui.button("Delete Asset").props.onClick();
   await ui.settle();
+  assert.match(ui.text(), /permanently remove the asset and its associated maintenance information/);
+  assert.match(ui.text(), /Shared Maintenance Items are kept/);
 }
 
 function typeAssetDeletionName(ui, name) {
@@ -1703,7 +1735,7 @@ test("Delete Asset Cancel and native cancel restore an inner action before Asset
       assert(ui.input("vehicles-managed-asset-name"));
       assert.deepEqual(deleteFocus.at(-1), { assetsOpen: true, confirmationOpen: false });
       const focusBefore = ui.focusCounts.manageButton;
-      ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+      ui.find((node) => node.props["aria-label"] === "Close Manage Vehicles / Small Engines").props.onClick();
       assert.equal(ui.focusCounts.manageButton, focusBefore);
       ui.render();
       assert.equal(ui.focusCounts.manageButton, focusBefore + 1);
@@ -1932,7 +1964,7 @@ test("Delete Asset cannot discard or operate during a shared Vehicles editing se
   await ui.button("Delete Asset").props.onClick();
   ui.render();
   assert.equal(ui.input("vehicles-delete-asset-name"), undefined);
-  ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+  ui.find((node) => node.props["aria-label"] === "Close Manage Vehicles / Small Engines").props.onClick();
   ui.render();
   ui.input("vehicles-mechanic").props.onChange({ target: { value: "Keep exact Ongoing draft" } });
   ui.render();
@@ -2076,7 +2108,7 @@ test("Manage disclosure dismisses outside and on Escape, and interval shortcut n
   assert.equal(manage().props.open, false);
   assert.equal(ui.manageDialog.open, true);
   assert.equal(ui.documentListenerCount("pointerdown"), 0);
-  ui.find((node) => node.type === "button" && node.props["aria-label"] === "Close Manage Assets").props.onClick();
+  ui.find((node) => node.type === "button" && node.props["aria-label"] === "Close Manage Vehicles / Small Engines").props.onClick();
   ui.render();
 
   open();
@@ -3860,7 +3892,7 @@ test("Workspace selects newest history and preserves historical snapshots and tr
 test("Empty Ongoing list is shown when a loaded asset has no history", async () => {
   const ui = harness({ loadVehicleWorkspace: async (_assetId) => workspace(assets[0], []) });
   await ui.settle();
-  assert.match(ui.text(), /No Ongoing Maintenance records for this vehicle/);
+  assert.match(ui.text(), /No Ongoing Maintenance records for this asset/);
   assert.match(ui.text(), /Select or add an Ongoing record/);
   assert.equal(ui.input("vehicles-ongoing-record"), undefined);
   assert(ui.button("Add Ongoing Record"));

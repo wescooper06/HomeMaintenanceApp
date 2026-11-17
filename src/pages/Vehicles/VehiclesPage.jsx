@@ -2182,7 +2182,7 @@ export default function VehiclesPage() {
       <div className={styles.vehicleContextRow}>
         <div className={styles.assetRow}>
           <label className={`lm-form-field ${styles.assetLabel}`} htmlFor="vehicles-asset-select">
-            <span className="lm-form-label">Vehicle</span>
+            <span className="lm-form-label">Vehicle / Small Engine</span>
             <select id="vehicles-asset-select" className={`lm-form-control ${styles.assetSelectorControl}`}
               value={selectedAssetId}
               disabled={!assets?.length || saving || saveUncertain || dirty || Boolean(assetDeletion)}
@@ -2274,7 +2274,7 @@ export default function VehiclesPage() {
           onClick={openManageAssets} disabled={saving || saveUncertain}>+ Add Vehicle / Small Engine</button>
       </section>}
       {assets?.length > 0 && (workspaceLoading || !workspace) && !workspaceError
-        && <p className="lm-loading-state" role="status">Loading vehicle maintenance...</p>}
+        && <p className="lm-loading-state" role="status">Loading asset maintenance...</p>}
       {workspaceError && <div className="lm-feedback lm-feedback--error" role="alert">
         <p>{workspaceError}</p>
         <button type="button" className="lm-button lm-button--secondary"
@@ -2455,7 +2455,7 @@ export default function VehiclesPage() {
               <h3 id="ongoing-empty-title">Select or add an Ongoing record</h3>
               <p>{deletedRecords.length
                 ? "All existing records are queued for deletion. Save Changes to confirm."
-                : "No Ongoing Maintenance records for this vehicle."}</p>
+                : "No Ongoing Maintenance records for this asset."}</p>
             </section>}
                 </div>
               </>
@@ -2771,7 +2771,7 @@ export default function VehiclesPage() {
               </section>
             )}
           </div>
-          {sessionEditing && <div className={styles.mobileSessionActions} aria-label="Vehicle editing actions">
+          {sessionEditing && <div className={styles.mobileSessionActions} aria-label="Asset editing actions">
             <button type="button" className="lm-button lm-button--secondary"
               onClick={resetDraft} disabled={saving || saveUncertain}>Cancel Changes</button>
             <button type="button" className="lm-button lm-button--primary"
@@ -2790,17 +2790,17 @@ export default function VehiclesPage() {
         }}>
         <div className={styles.detailHeading}>
           <div>
-            <h2 id="vehicles-manage-assets-title">Manage Assets</h2>
+            <h2 id="vehicles-manage-assets-title">Manage Vehicles / Small Engines</h2>
             <p>Vehicles and small engines share the same asset list.</p>
           </div>
           <button type="button" className="lm-button lm-button--secondary" onClick={requestCloseManageAssets}
             disabled={manageSaving || Boolean(assetDeletion?.pending || assetDeletion?.retryDraft)}
-            aria-label="Close Manage Assets">Close</button>
+            aria-label="Close Manage Vehicles / Small Engines">Close</button>
         </div>
         {assetDeletion ? <section className={styles.assetDeletion} aria-labelledby="vehicles-delete-asset-title"
           aria-busy={assetDeletion.loading || assetDeletion.pending}>
           <h3 id="vehicles-delete-asset-title">Delete {assetDeletion.asset.name}?</h3>
-          <p id="vehicles-delete-asset-warning">Deleting this asset will permanently remove the vehicle and its associated
+          <p id="vehicles-delete-asset-warning">Deleting this asset will permanently remove the asset and its associated
             maintenance information, including its service history, intervals, notes, and links. Shared Maintenance Items are kept.</p>
           {assetDeletion.loading && <p role="status">Checking Maintenance Item dependencies...</p>}
           {assetDeletion.blockers.length > 0 && <div role="alert">
