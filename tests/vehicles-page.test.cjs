@@ -1433,6 +1433,7 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
   const ui = harness();
   await ui.settle();
   const assetId = ui.input("vehicles-asset-select").props.value;
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
   const workspacesBefore = ui.calls.workspaces.length;
   const sectionTab = (id) => ui.find((node) => node.props?.["data-vehicles-section"] === id);
 
@@ -1474,6 +1475,7 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
       .props["aria-selected"], true);
     assert.equal(ui.shouldBlock(), true);
     assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
     assert(ui.button("Cancel Changes"));
     assert(ui.button("Save Changes"));
     assert.equal(ui.button("Discard and continue"), undefined);
@@ -1488,10 +1490,12 @@ test("Section switching preserves the asset and dirty Ongoing session without sa
   sectionTab("ongoing").props.onClick();
   ui.render();
   assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-04");
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
   ui.button("Cancel Changes").props.onClick();
   ui.render();
   assert.equal(ui.calls.saves.length, 0);
   assert.equal(ui.input("vehicles-asset-select").props.value, assetId);
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
 });
 
 function recommendedHarness(records = [], overrides = {}) {
@@ -3404,6 +3408,193 @@ test("Ongoing layout has compact desktop rows, full grouped content, and unbound
   assert.equal(noUsageUi.calls.saves.length, 0);
 });
 
+test("Each Ongoing field or performed-item edit natively locks the shared asset selector until Cancel", async () => {
+  for (const [id, value, usageUnit = "miles"] of [
+    ["vehicles-service-date", "2026-02-03"],
+    ["vehicles-usage-value", "450"],
+    ["vehicles-usage-value", "345", "hours"],
+    ["vehicles-mechanic", "Synthetic mechanic"],
+    [null, false],
+  ]) {
+    const ui = harness({
+      loadVehicleWorkspace: async () => workspace({ ...assets[0], usageUnit },
+        [record(12, "2026-02-01", { usageReadingUnit: usageUnit })]),
+    });
+    await ui.settle();
+    const selector = () => ui.input("vehicles-asset-select");
+    assert.equal(selector().props.disabled, false);
+    assert.equal(selector().props.value, uuid(1));
+    assert.equal(ui.text(ui.find((node) => node.type === "label"
+      && node.props.htmlFor === "vehicles-asset-select")).startsWith("Vehicle"), true);
+    enterOngoingEdit(ui);
+    assert.equal(selector().props.disabled, false, "unchanged Edit has no unsaved work");
+    const field = id ? ui.input(id) : ui.find((node) => node.props["aria-label"] === "Performed: Historical item");
+    field.props.onChange({ target: { value, checked: value } });
+    ui.render();
+    assert.equal(selector().type, "select");
+    assert.equal(selector().props.disabled, true, id || "performed-item toggle");
+    assert.equal(selector().props.value, uuid(1));
+    assert.equal(ui.shouldBlock(), true);
+    ui.button("Cancel Changes").props.onClick();
+    ui.render();
+    assert.equal(selector().props.disabled, false);
+    assert.equal(selector().props.value, uuid(1));
+    assert.equal(ui.shouldBlock(), false);
+    assert.equal(ui.input("vehicles-service-date"), undefined);
+    enterOngoingEdit(ui);
+    assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-01");
+    assert.equal(ui.input("vehicles-usage-value").props.value, 120);
+    assert.equal(ui.input("vehicles-mechanic").props.value, "");
+    assert.equal(ui.find((node) => node.props["aria-label"] === "Performed: Historical item").props.checked, true);
+    assert.equal(selector().props.disabled, false);
+    assert.equal(ui.calls.saves.length, 0);
+  }
+});
+
+test("Ongoing Add locks its current asset immediately and Cancel removes the untouched draft", async () => {
+  const ui = harness();
+  await ui.settle();
+  ui.input("vehicles-asset-select").props.onChange({ target: { value: uuid(2) } });
+  await ui.settle();
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+  await ui.button("Add Ongoing Record").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(2));
+  assert.equal(ui.input("vehicles-usage-unit").props.value, "hours");
+  assert.equal(ui.shouldBlock(), true);
+  assert.equal(ui.button("Delete Record"), undefined);
+  const draftDate = ui.input("vehicles-service-date").props.value;
+  for (const section of ["recommended", "completed", "intervals", "key-information", "ongoing"]) {
+    ui.input("vehicles-section-select").props.onChange({ target: { value: section } });
+    ui.render();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+    assert.equal(ui.input("vehicles-asset-select").props.value, uuid(2));
+  }
+  assert.equal(ui.input("vehicles-service-date").props.value, draftDate);
+  ui.button("Cancel Changes").props.onClick();
+  ui.render();
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(2));
+  assert.equal(ui.input("vehicles-service-date"), undefined);
+  assert.match(ui.text(), /No Ongoing Maintenance records/);
+  assert.equal(ui.shouldBlock(), false);
+  assert.equal(ui.calls.saves.length, 0);
+  ui.input("vehicles-asset-select").props.onChange({ target: { value: uuid(1) } });
+  await ui.settle();
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+});
+
+test("Every isolated section and a mixed vehicle session use the same dirty asset lock", async () => {
+  for (const section of ["ongoing", "recommended", "completed", "intervals", "key-information", "mixed"]) {
+    const ui = harness();
+    await ui.settle();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+    if (section === "ongoing" || section === "mixed") {
+      enterOngoingEdit(ui);
+      ui.input("vehicles-mechanic").props.onChange({ target: { value: "Shared dirty session" } });
+      ui.render();
+    }
+    if (section !== "ongoing") {
+      ui.input("vehicles-section-select").props.onChange({
+        target: { value: section === "mixed" ? "recommended" : section },
+      });
+      ui.render();
+      if (section === "key-information") {
+        ui.button("Add Key Information").props.onClick();
+        ui.render();
+        keyEditor(ui).props.onChange({
+          schemaVersion: 1, blocks: [{ type: "paragraph", runs: [{ text: "Shared note" }] }],
+        });
+      } else {
+        ui.button(section === "completed" ? "Add Completed Service"
+          : section === "intervals" ? "+ New Service" : "Add Recommended Service").props.onClick();
+      }
+      ui.render();
+    }
+    for (const destination of ["ongoing", "recommended", "completed", "intervals", "key-information"]) {
+      ui.input("vehicles-section-select").props.onChange({ target: { value: destination } });
+      ui.render();
+      assert.equal(ui.input("vehicles-asset-select").props.disabled, true, `${section} at ${destination}`);
+      assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+      assert.equal(ui.input("vehicles-section-select").props.disabled, undefined);
+      assert.equal(ui.button("Discard and continue"), undefined);
+    }
+    ui.button("Cancel Changes").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, false, section);
+    assert.equal(ui.shouldBlock(), false);
+    assert.equal(ui.calls.saves.length, 0);
+    assert.equal(ui.calls.workspaces.length, 1);
+  }
+});
+
+test("Successful synthetic Ongoing create and update reconcile versions and unlock the same asset", async () => {
+  for (const action of ["create", "update"]) {
+    let stored = [record(12, "2026-02-01")];
+    let assetVersion = 4;
+    let release;
+    const ui = harness({
+      loadVehicleWorkspace: async () => workspace({ ...assets[0], version: assetVersion }, structuredClone(stored)),
+      saveVehicleChanges: (draft) => {
+        ui.calls.saves.push(structuredClone(draft));
+        return new Promise((resolve) => {
+          release = () => {
+            const operation = draft.ongoingOperations[0];
+            assetVersion += 1;
+            const saved = {
+              id: operation.id, serviceDate: operation.serviceDate,
+              usageReadingValue: operation.usageReadingValue, usageReadingUnit: operation.usageReadingUnit,
+              mechanic: operation.mechanic, capturedItems: structuredClone(operation.items),
+              version: (stored.find((entry) => entry.id === operation.id)?.version || 0) + 1,
+            };
+            stored = [saved];
+            resolve({ status: "saved", assetVersion, entityVersions: { ongoing: { [saved.id]: saved.version } } });
+          };
+        });
+      },
+    });
+    await ui.settle();
+    if (action === "create") await ui.button("Add Ongoing Record").props.onClick();
+    else enterOngoingEdit(ui);
+    ui.render();
+    ui.input("vehicles-mechanic").props.onChange({ target: { value: "Synthetic saved mechanic" } });
+    ui.render();
+    const pending = ui.button("Save Changes").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+    assert.equal(ui.button("Cancel Changes").props.disabled, true);
+    release();
+    await pending;
+    await ui.settle();
+    const request = ui.calls.saves[0];
+    assert.equal(request.assetId, uuid(1));
+    assert.equal(request.expectedAssetVersion, 4);
+    assert.equal(request.ongoingOperations.length, 1);
+    assert.equal(request.ongoingOperations[0].action, action);
+    assert.equal(request.ongoingOperations[0].mechanic, "Synthetic saved mechanic");
+    if (action === "update") assert.equal(request.ongoingOperations[0].expectedVersion, 14);
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+    assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+    assert.equal(ui.shouldBlock(), false);
+    assert.equal(ui.button("Cancel Changes"), undefined);
+    assert.match(ui.text(), /Changes saved/);
+    enterOngoingEdit(ui);
+    assert.equal(ui.input("vehicles-mechanic").props.value, "Synthetic saved mechanic");
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+    ui.input("vehicles-mechanic").props.onChange({ target: { value: "Next edit" } });
+    ui.render();
+    const savedVersion = stored[0].version;
+    const nextSave = ui.button("Save Changes").props.onClick();
+    release();
+    await nextSave;
+    await ui.settle();
+    assert.equal(ui.calls.saves[1].expectedAssetVersion, 5);
+    assert.equal(ui.calls.saves[1].ongoingOperations[0].expectedVersion, savedVersion);
+  }
+});
+
 test("Edit marks the session dirty; Cancel restores persisted values without an RPC", async () => {
   const ui = harness();
   await ui.settle();
@@ -3501,13 +3692,14 @@ test("Deleting the sole Ongoing record keeps the page-level Save action availabl
   ]);
 });
 
-test("Switching assets with unsaved edits requires explicit discard", async () => {
+test("A programmatic asset-change event still requires discard despite the natively disabled selector", async () => {
   const ui = harness();
   await ui.settle();
   enterOngoingEdit(ui);
   ui.input("vehicles-service-date").props.onChange({ target: { value: "2026-02-04" } });
   ui.render();
   const selector = ui.input("vehicles-asset-select");
+  assert.equal(selector.props.disabled, true);
   selector.props.onChange({ target: { value: uuid(2) } });
   ui.render();
   assert.match(ui.text(), /Discard changes and switch assets/);
@@ -3558,6 +3750,17 @@ test("Validation and conflict failures keep drafts and use safe user-facing mess
     assert.match(ui.text(), expected);
     assert.doesNotMatch(ui.text(), /raw PostgreSQL detail/);
     assert(ui.button("Cancel Changes"));
+    assert.equal(ui.input("vehicles-service-date").props.value, "2026-02-05");
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+    assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+    ui.input("vehicles-mechanic").props.onChange({ target: { value: "Corrected draft" } });
+    ui.render();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+    assert.equal(ui.button("Cancel Changes").props.disabled, false);
+    ui.button("Cancel Changes").props.onClick();
+    ui.render();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+    assert.equal(ui.shouldBlock(), false);
   }
 });
 
@@ -3582,6 +3785,16 @@ test("Unknown outcome preserves request and client IDs and retry reuses the exac
   ui.render();
   assert.match(ui.text(), /outcome is unknown/);
   assert.doesNotMatch(ui.text(), /private database detail/);
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.equal(ui.button("Cancel Changes").props.disabled, true);
+  assert.equal(ui.input("vehicles-mechanic").props.disabled, true);
+  for (const section of ["recommended", "completed", "intervals", "key-information", "ongoing"]) {
+    ui.input("vehicles-section-select").props.onChange({ target: { value: section } });
+    ui.render();
+    assert.equal(ui.input("vehicles-asset-select").props.disabled, true);
+    assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  }
   const firstPayload = ui.calls.saves[0];
   assert.equal(firstPayload.ongoingOperations[0].id, uuid(900));
   await ui.button("Retry same save").props.onClick();
@@ -3589,6 +3802,9 @@ test("Unknown outcome preserves request and client IDs and retry reuses the exac
   assert.equal(ui.calls.saves[1].requestId, uuid(777));
   assert.equal(ui.calls.saves[1].ongoingOperations[0].id, firstPayload.ongoingOperations[0].id);
   assert.deepEqual(ui.calls.saves[1], attempted);
+  assert.equal(ui.input("vehicles-asset-select").props.disabled, false);
+  assert.equal(ui.input("vehicles-asset-select").props.value, uuid(1));
+  assert.equal(ui.shouldBlock(), false);
 });
 
 test("Unsaved record changes block route navigation and require explicit discard", async () => {
