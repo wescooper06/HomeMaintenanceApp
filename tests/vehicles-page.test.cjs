@@ -254,6 +254,7 @@ function harness(overrides = {}) {
     managedName: 0, manageButton: 0, maintenanceItemName: 0, maintenanceItemButton: 0,
     maintenanceIntervalItem: 0, maintenanceIntervalsAddButton: 0, manageIntervalsButton: 0,
   };
+  const manageFocusEvents = [];
   const mockDocument = {
     activeElement: { focus() {} },
     execCommand(command, _showUi, value) {
@@ -315,7 +316,10 @@ function harness(overrides = {}) {
       if (!(index in refs)) {
         const current = index === 1 ? dialog : index === 2 ? manageDialog
           : index === 3 ? { focus() { focusCounts.managedName += 1; } }
-            : index === 4 ? { focus() { focusCounts.manageButton += 1; } }
+            : index === 4 ? { focus() {
+              focusCounts.manageButton += 1;
+              manageFocusEvents.push({ assetsOpen: manageDialog.open, confirmationOpen: dialog.open });
+            } }
               : index === 5 ? { focus() { focusCounts.maintenanceItemButton += 1; } }
                 : index === 6 ? maintenanceDialog
                   : index === 7 ? { focus() { focusCounts.maintenanceItemName += 1; } }
@@ -382,7 +386,7 @@ function harness(overrides = {}) {
   render();
   return {
     render, settle, nodes, text: (node = tree) => text(node), find, button, input, calls, blocker, dialog,
-    manageDialog, maintenanceDialog, intervalDialog, focusCounts, assetStore,
+    manageDialog, maintenanceDialog, intervalDialog, focusCounts, manageFocusEvents, assetStore,
     intervalStore,
     attachDescriptionEditor(start, end = start, id = "vehicles-recommended-description") {
       const node = input(id);
@@ -498,6 +502,65 @@ test("Manage Assets lists persisted assets and focuses the selected editable ass
   assert.match(ui.text(list), /Synthetic car/);
   assert.match(ui.text(list), /Synthetic truck/);
   assert(ui.focusCounts.managedName > 0);
+});
+
+test("Manage Assets restores the visible Manage launcher only after clean Close or native cancel closes the modal", async () => {
+  for (const closePath of ["close", "cancel", "switch"]) {
+    const ui = harness();
+    await ui.settle();
+    ui.input("vehicles-asset-select").props.onChange({ target: { value: uuid(2) } });
+    await ui.settle();
+    for (const section of ["recommended", "completed", "intervals", "key-information", "ongoing"]) {
+      ui.input("vehicles-section-select").props.onChange({ target: { value: section } });
+      ui.render();
+    }
+    ui.button("Manage Assets").props.onClick();
+    ui.render();
+    assert.equal(ui.manageDialog.open, true);
+    if (closePath === "switch") {
+      ui.find((node) => node.props.role === "listitem" && ui.text(node).includes("Synthetic truck")).props.onClick();
+      ui.render();
+      assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Synthetic truck");
+    }
+    const focusBefore = ui.focusCounts.manageButton;
+    if (closePath === "cancel") {
+      let prevented = false;
+      ui.find((node) => node.props["aria-labelledby"] === "vehicles-manage-assets-title")
+        .props.onCancel({ preventDefault() { prevented = true; } });
+      assert.equal(prevented, true);
+    } else {
+      ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+    }
+    assert.equal(ui.focusCounts.manageButton, focusBefore, "the background launcher is inert until the modal closes");
+    ui.render();
+    assert.equal(ui.manageDialog.open, false);
+    assert.equal(ui.focusCounts.manageButton, focusBefore + 1);
+    assert.deepEqual(ui.manageFocusEvents.at(-1), { assetsOpen: false, confirmationOpen: false });
+    const launcher = ui.find((node) => node.type === "summary" && node.props["aria-label"] === "Manage");
+    assert(launcher);
+    assert.equal(launcher.props["aria-expanded"], false);
+    assert.equal(launcher.props.disabled, undefined);
+    assert.equal(ui.calls.saves.length, 0);
+    assert.equal(ui.calls.deletes.length, 0);
+  }
+});
+
+test("Empty-state Asset Manager discard restores its visible Manage Assets button after both dialogs close", async () => {
+  const ui = harness({ initialAssets: [] });
+  await ui.settle();
+  ui.button("Manage Assets").props.onClick();
+  ui.render();
+  ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+  ui.render();
+  assert.equal(ui.dialog.open, true, "the empty-state create draft retains its existing discard guard");
+  const focusBefore = ui.focusCounts.manageButton;
+  ui.button("Discard and continue").props.onClick();
+  assert.equal(ui.focusCounts.manageButton, focusBefore);
+  ui.render();
+  assert.equal(ui.focusCounts.manageButton, focusBefore + 1);
+  assert.deepEqual(ui.manageFocusEvents.at(-1), { assetsOpen: false, confirmationOpen: false });
+  assert.equal(ui.button("Manage Assets").props.disabled, false);
+  assert.equal(ui.calls.creates.length, 0);
 });
 
 test("Create asset drafts preserve one UUID and request ID and select the confirmed asset", async () => {
@@ -668,7 +731,7 @@ test("Opening Manage Assets protects a dirty Ongoing Maintenance session", async
   assert.match(ui.text(), /2026-02-01/);
 });
 
-test("Dirty asset close requires explicit discard and returns focus to Manage Assets", async () => {
+test("Dirty asset close preserves Stay and restores Manage focus only after both modals close on Discard", async () => {
   const ui = harness();
   await ui.settle();
   ui.button("Manage Assets").props.onClick();
@@ -682,12 +745,19 @@ test("Dirty asset close requires explicit discard and returns focus to Manage As
   ui.button("Stay").props.onClick();
   ui.render();
   assert.equal(ui.manageDialog.open, true);
+  assert.equal(ui.dialog.open, false);
+  assert.equal(ui.input("vehicles-managed-asset-name").props.value, "Unsaved rename");
   ui.button("Close").props.onClick();
   ui.render();
+  const focusBefore = ui.focusCounts.manageButton;
   ui.button("Discard and continue").props.onClick();
+  assert.equal(ui.focusCounts.manageButton, focusBefore, "do not focus the launcher while either modal remains open");
   ui.render();
   assert.equal(ui.manageDialog.open, false);
-  assert(ui.focusCounts.manageButton > 0);
+  assert.equal(ui.dialog.open, false);
+  assert.equal(ui.focusCounts.manageButton, focusBefore + 1);
+  assert.deepEqual(ui.manageFocusEvents.at(-1), { assetsOpen: false, confirmationOpen: false });
+  assert.equal(ui.calls.saves.length, 0);
 });
 
 test("Asset creation prevents duplicate submissions", async () => {
@@ -1608,6 +1678,42 @@ function typeAssetDeletionName(ui, name) {
   ui.input("vehicles-delete-asset-name").props.onChange({ target: { value: name } });
   ui.render();
 }
+
+test("Delete Asset Cancel and native cancel restore an inner action before Asset Manager closes to Manage", async () => {
+  for (const blocked of [false, true]) {
+    for (const cancelPath of ["cancel", "native-cancel"]) {
+      const ui = harness({ initialMaintenanceItems: blocked
+        ? [catalogItem(701, { availabilityMode: "current_asset_only", currentAssetId: uuid(1) })] : [] });
+      await ui.settle();
+      ui.button("Manage Assets").props.onClick();
+      ui.render();
+      const deleteFocus = [];
+      ui.button("Delete Asset").props.ref.current = {
+        focus() { deleteFocus.push({ assetsOpen: ui.manageDialog.open, confirmationOpen: ui.dialog.open }); },
+      };
+      await ui.button("Delete Asset").props.onClick();
+      await ui.settle();
+      assert.equal(ui.button("Delete Asset").props.disabled, true, "deletion is never enabled in this focus-only test");
+      assert.equal(Boolean(ui.input("vehicles-delete-asset-name")), !blocked);
+      if (cancelPath === "cancel") ui.button("Cancel").props.onClick();
+      else ui.find((node) => node.props["aria-labelledby"] === "vehicles-manage-assets-title")
+        .props.onCancel({ preventDefault() {} });
+      ui.render();
+      assert.equal(ui.manageDialog.open, true);
+      assert(ui.input("vehicles-managed-asset-name"));
+      assert.deepEqual(deleteFocus.at(-1), { assetsOpen: true, confirmationOpen: false });
+      const focusBefore = ui.focusCounts.manageButton;
+      ui.find((node) => node.props["aria-label"] === "Close Manage Assets").props.onClick();
+      assert.equal(ui.focusCounts.manageButton, focusBefore);
+      ui.render();
+      assert.equal(ui.focusCounts.manageButton, focusBefore + 1);
+      assert.deepEqual(ui.manageFocusEvents.at(-1), { assetsOpen: false, confirmationOpen: false });
+      assert.equal(ui.calls.deletes.length, 0);
+      assert.equal(ui.calls.saves.length, 0);
+      assert.equal(ui.calls.catalogSaves.length, 0);
+    }
+  }
+});
 
 test("Delete Asset warning displays every mixed blocker and excludes non-blocking associations without mutation", async () => {
   const ui = harness({ initialMaintenanceItems: [

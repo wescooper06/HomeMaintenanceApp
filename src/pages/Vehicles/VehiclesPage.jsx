@@ -703,6 +703,7 @@ export default function VehiclesPage() {
       assetsNameRef.current?.focus();
     } else if (dialog?.open) {
       dialog.close();
+      manageButtonRef.current?.focus();
     }
   }, [manageAssetsOpen, manageAssetId]);
 
@@ -1337,7 +1338,6 @@ export default function VehiclesPage() {
     setManageRetryDraft(null);
     setManageError("");
     setManageStatus("");
-    manageButtonRef.current?.focus();
   }
 
   function chooseManageAsset(nextDraft) {
