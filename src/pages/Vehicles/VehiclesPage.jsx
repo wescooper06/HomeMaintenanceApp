@@ -2654,7 +2654,7 @@ export default function VehiclesPage() {
                   </select>
                 </label>
                 <label className="lm-form-field" htmlFor="vehicles-maintenance-item-applicability">
-                  <span className="lm-form-label">Applicability</span>
+                  <span className="lm-form-label">Available For</span>
                   <select id="vehicles-maintenance-item-applicability" className="lm-form-control"
                     value={maintenanceItemDraft.availabilityMode}
                     aria-describedby={maintenanceItemError ? "vehicles-maintenance-item-error" : undefined}

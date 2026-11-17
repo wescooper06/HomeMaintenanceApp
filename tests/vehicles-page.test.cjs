@@ -740,6 +740,11 @@ test("Manage Maintenance Items defaults new items to the current asset and maps 
   assert(ui.button("Add Maintenance Item"));
   ui.button("Add Maintenance Item").props.onClick();
   ui.render();
+  const scopeLabel = ui.find((node) => node.type === "label"
+    && node.props.htmlFor === "vehicles-maintenance-item-applicability");
+  assert.equal(ui.text(scopeLabel.children[0]), "Available For");
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props["aria-label"], undefined);
+  assert.equal(ui.input("vehicles-maintenance-item-applicability").props["aria-labelledby"], undefined);
   assert.equal(ui.input("vehicles-maintenance-item-applicability").props.value, "current_asset_only");
   assert.deepEqual(ui.input("vehicles-maintenance-item-applicability").children.map((option) => ui.text(option)),
     ["All Assets", "Current Asset Only", "Selected Assets"]);
