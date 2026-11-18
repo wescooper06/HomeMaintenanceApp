@@ -347,6 +347,22 @@ test("asset and child-only writes increment the aggregate revision once; stale s
   assert.equal(await scalar("select version from public.vehicles_assets where id=$1", [assetId]), 2);
 });
 
+test("Completed Service RPC preserves multiline plain text on create and edit", async () => {
+  const assetId = await asset();
+  const id = uuid();
+  const initial = "Rear Shock Air Compressor\n- Replaced compressor\n- Tested automatic leveling";
+  await save(request(assetId, { completed_operations: [{
+    action: "create", id, service_date: "2006-10-10", usage_reading_unit: "miles",
+    usage_reading_value: 30247, service_description: initial,
+  }] }));
+  assert.equal(await scalar("select service_description from public.vehicle_completed_records where id=$1", [id]), initial);
+  const edited = "Mechanic\u2019s service\r\n\u2022 Replaced\u00a0compressor\r\n\r\n<script>literal</script>";
+  await save(request(assetId, { expected_asset_version: 2, completed_operations: [{
+    action: "update", id, expected_version: 1, service_description: edited,
+  }] }));
+  assert.equal(await scalar("select service_description from public.vehicle_completed_records where id=$1", [id]), edited);
+});
+
 test("mixed history, Key Information, and interval changes use one atomic request and exact replay", async () => {
   const assetId = await asset();
   const itemId = await catalogItem(ownerA, "Synthetic combined interval item");

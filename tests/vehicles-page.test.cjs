@@ -2835,6 +2835,43 @@ test("Completed create emits only its committed fields and stable client identit
   assert.equal(ui.calls.catalogReads, 0);
 });
 
+test("Completed create and edit normalize only outer whitespace and line endings", async () => {
+  const cases = [
+    ["Rear Shock Air Compressor", "Rear Shock Air Compressor"],
+    ["\u00a0 \r\nRear Shock Air Compressor\r\t  Indented\u00a0text\n\nDone\n \t",
+      "Rear Shock Air Compressor\n\t  Indented\u00a0text\n\nDone"],
+    ["Rear Shock Air Compressor\nReplaced compressor", "Rear Shock Air Compressor\nReplaced compressor"],
+    ["Rear Shock Air Compressor\r\n- Replaced compressor\r\n- Tested automatic leveling",
+      "Rear Shock Air Compressor\n- Replaced compressor\n- Tested automatic leveling"],
+    ["Rear Shock Air Compressor\n- Replaced compressor\n- Tested automatic leveling",
+      "Rear Shock Air Compressor\n- Replaced compressor\n- Tested automatic leveling"],
+    ["Rear Shock Air Compressor\n\u2022 Replaced compressor\n\u2022 Tested automatic leveling",
+      "Rear Shock Air Compressor\n\u2022 Replaced compressor\n\u2022 Tested automatic leveling"],
+    ["Mechanic\u2019s \u201cservice\u201d \u2014 completed", "Mechanic\u2019s \u201cservice\u201d \u2014 completed"],
+    [` \n${"\u{1f527}".repeat(10000)}\n `, "\u{1f527}".repeat(10000)],
+  ];
+  for (const action of ["create", "edit"]) {
+    for (const [description, expected] of cases) {
+      const ui = completedHarness(action === "edit" ? [completedRecord()] : []);
+      await ui.settle();
+      openCompleted(ui);
+      ui.button(action === "create" ? "Add Completed Service" : "Edit").props.onClick();
+      ui.render();
+      ui.input("vehicles-completed-date").props.onChange({ target: { value: "2006-10-10" } });
+      ui.input("vehicles-completed-usage").props.onChange({ target: { value: "30247" } });
+      ui.input("vehicles-completed-description").props.onChange({ target: { value: description } });
+      ui.render();
+      await ui.button("Save Changes").props.onClick();
+      await ui.settle();
+      assert.equal(ui.calls.saves.length, 1, `${action}: ${JSON.stringify(description)}`);
+      const operation = ui.calls.saves[0].completedOperations[0];
+      assert.equal(operation.serviceDate, "2006-10-10");
+      assert.equal(operation.usageReadingValue, 30247);
+      assert.equal(operation.serviceDescription, expected);
+    }
+  }
+});
+
 test("Completed Edit and no-op Save preserve content, while a changed field carries its expected version", async () => {
   const ui = completedHarness([completedRecord()]);
   await ui.settle();
@@ -2852,6 +2889,48 @@ test("Completed Edit and no-op Save preserve content, while a changed field carr
   assert.deepEqual(ui.calls.saves[0].completedOperations, [{ action: "update", id: uuid(701), expectedVersion: 7,
     mechanic: "Updated synthetic shop" }]);
   assert.deepEqual(ui.calls.saves[0].recommendedOperations, []);
+});
+
+test("Completed whitespace-only edits normalize to a no-op without sending an empty update", async () => {
+  const source = completedRecord(701, { serviceDescription: "Original\nText" });
+  const ui = completedHarness([source], {
+    saveVehicleChanges: async (draft) => {
+      ui.calls.saves.push(structuredClone(draft));
+      return { status: "no_changes" };
+    },
+  });
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: " \r\nOriginal\r\nText \n" } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.deepEqual(ui.calls.saves[0].completedOperations, []);
+  assert.equal(ui.input("vehicles-completed-description").props.value, source.serviceDescription);
+  assert.equal(ui.button("Save Changes").props.disabled, true);
+});
+
+test("Completed reconciliation after reload failure shows the normalized saved description", async () => {
+  let loads = 0;
+  const ui = completedHarness([completedRecord()], {
+    loadVehicleWorkspace: async () => {
+      if (loads++ > 0) throw new Error("Synthetic reload failure");
+      return { ...workspace(assets[0], []), recommendedServiceRecords: [], completedServiceRecords: [completedRecord()] };
+    },
+  });
+  await ui.settle();
+  openCompleted(ui);
+  ui.button("Edit").props.onClick();
+  ui.render();
+  ui.input("vehicles-completed-description").props.onChange({ target: { value: " \r\nUpdated\r\n\u2022 Work\n " } });
+  ui.render();
+  await ui.button("Save Changes").props.onClick();
+  await ui.settle();
+  assert.equal(ui.calls.saves[0].completedOperations[0].serviceDescription, "Updated\n\u2022 Work");
+  assert.equal(ui.text(ui.find((node) => node.props?.["aria-label"] === "Completed Service Description")),
+    "Updated\n\u2022 Work");
 });
 
 test("Completed cancellation restores the exact original multiline Service Description", async () => {
@@ -2902,13 +2981,14 @@ test("Completed deletion is confirmed, cancelable, versioned, and pending until 
 });
 
 test("Completed enforces its actual date, description, mechanic and reading constraints before saving", async () => {
-  for (const [field, value] of [
-    ["vehicles-completed-date", "2026-02-30"],
-    ["vehicles-completed-description", ""], ["vehicles-completed-description", " \n "],
-    ["vehicles-completed-description", " padded "], ["vehicles-completed-description", "X".repeat(10001)],
-    ["vehicles-completed-mechanic", "X".repeat(161)],
-    ["vehicles-completed-usage", "-1"], ["vehicles-completed-usage", "1.001"],
-    ["vehicles-completed-usage", "10000000000"],
+  for (const [field, value, message] of [
+    ["vehicles-completed-date", "2026-02-30", "Date of Service"],
+    ["vehicles-completed-description", "", "Service Description"],
+    ["vehicles-completed-description", " \n ", "Service Description"],
+    ["vehicles-completed-description", "X".repeat(10001), "Service Description"],
+    ["vehicles-completed-mechanic", "X".repeat(161), "Mechanic"],
+    ["vehicles-completed-usage", "-1", "Reading"], ["vehicles-completed-usage", "1.001", "Reading"],
+    ["vehicles-completed-usage", "10000000000", "Reading"],
   ]) {
     const ui = completedHarness([completedRecord()]);
     await ui.settle();
@@ -2920,7 +3000,26 @@ test("Completed enforces its actual date, description, mechanic and reading cons
     await ui.button("Save Changes").props.onClick();
     await ui.settle();
     assert.equal(ui.calls.saves.length, 0, field);
-    assert(ui.nodes().some((node) => node.props?.role === "alert" && ui.text(node).includes("Review Completed Service")));
+    assert(ui.nodes().some((node) => node.props?.role === "alert"
+      && ui.text(node).includes(`Review Completed Service: ${message}`)));
+  }
+});
+
+test("Completed create rejects blank or overlong normalized descriptions with a field-specific error", async () => {
+  for (const description of ["\u00a0\r\n\t", "X".repeat(10001), "\u{1f527}".repeat(10001)]) {
+    const ui = completedHarness();
+    await ui.settle();
+    openCompleted(ui);
+    ui.button("Add Completed Service").props.onClick();
+    ui.render();
+    ui.input("vehicles-completed-date").props.onChange({ target: { value: "2006-10-10" } });
+    ui.input("vehicles-completed-usage").props.onChange({ target: { value: "30247" } });
+    ui.input("vehicles-completed-description").props.onChange({ target: { value: description } });
+    ui.render();
+    await ui.button("Save Changes").props.onClick();
+    await ui.settle();
+    assert.equal(ui.calls.saves.length, 0);
+    assert.match(ui.text(), /Review Completed Service: Service Description/);
   }
 });
 
@@ -2936,6 +3035,7 @@ test("Completed dates are unique only within Completed history, not Recommended 
   await ui.button("Save Changes").props.onClick();
   await ui.settle();
   assert.equal(ui.calls.saves.length, 0);
+  assert.match(ui.text(), /Date of Service must be unique/);
   ui.input("vehicles-completed-date").props.onChange({ target: { value: "2023-02-27" } });
   ui.render();
   await ui.button("Save Changes").props.onClick();
@@ -3074,7 +3174,7 @@ test("Completed hours and none-usage assets preserve domain units without a cata
     ui.button("Edit").props.onClick();
     ui.render();
     assert.equal(Boolean(ui.input("vehicles-completed-usage")), unit !== "none");
-    assert.equal(ui.input("vehicles-completed-description").props.maxLength, "10000");
+    assert.equal(ui.input("vehicles-completed-description").props.maxLength, undefined);
     assert.equal(ui.input("vehicles-completed-mechanic").props.maxLength, "160");
     assert.equal(ui.calls.catalogReads, 0);
     assert.equal(ui.button("Bullets").props["aria-label"], "Toggle bullets");
@@ -3248,7 +3348,7 @@ test("Completed bullet transforms count prefixes and reject over-limit text atom
     ui.render();
     assert.equal(ui.input("vehicles-completed-description").props.value, expected ?? description);
     assert.equal(editor.insertions, expected === null ? 0 : 1);
-    assert.equal(ui.input("vehicles-completed-description").props.maxLength, "10000");
+    assert.equal(ui.input("vehicles-completed-description").props.maxLength, undefined);
     if (expected === null) {
       assert.equal(editor.selectionStart, 0);
       assert.equal(editor.selectionEnd, description.length);

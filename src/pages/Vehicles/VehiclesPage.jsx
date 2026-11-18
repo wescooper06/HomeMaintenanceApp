@@ -67,6 +67,10 @@ function completedValue(record) {
     record.usageReadingUnit, record.mechanic, record.serviceDescription]);
 }
 
+function normalizeServiceDescription(value) {
+  return value.replace(/\r\n?/g, "\n").trim();
+}
+
 function toggleDescriptionBullets(text, selectionStart, selectionEnd) {
   const start = selectionStart === 0 ? 0 : text.lastIndexOf("\n", selectionStart - 1) + 1;
   const lastSelected = selectionEnd > selectionStart ? selectionEnd - 1 : selectionEnd;
@@ -1720,7 +1724,16 @@ export default function VehiclesPage() {
     }
   }
 
-  function makeSaveDraft() {
+  function normalizedCompletedRecords() {
+    return completedRecords.map((record) => {
+      const original = completedBaseline.find((entry) => entry.id === record.id);
+      return record.isNew || (original && record.serviceDescription !== original.serviceDescription)
+        ? { ...record, serviceDescription: normalizeServiceDescription(record.serviceDescription) }
+        : record;
+    });
+  }
+
+  function makeSaveDraft(completedForSave) {
     const draft = createVehicleChangesDraft(workspace);
     const originalById = new Map(baselineRecords.map((record) => [record.id, record]));
     for (const record of workingRecords) {
@@ -1764,7 +1777,7 @@ export default function VehiclesPage() {
     draft.recommendedOperations.push(...recommendedDeleted.map((record) => (
       buildRecordDeleteOperation("recommended", record, workspace.asset.id).operation
     )));
-    for (const record of completedRecords) {
+    for (const record of completedForSave) {
       const original = completedBaseline.find((entry) => entry.id === record.id);
       if (!record.isNew && (!original || completedValue(record) === completedValue(original))) continue;
       const operation = { action: record.isNew ? "create" : "update", id: record.id };
@@ -1860,7 +1873,7 @@ export default function VehiclesPage() {
       setRecommendedRecords(recommended.map((record) => ({ ...record })));
       setRecommendedDeleted([]);
       setRecommendedEditing(false);
-      const completed = completedRecords.map((record) => ({
+      const completed = normalizedCompletedRecords().map((record) => ({
         ...record, isNew: false, version: result.entityVersions?.completed?.[record.id] || record.version,
       }));
       setCompletedBaseline(completed);
@@ -1901,22 +1914,30 @@ export default function VehiclesPage() {
       setSaveError("Review Recommended Service: use a unique valid date, a nonnegative reading with at most two decimals, and a trimmed Description (1-10,000 characters).");
       return;
     }
-    const invalidCompleted = completedRecords.some((record) => {
+    const completedForSave = normalizedCompletedRecords();
+    let completedError = "";
+    for (const record of completedForSave) {
       const original = completedBaseline.find((entry) => entry.id === record.id);
-      if (!record.isNew && original && completedValue(record) === completedValue(original)) return false;
+      if (!record.isNew && original && completedValue(record) === completedValue(original)) continue;
       const reading = record.usageReadingValue;
-      return !/^\d{4}-\d{2}-\d{2}$/.test(record.serviceDate)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(record.serviceDate)
         || Number.isNaN(Date.parse(`${record.serviceDate}T00:00:00Z`))
-        || new Date(`${record.serviceDate}T00:00:00Z`).toISOString().slice(0, 10) !== record.serviceDate
-        || !record.serviceDescription.trim() || record.serviceDescription !== record.serviceDescription.trim()
-        || record.serviceDescription.length > 10000 || (record.mechanic || "").length > 160
-        || (reading !== null && (!Number.isFinite(reading) || reading < 0 || reading > 9999999999.99
-          || Math.abs(reading * 100 - Math.round(reading * 100)) > 0.0001))
-        || (record.usageReadingUnit === "none" && reading !== null)
-        || completedRecords.some((entry) => entry.id !== record.id && entry.serviceDate === record.serviceDate);
-    });
-    if (invalidCompleted) {
-      setSaveError("Review Completed Service: use a unique valid date, a nonnegative reading with at most two decimals, and a trimmed Service Description (1-10,000 characters).");
+        || new Date(`${record.serviceDate}T00:00:00Z`).toISOString().slice(0, 10) !== record.serviceDate) {
+        completedError = "Date of Service must be a valid date.";
+      } else if (completedForSave.some((entry) => entry.id !== record.id && entry.serviceDate === record.serviceDate)) {
+        completedError = "Date of Service must be unique within Completed Service.";
+      } else if (reading !== null && (!Number.isFinite(reading) || reading < 0 || reading > 9999999999.99
+        || Math.abs(reading * 100 - Math.round(reading * 100)) > 0.0001 || record.usageReadingUnit === "none")) {
+        completedError = "Reading must be nonnegative, at most 9,999,999,999.99, and have at most two decimals.";
+      } else if ((record.mechanic || "").length > 160) {
+        completedError = "Mechanic must be at most 160 characters.";
+      } else if (!record.serviceDescription.trim() || [...record.serviceDescription].length > 10000) {
+        completedError = "Service Description must contain 1-10,000 characters after trimming.";
+      }
+      if (completedError) break;
+    }
+    if (completedError) {
+      setSaveError(`Review Completed Service: ${completedError}`);
       return;
     }
     if (maintenanceIntervalDirty && !validateMaintenanceIntervals()) return;
@@ -1929,7 +1950,7 @@ export default function VehiclesPage() {
     setSaving(true);
     setSaveError("");
     setStatus("Saving Vehicles changes...");
-    const draft = makeSaveDraft();
+    const draft = makeSaveDraft(completedForSave);
     try {
       const result = await vehiclesService.saveVehicleChanges(draft);
       if (result.status === "saved") await reconcileConfirmedSave(result);
@@ -1939,7 +1960,8 @@ export default function VehiclesPage() {
         setDeletedRecords([]);
         setRecommendedBaseline(recommendedRecords.map((record) => ({ ...record })));
         setRecommendedDeleted([]);
-        setCompletedBaseline(completedRecords.map((record) => ({ ...record })));
+        setCompletedBaseline(completedForSave.map((record) => ({ ...record })));
+        setCompletedRecords(completedForSave.map((record) => ({ ...record })));
         setCompletedDeleted([]);
         loadKeyState({ keyInformation: keyBaseline.notes, links: keyLinks });
       }
@@ -2594,7 +2616,7 @@ export default function VehiclesPage() {
                     </div>
                     {completedEditing ? <textarea ref={completedDescriptionRef}
                       id="vehicles-completed-description" className="lm-form-control"
-                      required maxLength="10000" value={completedRecord.serviceDescription} disabled={saving || saveUncertain}
+                      required value={completedRecord.serviceDescription} disabled={saving || saveUncertain}
                       onChange={(event) => updateCompleted({ serviceDescription: event.target.value })} />
                       : <div className={styles.recommendedText} tabIndex={0} role="region" aria-label="Completed Service Description">
                         {completedRecord.serviceDescription}
