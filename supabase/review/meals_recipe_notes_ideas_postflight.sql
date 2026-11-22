@@ -20,6 +20,32 @@ WITH recipe AS (
 ), functions AS (
   SELECT p.* FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
   WHERE n.nspname='public' AND p.proname LIKE 'meals\_ideas%' ESCAPE '\'
+), recipe_trigger_inventory AS (
+  SELECT count(*)=2
+    AND count(*) FILTER (WHERE t.tgname='meals_recipe_before_write'
+      AND t.tgtype=23 AND t.tgenabled='O' AND t.tgconstraint=0
+      AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+      AND t.tgfoid=to_regprocedure('public.meals_recipe_before_write()')
+      AND l.lanname='plpgsql' AND f.proowner='postgres'::regrole
+      AND NOT f.prosecdef AND f.prorettype='trigger'::regtype
+      AND pg_get_function_identity_arguments(f.oid)=''
+      AND f.proconfig=ARRAY['search_path=""']
+      AND pg_catalog.md5(pg_catalog.replace(f.prosrc,pg_catalog.chr(13),''))=
+        '8b5e0b081d8cb634e85325d833e1cb35')=1
+    AND count(*) FILTER (WHERE t.tgname='meals_planner_preserve_recipe'
+      AND t.tgtype=11 AND t.tgenabled='O' AND t.tgconstraint=0
+      AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+      AND t.tgfoid=to_regprocedure('public.meals_planner_preserve_recipe()')
+      AND l.lanname='plpgsql' AND f.proowner='postgres'::regrole
+      AND NOT f.prosecdef AND f.prorettype='trigger'::regtype
+      AND pg_get_function_identity_arguments(f.oid)=''
+      AND f.proconfig=ARRAY['search_path=""']
+      AND pg_catalog.md5(pg_catalog.replace(f.prosrc,pg_catalog.chr(13),''))=
+        'df81cf963a0bcbe408c0e8820d985c76')=1 AS matches
+  FROM pg_trigger t
+  JOIN pg_proc f ON f.oid=t.tgfoid
+  JOIN pg_language l ON l.oid=f.prolang
+  WHERE t.tgrelid=(SELECT oid FROM recipe) AND NOT t.tgisinternal
 ), table_acl AS (
   SELECT a.grantee,a.privilege_type,a.is_grantable
   FROM pg_class c CROSS JOIN LATERAL aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
@@ -29,6 +55,9 @@ WITH recipe AS (
   FROM pg_attribute c CROSS JOIN LATERAL aclexplode(c.attacl) a
   WHERE c.attrelid=(SELECT oid FROM ideas)
 ), checks AS (
+  SELECT 'recipe_trigger_inventory_unchanged' AS name,
+    (SELECT matches FROM recipe_trigger_inventory) AS pass
+  UNION ALL
   SELECT 'recipe_notes_nullable_text' AS name,
     count(*)=1 AND bool_and(type_name='text' AND NOT attnotnull AND default_expression IS NULL) AS pass
   FROM columns WHERE attrelid=(SELECT oid FROM recipe) AND attname='notes'
@@ -73,6 +102,32 @@ WITH recipe AS (
     END)
     FROM policies
   UNION ALL
+  SELECT 'ideas_constraints_and_indexes',
+    (SELECT count(*)=4
+      AND count(*) FILTER (WHERE conname='meals_ideas_pkey'
+        AND contype='p' AND convalidated
+        AND pg_get_constraintdef(oid)='PRIMARY KEY (id)')=1
+      AND count(*) FILTER (WHERE conname='meals_ideas_text_nonblank'
+        AND contype='c' AND convalidated
+        AND regexp_replace(pg_catalog.replace(pg_get_constraintdef(oid),'"',''),'\s','','g')
+          LIKE 'CHECK((btrim(text,%<>%')=1
+      AND count(*) FILTER (WHERE conname='meals_ideas_position_positive'
+        AND contype='c' AND convalidated
+        AND regexp_replace(pg_catalog.replace(pg_get_constraintdef(oid),'"',''),'\s','','g')
+          ='CHECK((position>0))')=1
+      AND count(*) FILTER (WHERE conname='meals_ideas_position_key'
+        AND contype='u' AND convalidated AND condeferrable AND condeferred)=1
+      FROM pg_constraint WHERE conrelid=(SELECT oid FROM ideas))
+    AND (SELECT count(*)=2
+      AND count(*) FILTER (WHERE x.relname='meals_ideas_pkey'
+        AND i.indisprimary AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
+        AND pg_catalog.replace(pg_get_indexdef(i.indexrelid),'"','') LIKE '%(id)')=1
+      AND count(*) FILTER (WHERE x.relname='meals_ideas_position_key'
+        AND NOT i.indisprimary AND i.indisunique AND i.indisvalid AND i.indisready AND i.indislive
+        AND pg_catalog.replace(pg_get_indexdef(i.indexrelid),'"','') LIKE '%(position)')=1
+      FROM pg_index i JOIN pg_class x ON x.oid=i.indexrelid
+      WHERE i.indrelid=(SELECT oid FROM ideas))
+  UNION ALL
   SELECT 'ideas_least_privilege_grants',
     (SELECT count(*)=2 AND bool_and(grantee='authenticated'::regrole
        AND privilege_type IN ('SELECT','DELETE') AND NOT is_grantable) FROM table_acl)
@@ -96,18 +151,36 @@ WITH recipe AS (
     NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=(SELECT oid FROM ideas) AND contype='f')
   UNION ALL
   SELECT 'ideas_write_trigger',
-    count(*)=1 AND bool_and(t.tgtype=23 AND t.tgenabled='O'
+    count(*)=1 AND bool_and(t.tgtype=23 AND t.tgenabled='O' AND t.tgconstraint=0
+      AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+      AND t.tgfoid=to_regprocedure('public.meals_ideas_before_write()')
       AND f.proowner='postgres'::regrole AND NOT f.prosecdef
-      AND f.proconfig=ARRAY['search_path=""'])
+      AND f.prorettype='trigger'::regtype AND l.lanname='plpgsql'
+      AND pg_get_function_identity_arguments(f.oid)=''
+      AND f.proconfig=ARRAY['search_path=""']
+      AND pg_catalog.md5(pg_catalog.replace(f.prosrc,pg_catalog.chr(13),''))=
+        'b94a480f13dcdba462c6105f94c6f258')
   FROM pg_trigger t JOIN pg_proc f ON f.oid=t.tgfoid
+    JOIN pg_language l ON l.oid=f.prolang
   WHERE t.tgrelid=(SELECT oid FROM ideas) AND t.tgname='meals_ideas_before_write' AND NOT t.tgisinternal
   UNION ALL
   SELECT 'ideas_function_security',
-    count(*)=3 AND bool_and(proowner='postgres'::regrole AND proconfig=ARRAY['search_path=""'])
-      AND bool_and(CASE proname
-        WHEN 'meals_ideas_before_write' THEN NOT prosecdef AND prorettype='trigger'::regtype
-        ELSE prosecdef AND prorettype='jsonb'::regtype
-      END)
+    count(*)=3
+      AND count(*) FILTER (WHERE oid=to_regprocedure('public.meals_ideas_before_write()')
+        AND proowner='postgres'::regrole AND NOT prosecdef AND prorettype='trigger'::regtype
+        AND proconfig=ARRAY['search_path=""']
+        AND pg_catalog.md5(pg_catalog.replace(prosrc,pg_catalog.chr(13),''))=
+          'b94a480f13dcdba462c6105f94c6f258')=1
+      AND count(*) FILTER (WHERE oid=to_regprocedure('public.meals_ideas_create(uuid,text)')
+        AND proowner='postgres'::regrole AND prosecdef AND prorettype='jsonb'::regtype
+        AND proconfig=ARRAY['search_path=""']
+        AND pg_catalog.md5(pg_catalog.replace(prosrc,pg_catalog.chr(13),''))=
+          '8fb846d3c95f48ad380ce9a61eb356cb')=1
+      AND count(*) FILTER (WHERE oid=to_regprocedure('public.meals_ideas_move(uuid,integer)')
+        AND proowner='postgres'::regrole AND prosecdef AND prorettype='jsonb'::regtype
+        AND proconfig=ARRAY['search_path=""']
+        AND pg_catalog.md5(pg_catalog.replace(prosrc,pg_catalog.chr(13),''))=
+          'a6f19332ced041257dcc98da7861487a')=1
   FROM functions
   UNION ALL
   SELECT 'ideas_function_execute_grants',

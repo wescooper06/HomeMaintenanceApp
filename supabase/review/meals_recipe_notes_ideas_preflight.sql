@@ -14,6 +14,32 @@ WITH recipe AS (
     regexp_replace(coalesce(pg_get_expr(p.polqual,p.polrelid),''),'\s','','g') AS using_expression,
     regexp_replace(coalesce(pg_get_expr(p.polwithcheck,p.polrelid),''),'\s','','g') AS check_expression
   FROM pg_policy p WHERE p.polrelid=(SELECT oid FROM recipe)
+), recipe_trigger_inventory AS (
+  SELECT count(*)=2
+    AND count(*) FILTER (WHERE t.tgname='meals_recipe_before_write'
+      AND t.tgtype=23 AND t.tgenabled='O' AND t.tgconstraint=0
+      AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+      AND t.tgfoid=to_regprocedure('public.meals_recipe_before_write()')
+      AND l.lanname='plpgsql' AND f.proowner='postgres'::regrole
+      AND NOT f.prosecdef AND f.prorettype='trigger'::regtype
+      AND pg_get_function_identity_arguments(f.oid)=''
+      AND f.proconfig=ARRAY['search_path=""']
+      AND pg_catalog.md5(pg_catalog.replace(f.prosrc,pg_catalog.chr(13),''))=
+        '8b5e0b081d8cb634e85325d833e1cb35')=1
+    AND count(*) FILTER (WHERE t.tgname='meals_planner_preserve_recipe'
+      AND t.tgtype=11 AND t.tgenabled='O' AND t.tgconstraint=0
+      AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+      AND t.tgfoid=to_regprocedure('public.meals_planner_preserve_recipe()')
+      AND l.lanname='plpgsql' AND f.proowner='postgres'::regrole
+      AND NOT f.prosecdef AND f.prorettype='trigger'::regtype
+      AND pg_get_function_identity_arguments(f.oid)=''
+      AND f.proconfig=ARRAY['search_path=""']
+      AND pg_catalog.md5(pg_catalog.replace(f.prosrc,pg_catalog.chr(13),''))=
+        'df81cf963a0bcbe408c0e8820d985c76')=1 AS matches
+  FROM pg_trigger t
+  JOIN pg_proc f ON f.oid=t.tgfoid
+  JOIN pg_language l ON l.oid=f.prolang
+  WHERE t.tgrelid=(SELECT oid FROM recipe) AND NOT t.tgisinternal
 ), collisions AS (
   SELECT c.relname AS name,'relation' AS kind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND c.relname LIKE 'meals\_ideas%' ESCAPE '\'
@@ -83,10 +109,20 @@ SELECT jsonb_build_object(
     FROM pg_attribute c CROSS JOIN LATERAL aclexplode(c.attacl) a
     WHERE c.attrelid=(SELECT oid FROM recipe)),
   'recipe_triggers',(SELECT coalesce(jsonb_agg(jsonb_build_object(
-      'name',t.tgname,'enabled',t.tgenabled,'type',t.tgtype,'function',f.proname)
+      'name',t.tgname,'enabled',t.tgenabled,'type',t.tgtype,
+      'timing',CASE WHEN (t.tgtype & 2)=2 THEN 'BEFORE'
+                    WHEN (t.tgtype & 64)=64 THEN 'INSTEAD OF' ELSE 'AFTER' END,
+      'events',concat_ws(', ',CASE WHEN (t.tgtype & 4)=4 THEN 'INSERT' END,
+        CASE WHEN (t.tgtype & 8)=8 THEN 'DELETE' END,
+        CASE WHEN (t.tgtype & 16)=16 THEN 'UPDATE' END,
+        CASE WHEN (t.tgtype & 32)=32 THEN 'TRUNCATE' END),
+      'constraint_backed',t.tgconstraint<>0,'function',f.proname,
+      'function_identity_arguments',pg_get_function_identity_arguments(f.oid),
+      'function_owner',pg_get_userbyid(f.proowner),'function_security_definer',f.prosecdef)
       ORDER BY t.tgname),'[]'::jsonb)
     FROM pg_trigger t JOIN pg_proc f ON f.oid=t.tgfoid
     WHERE t.tgrelid=(SELECT oid FROM recipe) AND NOT t.tgisinternal),
+  'recipe_trigger_inventory_matches_reviewed_pattern',(SELECT matches FROM recipe_trigger_inventory),
   'recipe_trigger_function',(SELECT jsonb_build_object(
       'owner',pg_get_userbyid(f.proowner),'security_definer',f.prosecdef,'config',f.proconfig)
     FROM pg_proc f WHERE f.oid=to_regprocedure('public.meals_recipe_before_write()')),

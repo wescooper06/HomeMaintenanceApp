@@ -9,6 +9,7 @@ const { PGlite } = require("@electric-sql/pglite");
 
 const root = path.join(__dirname, "..");
 const migration = fs.readFileSync(path.join(root, "supabase", "review", "202611180001_meals_recipe_notes_ideas.sql"), "utf8");
+const plannerMigration = fs.readFileSync(path.join(root, "supabase", "review", "202610300002_meals_planner.sql"), "utf8");
 const code = fs.readFileSync(path.join(root, "src", "services", "recipeService.js"), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
 const model = vm.runInThisContext(`(() => { ${code}; return {
@@ -81,6 +82,7 @@ test.before(async () => {
     GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
     GRANT EXECUTE ON FUNCTION auth.uid() TO anon,authenticated,service_role;`);
   await db.exec(fs.readFileSync(path.join(root, "supabase", "review", "202610280001_meals_recipe_foundation.sql"), "utf8"));
+  await db.exec(plannerMigration.replace("approved_for_execution boolean := false", "approved_for_execution boolean := true"));
   await db.exec(migration.replace("approved_for_execution boolean := false", "approved_for_execution boolean := true"));
   await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)", [owner]);
   await db.exec("SET ROLE authenticated");

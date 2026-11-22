@@ -10,9 +10,17 @@ const read = (file) => fs.readFileSync(path.join(review, file), "utf8");
 const migration = read("202611180001_meals_recipe_notes_ideas.sql");
 const preflight = read("meals_recipe_notes_ideas_preflight.sql");
 const postflight = read("meals_recipe_notes_ideas_postflight.sql");
+const plannerMigration = read("202610300002_meals_planner.sql");
+const preserveFunctionDefinition = plannerMigration
+  .match(/CREATE FUNCTION public\.meals_planner_preserve_recipe\(\)[\s\S]*?\$function\$;/)[0]
+  .replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION");
 const owner = "e72bccd9-ec2b-4822-bb5c-b7c1f39dcf60";
 const other = "22222222-2222-4222-8222-222222222222";
 const enable = (sql) => sql.replace("approved_for_execution boolean := false", "approved_for_execution boolean := true");
+const expectedPreserveTrigger = `CREATE TRIGGER meals_planner_preserve_recipe BEFORE DELETE ON public.meals_recipes
+  FOR EACH ROW EXECUTE FUNCTION public.meals_planner_preserve_recipe()`;
+const expectedRecipeWriteTrigger = `CREATE TRIGGER meals_recipe_before_write BEFORE INSERT OR UPDATE ON public.meals_recipes
+  FOR EACH ROW EXECUTE FUNCTION public.meals_recipe_before_write()`;
 
 let db;
 let defaults;
@@ -41,6 +49,24 @@ async function assertUniquePositions() {
   assert.equal(result.total, result.distinct_count);
 }
 
+async function recipeTriggerSnapshot() {
+  return (await rows(`
+    SELECT t.tgname,t.tgtype,t.tgenabled,t.tgisinternal,t.tgconstraint,
+      t.tgdeferrable,t.tginitdeferred,t.tgfoid::regprocedure::text AS function,
+      pg_catalog.md5(pg_catalog.replace(p.prosrc,pg_catalog.chr(13),'')) AS function_body
+    FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+    WHERE t.tgrelid='public.meals_recipes'::regclass AND NOT t.tgisinternal
+    ORDER BY t.tgname
+  `)).map(({ tgname, ...trigger }) => ({ name: tgname, ...trigger }));
+}
+
+async function assertRecipeTriggerGateFails() {
+  const result = (await rows(preflight))[0].preflight;
+  assert.equal(result.recipe_trigger_inventory_matches_reviewed_pattern, false);
+  await assert.rejects(db.exec(enable(migration)), /Recipe trigger inventory differs/);
+  await db.exec("ROLLBACK");
+}
+
 test.before(async () => {
   db = new PGlite();
   await db.exec(`
@@ -61,6 +87,7 @@ test.before(async () => {
       GRANT ALL ON TABLES TO anon,authenticated,service_role;
   `);
   await db.exec(read("202610280001_meals_recipe_foundation.sql"));
+  await db.exec(enable(plannerMigration));
   await db.query("INSERT INTO public.meals_recipes(title,source) VALUES('Existing Recipe','source text')");
   originalRecipes = await rows(`SELECT id,title,category_id,cuisine_id,source,favorite,ingredient_sections,
     instructions,created_at,updated_at FROM public.meals_recipes ORDER BY id`);
@@ -79,12 +106,62 @@ test("read-only preflight confirms the baseline and the disabled candidate fails
   assert.equal(result.recipe_owner_policy_matrix_matches_reviewed_pattern, true);
   assert.deepEqual(result.ideas_namespace_collisions, []);
   assert.equal(result.recipe_columns.length, 10);
+  assert.equal(result.recipe_trigger_inventory_matches_reviewed_pattern, true);
+  assert.deepEqual(result.recipe_triggers.map(({ name, timing, events, function: functionName }) =>
+    [name, timing, events, functionName]), [
+    ["meals_planner_preserve_recipe", "BEFORE", "DELETE", "meals_planner_preserve_recipe"],
+    ["meals_recipe_before_write", "BEFORE", "INSERT, UPDATE", "meals_recipe_before_write"],
+  ]);
 
   assert.equal(migration.split("approved_for_execution boolean := false").length - 1, 1);
   await assert.rejects(db.exec(migration), /candidate disabled/);
   await db.exec("ROLLBACK");
   assert.equal((await rows("SELECT to_regclass('public.meals_ideas') AS value"))[0].value, null);
   assert.equal((await rows("SELECT count(*)::int AS n FROM pg_attribute WHERE attrelid='public.meals_recipes'::regclass AND attname='notes' AND NOT attisdropped"))[0].n, 0);
+});
+
+test("Recipe trigger preflight rejects a missing preserve trigger", async () => {
+  await db.exec("DROP TRIGGER meals_planner_preserve_recipe ON public.meals_recipes");
+  await assertRecipeTriggerGateFails();
+  await db.exec(expectedPreserveTrigger);
+});
+
+test("Recipe trigger preflight rejects altered timing, events, function, or function body", async () => {
+  const variants = [
+    `CREATE TRIGGER meals_planner_preserve_recipe AFTER DELETE ON public.meals_recipes
+      FOR EACH ROW EXECUTE FUNCTION public.meals_planner_preserve_recipe()`,
+    `CREATE TRIGGER meals_planner_preserve_recipe BEFORE UPDATE ON public.meals_recipes
+      FOR EACH ROW EXECUTE FUNCTION public.meals_planner_preserve_recipe()`,
+    `CREATE TRIGGER meals_planner_preserve_recipe BEFORE DELETE ON public.meals_recipes
+      FOR EACH ROW EXECUTE FUNCTION public.meals_recipe_before_write()`,
+  ];
+  for (const definition of variants) {
+    await db.exec("DROP TRIGGER meals_planner_preserve_recipe ON public.meals_recipes");
+    await db.exec(definition);
+    await assertRecipeTriggerGateFails();
+    await db.exec("DROP TRIGGER meals_planner_preserve_recipe ON public.meals_recipes");
+    await db.exec(expectedPreserveTrigger);
+  }
+
+  await db.exec(`CREATE OR REPLACE FUNCTION public.meals_planner_preserve_recipe()
+    RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=''
+    AS $test$ BEGIN RETURN OLD; END $test$`);
+  await assertRecipeTriggerGateFails();
+  await db.exec(preserveFunctionDefinition);
+});
+
+test("Recipe trigger preflight rejects an unexpected third trigger and a changed timestamp trigger", async () => {
+  await db.exec(`CREATE TRIGGER meals_unexpected_recipe BEFORE DELETE ON public.meals_recipes
+    FOR EACH ROW EXECUTE FUNCTION public.meals_planner_preserve_recipe()`);
+  await assertRecipeTriggerGateFails();
+  await db.exec("DROP TRIGGER meals_unexpected_recipe ON public.meals_recipes");
+
+  await db.exec("DROP TRIGGER meals_recipe_before_write ON public.meals_recipes");
+  await db.exec(`CREATE TRIGGER meals_recipe_before_write BEFORE INSERT ON public.meals_recipes
+    FOR EACH ROW EXECUTE FUNCTION public.meals_recipe_before_write()`);
+  await assertRecipeTriggerGateFails();
+  await db.exec("DROP TRIGGER meals_recipe_before_write ON public.meals_recipes");
+  await db.exec(expectedRecipeWriteTrigger);
 });
 
 test("identity and namespace mismatches abort without modifying the existing Recipe catalog", async () => {
@@ -103,8 +180,10 @@ test("identity and namespace mismatches abort without modifying the existing Rec
     instructions,created_at,updated_at FROM public.meals_recipes ORDER BY id`), originalRecipes);
 });
 
-test("candidate preserves Recipe data/default ACL and reports exact postflight catalog", async () => {
+test("expected two-trigger candidate preserves both triggers and reports exact postflight catalog", async () => {
+  const triggersBefore = await recipeTriggerSnapshot();
   await db.exec(enable(migration));
+  assert.deepEqual(await recipeTriggerSnapshot(), triggersBefore);
   assert.deepEqual(await rows(`SELECT id,title,category_id,cuisine_id,source,favorite,ingredient_sections,
     instructions,created_at,updated_at FROM public.meals_recipes ORDER BY id`), originalRecipes);
   assert.deepEqual(await rows("SELECT * FROM pg_default_acl ORDER BY oid"), defaults);
@@ -113,6 +192,23 @@ test("candidate preserves Recipe data/default ACL and reports exact postflight c
   const verification = (await rows(postflight))[0].verification;
   assert.deepEqual(verification.checks.filter((check) => !check.pass), [], JSON.stringify(verification, null, 2));
   assert.equal(verification.catalog_pass, true);
+
+  await db.exec("DROP TRIGGER meals_planner_preserve_recipe ON public.meals_recipes");
+  const missingTriggerVerification = (await rows(postflight))[0].verification;
+  assert.deepEqual(missingTriggerVerification.checks.filter((check) => !check.pass)
+    .map(({ name }) => name), ["recipe_trigger_inventory_unchanged"]);
+  await db.exec(expectedPreserveTrigger);
+  assert.deepEqual(await recipeTriggerSnapshot(), triggersBefore);
+
+  await as("authenticated", owner);
+  const [linkedRecipe] = await rows("INSERT INTO public.meals_recipes(title) VALUES('Planner preservation fixture') RETURNING id");
+  const [entry] = await rows(`INSERT INTO public.meals_planner_entries(meal_date,meal_type,recipe_id)
+    VALUES('2026-11-18','dinner',$1) RETURNING id`, [linkedRecipe.id]);
+  await rows("DELETE FROM public.meals_recipes WHERE id=$1", [linkedRecipe.id]);
+  const [preservedEntry] = await rows("SELECT recipe_id,display_text FROM public.meals_planner_entries WHERE id=$1", [entry.id]);
+  assert.equal(preservedEntry.recipe_id, null);
+  assert.equal(preservedEntry.display_text, "Planner preservation fixture");
+  await as();
 });
 
 test("Recipe Notes round-trip, NULL compatibility and column grants preserve existing fields", async () => {

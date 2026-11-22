@@ -135,16 +135,34 @@ BEGIN
     RAISE EXCEPTION 'Recipe grants differ from the reviewed least-privilege baseline.';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+  IF NOT (
+    SELECT count(*)=2
+      AND count(*) FILTER (WHERE t.tgname='meals_recipe_before_write'
+        AND t.tgtype=23 AND t.tgenabled='O' AND t.tgconstraint=0
+        AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+        AND t.tgfoid=to_regprocedure('public.meals_recipe_before_write()')
+        AND l.lanname='plpgsql' AND f.proowner='postgres'::regrole
+        AND NOT f.prosecdef AND f.prorettype='trigger'::regtype
+        AND pg_get_function_identity_arguments(f.oid)=''
+        AND f.proconfig=ARRAY['search_path=""']
+        AND pg_catalog.md5(pg_catalog.replace(f.prosrc,pg_catalog.chr(13),''))=
+          '8b5e0b081d8cb634e85325d833e1cb35')=1
+      AND count(*) FILTER (WHERE t.tgname='meals_planner_preserve_recipe'
+        AND t.tgtype=11 AND t.tgenabled='O' AND t.tgconstraint=0
+        AND NOT t.tgdeferrable AND NOT t.tginitdeferred
+        AND t.tgfoid=to_regprocedure('public.meals_planner_preserve_recipe()')
+        AND l.lanname='plpgsql' AND f.proowner='postgres'::regrole
+        AND NOT f.prosecdef AND f.prorettype='trigger'::regtype
+        AND pg_get_function_identity_arguments(f.oid)=''
+        AND f.proconfig=ARRAY['search_path=""']
+        AND pg_catalog.md5(pg_catalog.replace(f.prosrc,pg_catalog.chr(13),''))=
+          'df81cf963a0bcbe408c0e8820d985c76')=1
+    FROM pg_trigger t
     JOIN pg_proc f ON f.oid=t.tgfoid
+    JOIN pg_language l ON l.oid=f.prolang
     WHERE t.tgrelid=to_regclass('public.meals_recipes') AND NOT t.tgisinternal
-      AND t.tgname='meals_recipe_before_write' AND t.tgtype=23 AND t.tgenabled='O'
-      AND f.proowner='postgres'::regrole AND NOT f.prosecdef AND f.prorettype='trigger'::regtype
-      AND f.proconfig=ARRAY['search_path=""']
-  ) OR (SELECT count(*) FROM pg_trigger
-        WHERE tgrelid=to_regclass('public.meals_recipes') AND NOT tgisinternal) <> 1 THEN
-    RAISE EXCEPTION 'Recipe timestamp trigger differs from the reviewed baseline.';
+  ) THEN
+    RAISE EXCEPTION 'Recipe trigger inventory differs from the reviewed baseline.';
   END IF;
 
   IF EXISTS (
