@@ -1,6 +1,6 @@
 import { getSupabaseClient } from "./supabaseClient.js";
 
-const recipeColumns = "id,title,source,category_id,cuisine_id,favorite,ingredient_sections,instructions,created_at,updated_at";
+const recipeColumns = "id,title,source,category_id,cuisine_id,favorite,ingredient_sections,instructions,notes,created_at,updated_at";
 const lookupColumns = "id,name,created_at,updated_at";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -9,12 +9,15 @@ function requireId(id) {
   return id;
 }
 
-function recipeValues(value) {
+function recipeValues(value, includeMissingNotes = false) {
   if (!value || typeof value.title !== "string" || !/\S/u.test(value.title)) {
     throw new Error("Recipe Title is required.");
   }
   for (const field of ["source", "instructions"]) {
     if (typeof value[field] !== "string") throw new Error(`Recipe ${field} must be text.`);
+  }
+  if (value.notes !== undefined && value.notes !== null && typeof value.notes !== "string") {
+    throw new Error("Recipe notes must be text or null.");
   }
   if (typeof value.favorite !== "boolean" || !Array.isArray(value.ingredient_sections)
     || value.ingredient_sections.some((section) => !section
@@ -22,13 +25,15 @@ function recipeValues(value) {
       || typeof section.name !== "string" || typeof section.text !== "string")) {
     throw new Error("Invalid Recipe Favorite or ingredient sections.");
   }
-  return {
+  const values = {
     title: value.title, source: value.source, instructions: value.instructions,
     category_id: value.category_id === null ? null : requireId(value.category_id),
     cuisine_id: value.cuisine_id === null ? null : requireId(value.cuisine_id),
     favorite: value.favorite,
     ingredient_sections: value.ingredient_sections.map(({ name, text }) => ({ name, text })),
   };
+  if (value.notes !== undefined || includeMissingNotes) values.notes = value.notes ?? null;
+  return values;
 }
 
 async function result(request, operation) {
@@ -45,7 +50,7 @@ async function result(request, operation) {
 
 export function newRecipe(id = globalThis.crypto.randomUUID()) {
   return { id, title: "", source: "", category_id: null, cuisine_id: null, favorite: false,
-    ingredient_sections: [{ name: "Ingredients", text: "" }], instructions: "" };
+    ingredient_sections: [{ name: "Ingredients", text: "" }], instructions: "", notes: null };
 }
 
 export function createRecipeService(clientProvider = getSupabaseClient) {
@@ -102,11 +107,11 @@ export function createRecipeService(clientProvider = getSupabaseClient) {
     get,
     create: async (draft) => {
       const id = requireId(draft.id);
-      const values = recipeValues(draft);
+      const values = recipeValues(draft, true);
       // Reconcile an uncertain previous INSERT using the editor's stable retry identity.
       const existing = await get(id);
       if (existing) {
-        if (JSON.stringify(recipeValues(existing)) === JSON.stringify(values)) return existing;
+        if (JSON.stringify(recipeValues(existing, true)) === JSON.stringify(values)) return existing;
         throw new Error("Recipe ID already exists with different content. Reload before saving.");
       }
       return result(table("meals_recipes").insert({ id, ...values }).select(recipeColumns).single(), "Save new Recipe");

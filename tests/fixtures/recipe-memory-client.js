@@ -26,6 +26,11 @@ export function createMemoryRecipeClient() {
             }
             const store = JSON.parse(sessionStorage.getItem(key) || "null") || empty();
             if (!store[table]) throw new Error("Unexpected test table");
+            if (table === "meals_recipes") {
+              store[table].forEach((row) => {
+                if (row.notes === undefined) row.notes = null;
+              });
+            }
             let rows = store[table].filter((r) => (!ids || ids.includes(r.id)) && (!after || r.id > after));
             const count = rows.length;
             if (action === "insert") {

@@ -8,6 +8,7 @@ const vm = require("node:vm");
 const { PGlite } = require("@electric-sql/pglite");
 
 const root = path.join(__dirname, "..");
+const migration = fs.readFileSync(path.join(root, "supabase", "review", "202611180001_meals_recipe_notes_ideas.sql"), "utf8");
 const code = fs.readFileSync(path.join(root, "src", "services", "recipeService.js"), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
 const model = vm.runInThisContext(`(() => { ${code}; return {
@@ -80,6 +81,7 @@ test.before(async () => {
     GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
     GRANT EXECUTE ON FUNCTION auth.uid() TO anon,authenticated,service_role;`);
   await db.exec(fs.readFileSync(path.join(root, "supabase", "review", "202610280001_meals_recipe_foundation.sql"), "utf8"));
+  await db.exec(migration.replace("approved_for_execution boolean := false", "approved_for_execution boolean := true"));
   await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)", [owner]);
   await db.exec("SET ROLE authenticated");
   service = model.createRecipeService(client);
@@ -89,16 +91,22 @@ test.after(async () => { await db?.close(); });
 test("service executes owner CRUD against exact migration: text, blank lines, atomic JSONB and stable create retry", async () => {
   const draft = { ...model.newRecipe(randomUUID()), title: "  soup  ", source: " Book\r\n",
     ingredient_sections: [{ name: "First ", text: "\n1 cup\n\n2 eggs\r\n" }, { name: "", text: "" }],
-    instructions: " \nMix.\n\nBake.\r\n" };
+    instructions: " \nMix.\n\nBake.\r\n", notes: "\n  Prep ahead.\r\n\n" };
   const saved = await service.create(draft);
-  for (const key of ["title", "source", "instructions", "ingredient_sections"]) assert.deepEqual(saved[key], draft[key]);
+  for (const key of ["title", "source", "instructions", "notes", "ingredient_sections"]) {
+    assert.deepEqual(saved[key], draft[key]);
+  }
   assert.equal((await service.get(saved.id)).title, draft.title);
   const second = await service.create(draft);
   assert.equal(second.id, saved.id);
   assert.equal((await service.list()).length, 1);
   await assert.rejects(service.create({ ...draft, title: "collision" }), /different content/);
-  const updated = await service.update(saved.id, { ...draft, title: "New", ingredient_sections: [...draft.ingredient_sections].reverse() });
+  const updated = await service.update(saved.id, { ...draft, notes: undefined, title: "New",
+    ingredient_sections: [...draft.ingredient_sections].reverse() });
   assert.deepEqual(updated.ingredient_sections, [...draft.ingredient_sections].reverse());
+  assert.equal(updated.notes, draft.notes, "older update callers preserve notes they do not submit");
+  const cleared = await service.update(saved.id, { ...draft, title: "New", notes: null });
+  assert.equal(cleared.notes, null);
   assert.equal((await service.favorite(saved.id, true)).favorite, true);
   assert.equal((await service.get(saved.id)).favorite, true);
   await assert.rejects(service.update(saved.id, { ...draft, title: " \n" }), /Title is required/);
