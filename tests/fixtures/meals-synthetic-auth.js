@@ -1,5 +1,6 @@
 // Test-build-only Auth transport. Never imported by the application or production Vite configuration.
 import { createMemoryMealPlannerClient, createMemoryWeeklyClient } from "../../tests/fixtures/meal-planner-memory-client.js";
+import { createMemoryMealsIdeasClient } from "../../tests/fixtures/meals-ideas-memory-client.js";
 import { createMemoryRecipeClient } from "../../tests/fixtures/recipe-memory-client.js";
 import { createMemoryShoppingClient } from "../../tests/fixtures/shopping-memory-client.js";
 
@@ -14,10 +15,23 @@ const recipes = createMemoryRecipeClient();
 const shopping = createMemoryShoppingClient();
 const meals = createMemoryMealPlannerClient();
 const weekly = createMemoryWeeklyClient();
+const ideas = createMemoryMealsIdeasClient([
+  { id: "30000000-0000-4000-8000-000000000101", text: "Zulu dinner experiment", checked: false, position: 1,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" },
+  { id: "30000000-0000-4000-8000-000000000102",
+    text: "A very long synthetic food idea that should wrap across multiple lines on a narrow mobile screen without pushing action controls outside the viewport",
+    checked: true, position: 2, created_at: "2026-01-02T00:00:00.000Z", updated_at: "2026-01-02T00:00:00.000Z" },
+  { id: "30000000-0000-4000-8000-000000000103", text: "Middle idea", checked: false, position: 3,
+    created_at: "2026-01-03T00:00:00.000Z", updated_at: "2026-01-03T00:00:00.000Z" },
+  { id: "30000000-0000-4000-8000-000000000104", text: "Alpha breakfast experiment", checked: false, position: 4,
+    created_at: "2026-01-04T00:00:00.000Z", updated_at: "2026-01-04T00:00:00.000Z" },
+], { storage: globalThis.sessionStorage });
 globalThis.__mealPlannerTest = meals.control;
 globalThis.__shoppingTest = shopping.control;
+globalThis.__mealsIdeasTest = ideas.control;
 const client = { from: (name) => name === "meals_planner_entries" ? meals.from(name)
   : name.startsWith("meals_shopping_") ? shopping.from(name)
+    : name === "meals_ideas" ? ideas.from(name)
     : name.startsWith("meals_recipe") ? recipes.from(name) : weekly.from(name), auth: {
   onAuthStateChange(callback) {
     listener = callback;
@@ -35,5 +49,5 @@ const client = { from: (name) => name === "meals_planner_entries" ? meals.from(n
     listener?.("SIGNED_OUT", null);
     return { error: null };
   },
-} };
+}, rpc: (name, args) => ideas.rpc(name, args) };
 export function getSupabaseClient() { return client; }

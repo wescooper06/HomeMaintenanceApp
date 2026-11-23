@@ -1,7 +1,30 @@
 // Isolated browser-test transport only. Production builds never import this module.
 export function createMemoryRecipeClient() {
   const key = "meals-recipe-synthetic-data";
-  const empty = () => ({ meals_recipes: [], meals_recipe_categories: [], meals_recipe_cuisines: [] });
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  const empty = () => ({
+    meals_recipes: [
+      { id: "20000000-0000-4000-8000-000000000101", title: "Synthetic Recipe - Empty Notes", source: "",
+        category_id: null, cuisine_id: null, favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }],
+        instructions: "Mix the ingredients.", notes: "", created_at: timestamp, updated_at: timestamp },
+      { id: "20000000-0000-4000-8000-000000000102", title: "Synthetic Recipe - Multiline Notes", source: "",
+        category_id: null, cuisine_id: null, favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }],
+        instructions: "Prepare the dish.", notes: "Prepare ahead.\n\nKeep chilled.\nServe cold.",
+        created_at: timestamp, updated_at: timestamp },
+      { id: "20000000-0000-4000-8000-000000000103", title: "Synthetic Recipe - Long Notes", source: "",
+        category_id: null, cuisine_id: null, favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }],
+        instructions: "Finish the dish.", notes: "A long synthetic note that tests text wrapping in the Recipe Detail view. ".repeat(5),
+        created_at: timestamp, updated_at: timestamp },
+      { id: "20000000-0000-4000-8000-000000000104", title: "Synthetic Recipe - Null Notes", source: "",
+        category_id: null, cuisine_id: null, favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }],
+        instructions: "Serve immediately.", notes: null, created_at: timestamp, updated_at: timestamp },
+      { id: "20000000-0000-4000-8000-000000000105", title: "Synthetic Recipe - Missing Notes", source: "",
+        category_id: null, cuisine_id: null, favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }],
+        instructions: "Bake until done.", created_at: timestamp, updated_at: timestamp },
+    ],
+    meals_recipe_categories: [],
+    meals_recipe_cuisines: [],
+  });
   return {
     from(table) {
       let action = "select", values, ids, after, ordered = false, maximum = 500, mode = "", exact = false;

@@ -14,10 +14,18 @@ const model = vm.runInThisContext(`(()=>{${source};return {
 const fixture = fs.readFileSync(path.join(__dirname, "fixtures", "meals-ideas-memory-client.js"), "utf8")
   .replace(/^import .*;\r?$/gm, "").replace(/^export /gm, "");
 const createClient = vm.runInThisContext(`(()=>{${fixture};return createMemoryMealsIdeasClient;})()`);
-const setup = (seed) => {
-  const client = createClient(seed);
+const setup = (seed, options) => {
+  const client = createClient(seed, options);
   return { client, service: model.createMealsIdeasService(() => client) };
 };
+
+function memoryStorage() {
+  const values = new Map();
+  return {
+    getItem(key) { return values.get(key) ?? null; },
+    setItem(key, value) { values.set(key, String(value)); },
+  };
+}
 
 test("manual order is deterministic and independent of checked state", async () => {
   const seed = [
@@ -43,6 +51,8 @@ test("manual order is deterministic and independent of checked state", async () 
 
 test("append preserves exact text, assigns the next manual position and reconciles a lost response by identity", async () => {
   const { client, service } = setup();
+  await assert.rejects(service.create({ ...model.newIdea(randomUUID()), text: "" }), /nonblank/);
+  await assert.rejects(service.create({ ...model.newIdea(randomUUID()), text: " \t\u00a0 " }), /nonblank/);
   const first = { ...model.newIdea(randomUUID()), text: "  \u00a0Idea\n\n text  " };
   client.control.loseCreate = true;
   await assert.rejects(service.create(first), (error) => error.code === "NETWORK");
@@ -72,10 +82,17 @@ test("edit and check leave position unchanged; adjacent moves include checked Id
     [b.id, 1], [a.id, 2], [c.id, 3],
   ]);
   assert.equal((await service.load())[0].checked, true);
+  await service.check(b.id, false);
+  assert.equal((await service.load())[1].checked, false);
+  assert.deepEqual((await service.load()).map(({ id, position }) => [id, position]), [
+    [b.id, 1], [a.id, 2], [c.id, 3],
+  ]);
   assert.equal((await service.move(b.id, 1)).moved, true);
   const boundary = await service.move(a.id, -1);
   assert.equal(boundary.moved, false);
   assert.deepEqual(boundary.items.map(({ id }) => id), [a.id, b.id, c.id]);
+  assert.equal((await service.move(c.id, 1)).moved, false);
+  assert.deepEqual((await service.move(a.id, 1)).items.map(({ id }) => id), [b.id, a.id, c.id]);
   await assert.rejects(service.move(a.id, 0), /direction/);
   await assert.rejects(service.move("bad", 1), /identity/);
   assert.throws(() => service.check(a.id, 1), /true or false/);
@@ -100,6 +117,48 @@ test("delete removes only the selected Idea and retains manual relative order ac
 function clientlessOrder(items) {
   return items.every((item, index) => !index || item.position > items[index - 1].position);
 }
+
+test("Ideas state survives a fresh client after check, move, add and delete", async () => {
+  const storage = memoryStorage();
+  const options = { storage, storageKey: "ideas-reload-test" };
+  const seed = [idea("zulu", 1), idea("middle", 2, true), idea("alpha", 3)];
+  const firstClient = createClient(seed, options);
+  const service = model.createMealsIdeasService(() => firstClient);
+  await service.check(seed[0].id, true);
+  await service.move(seed[2].id, -1);
+  const appended = await service.create({ ...model.newIdea(randomUUID()), text: "appended" });
+  await service.remove(seed[1].id);
+
+  const reloadedClient = createClient([], options);
+  const reloaded = model.createMealsIdeasService(() => reloadedClient);
+  const rows = await reloaded.load();
+  assert.deepEqual(rows.map(({ text, checked }) => [text, checked]), [
+    ["zulu", true], ["alpha", false], ["appended", false],
+  ]);
+  assert.equal(rows.at(-1).id, appended.id);
+});
+
+function idea(text, position, checked = false) {
+  return { id: randomUUID(), text, checked, position,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" };
+}
+
+test("failed Add, check, move and delete leave stored Ideas unchanged", async () => {
+  const { client, service } = setup();
+  const first = await service.create({ ...model.newIdea(randomUUID()), text: "first" });
+  const second = await service.create({ ...model.newIdea(randomUUID()), text: "second" });
+  const initial = (await service.load()).map(({ id, text, checked, position }) => ({ id, text, checked, position }));
+
+  client.control.failure = { operation: "rpc", code: "NETWORK", message: "Add unavailable" };
+  await assert.rejects(service.create({ ...model.newIdea(randomUUID()), text: "not added" }), /Add unavailable/);
+  client.control.failure = { operation: "update", code: "NETWORK", message: "Check unavailable" };
+  await assert.rejects(service.check(first.id, true), /Check unavailable/);
+  client.control.failure = { operation: "meals_ideas_move", code: "NETWORK", message: "Move unavailable" };
+  await assert.rejects(service.move(second.id, -1), /Move unavailable/);
+  client.control.failure = { operation: "delete", code: "NETWORK", message: "Delete unavailable" };
+  await assert.rejects(service.remove(first.id), /Delete unavailable/);
+  assert.deepEqual((await service.load()).map(({ id, text, checked, position }) => ({ id, text, checked, position })), initial);
+});
 
 test("incomplete or failed responses are explicit and translate into non-leaking messages", async () => {
   const { client, service } = setup();

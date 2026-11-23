@@ -22,7 +22,7 @@ const { newRecipeFilters } = load("src\\services\\recipeService.js",
   ["newRecipeFilters"], { getSupabaseClient() {} });
 const { navigationLinks, standaloneNavigationHref } = load("src\\components\\layout\\navigationRoutes.js",
   ["navigationLinks", "standaloneNavigationHref"]);
-let MealsPage, Navigation, LifeRoutes, OwnerBoundary, compileComponent;
+let MealsPage, Navigation, LifeRoutes, OwnerBoundary, compileComponent, IdeasPage;
 const PageHeader = ({ id, title, subtitle, className = "" }) => React.createElement("header", {
   id, className: `lm-page-header ${className}`.trim(),
 }, React.createElement("div", { className: "lm-page-heading" },
@@ -49,10 +49,11 @@ test.before(async () => {
   const core = await compile("src\\pages\\Meals\\RecipeCore.jsx", "{ RecipeLibrary, RecipeEditor, RecipeDetail }", {
     createRecipeService: () => ({}), MealEntryDialog: () => null,
   });
+  IdeasPage = () => React.createElement("h1", null, "Ideas");
   const ShoppingPage = await compile("src\\pages\\Meals\\ShoppingPage.jsx", "ShoppingPage", {
     createShoppingService: () => ({}), crypto: require("node:crypto").webcrypto,
   });
-  MealsPage = await compile("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", { ...core, ShoppingPage });
+  MealsPage = await compile("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", { ...core, ShoppingPage, IdeasPage });
   Navigation = await compile("src\\components\\layout\\MainNavigation.jsx", "MainNavigation", { navigationLinks });
   LifeRoutes = await compile("src\\router\\LifeManagerRouter.jsx", "LifeManagerRoutes", {
     resolveLifeManagerRoute, useLayoutEffect() {}, navigationStyles: {},
@@ -71,7 +72,7 @@ test("Meals parent owns only criteria across subroutes and a fresh parent starts
     let pathname = "/meals/recipes";
     const Page = await compileComponent("src\\pages\\Meals\\MealsPage.jsx", "MealsPage", {
       RecipeLibrary: () => null, RecipeEditor: () => null, RecipeDetail: () => null,
-      ShoppingPage: () => null,
+      ShoppingPage: () => null, IdeasPage,
       useLocation: () => ({ pathname, search: "" }),
       useState(initial) {
         criteria ??= initial();
@@ -133,7 +134,7 @@ test("data router mounts only inside owner boundary, retains basename and surviv
 });
 
 const paths = ["/meals", "/meals/", "/meals/recipes", "/meals/recipes/new",
-  "/meals/recipes/synthetic-id", "/meals/shopping", "/meals/not-found", "/meals/import"];
+  "/meals/recipes/synthetic-id", "/meals/shopping", "/meals/ideas", "/meals/not-found", "/meals/import"];
 
 test("NAV-003: all Meals paths remain in Meals, even with a stale Trips hash; aliases are unchanged", () => {
   for (const pathname of paths) {
@@ -152,10 +153,11 @@ function render(Page, pathname, basename = "/") {
     React.createElement(Page)));
 }
 
-test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping links with active states", () => {
+test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping/Ideas links with active states", () => {
   for (const [pathname, title, active] of [
     ["/meals/recipes", "Recipes", "recipes"], ["/meals/recipes/new", "Add Recipe", "recipes"],
     ["/meals/recipes/synthetic-id", "Recipe Detail", "recipes"], ["/meals/shopping", null, "shopping"],
+    ["/meals/ideas", "Ideas", "ideas"],
     ["/meals/not-found", "Meals page not found", null],
   ]) {
     const html = render(MealsPage, "/HomeMaintenanceApp/www/trips" + pathname, "/HomeMaintenanceApp/www/trips");
@@ -165,10 +167,12 @@ test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping
     }
     if (active === "recipes") assert.match(html, /role="status"[^>]*>Loading Recipe/);
     else if (active === "shopping") assert.match(html, /role="status"[^>]*>Loading Shopping/);
-    else assert.match(html, /Phase 0A foundation preview - not data-backed/);
-    for (const destination of ["recipes", "shopping"]) {
+    else if (!active) assert.match(html, /Phase 0A foundation preview - not data-backed/);
+    for (const destination of ["recipes", "shopping", "ideas"]) {
       assert(html.includes(`href="/HomeMaintenanceApp/www/trips/meals/${destination}"`));
     }
+    assert(html.indexOf(">Recipes</a>") < html.indexOf(">Shopping</a>"));
+    assert(html.indexOf(">Shopping</a>") < html.indexOf(">Ideas</a>"));
     if (active) assert.match(html, new RegExp(`aria-current="page"[^>]*href="[^"]*/${active}"`));
     assert.doesNotMatch(html, /<form|<input|<table|TRIPS_SENTINEL/);
   }
@@ -183,6 +187,7 @@ test("NAV-001/002/004 and RESP-001: shared shell renders actual Recipes/Shopping
 test("RESP-002: mobile Meals layouts constrain Recipe and Shopping content without wide rows", () => {
   const recipeStyles = fs.readFileSync(path.join(root, "src\\pages\\Meals\\MealsPage.module.css"), "utf8");
   const shoppingStyles = fs.readFileSync(path.join(root, "src\\pages\\Meals\\ShoppingPage.module.css"), "utf8");
+  const ideasStyles = fs.readFileSync(path.join(root, "src\\pages\\Meals\\IdeasPage.module.css"), "utf8");
   assert.match(recipeStyles, /@media \(max-width: 700px\)[\s\S]*\.recipeTable\s*\{\s*display:\s*none/);
   assert.match(recipeStyles, /\.mobileList\s*\{\s*display:\s*grid/);
   assert.match(recipeStyles, /\.mobileList li\s*>\s*div\s*\{[^}]*min-width:\s*0/);
@@ -193,6 +198,10 @@ test("RESP-002: mobile Meals layouts constrain Recipe and Shopping content witho
   assert.match(shoppingStyles, /\.itemActionButton\s*\{[^}]*flex:\s*0 0 auto/);
   assert.match(shoppingStyles, /\.check\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);
   assert.match(shoppingStyles, /@media \(max-width: 700px\)[\s\S]*\.itemDialog\s*\{[^}]*width:\s*100%/);
+  assert.match(ideasStyles, /\.row\s*\{[^}]*min-width:\s*0/);
+  assert.match(ideasStyles, /\.text\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*pre-wrap/);
+  assert.match(ideasStyles, /\.checkbox\s*\{[^}]*min-height:\s*var\(--lm-control-mobile\)/);
+  assert.match(ideasStyles, /@media \(max-width: 700px\)[\s\S]*\.addForm\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
 });
 
 test("ARCH-001/004/005: real owner boundary never mounts private Meals router while checking or logged out", async () => {

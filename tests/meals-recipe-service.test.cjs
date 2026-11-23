@@ -108,7 +108,8 @@ test("service executes owner CRUD against exact migration: text, blank lines, at
   assert.deepEqual(updated.ingredient_sections, [...draft.ingredient_sections].reverse());
   assert.equal(updated.notes, draft.notes, "older update callers preserve notes they do not submit");
   const cleared = await service.update(saved.id, { ...draft, title: "New", notes: null });
-  assert.equal(cleared.notes, null);
+  assert.equal(cleared.notes, "");
+  assert.equal((await db.query("SELECT notes FROM public.meals_recipes WHERE id=$1", [saved.id])).rows[0].notes, null);
   assert.equal((await service.favorite(saved.id, true)).favorite, true);
   assert.equal((await service.get(saved.id)).favorite, true);
   await assert.rejects(service.update(saved.id, { ...draft, title: " \n" }), /Title is required/);
@@ -123,6 +124,28 @@ test("service executes owner CRUD against exact migration: text, blank lines, at
   assert.equal((await service.create(uncertain)).id, uncertain.id);
   assert.equal((await service.list()).length, 1);
   await service.remove([uncertain.id]);
+});
+
+test("service normalizes legacy NULL Notes for reads while preserving multiline text and other Recipe fields", async () => {
+  const draft = { ...model.newRecipe(randomUUID()), title: "Nullable Notes",
+    source: "Cookbook", instructions: "\nMix.\n\nBake.\n",
+    ingredient_sections: [{ name: "Main", text: "1 cup flour\n\n2 eggs" }] };
+  const saved = await service.create({ ...draft, notes: null });
+  assert.equal(saved.notes, "");
+  const stored = await db.query("SELECT notes FROM public.meals_recipes WHERE id=$1", [saved.id]);
+  assert.equal(stored.rows[0].notes, null);
+  assert.equal((await service.get(saved.id)).notes, "");
+  assert.equal((await service.list())[0].notes, "");
+  const notes = "\nPlan ahead.\n\nKeep chilled.\r\n";
+  const updated = await service.update(saved.id, { ...draft, notes });
+  assert.equal(updated.notes, notes);
+  assert.equal(updated.instructions, draft.instructions);
+  assert.equal(updated.source, draft.source);
+  assert.deepEqual(updated.ingredient_sections, draft.ingredient_sections);
+  const cleared = await service.update(saved.id, { ...draft, notes: null });
+  assert.equal(cleared.notes, "");
+  assert.equal((await db.query("SELECT notes FROM public.meals_recipes WHERE id=$1", [saved.id])).rows[0].notes, null);
+  await service.remove([saved.id]);
 });
 
 test("service Category AND Cuisine create/rename/referenced refusal/unused delete with canonical names", async () => {

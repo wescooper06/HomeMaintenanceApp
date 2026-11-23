@@ -1,0 +1,137 @@
+.page {
+  min-width: 0;
+  color: var(--lm-color-text);
+}
+
+.addForm {
+  display: grid;
+  width: min(100%, 760px);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--lm-space-2);
+}
+
+.addForm label {
+  display: grid;
+  min-width: 0;
+  gap: var(--lm-space-1);
+  color: var(--lm-color-text-secondary);
+  font-size: var(--lm-font-label);
+  font-weight: 600;
+}
+
+.addForm input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.addForm button {
+  min-height: var(--lm-control-mobile);
+}
+
+.list {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  margin: var(--lm-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: var(--lm-control-mobile) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--lm-space-2);
+  border-bottom: 1px solid var(--lm-color-border);
+  padding: var(--lm-space-2) 0;
+}
+
+.checkbox {
+  box-sizing: border-box;
+  width: var(--lm-control-mobile);
+  min-width: var(--lm-control-mobile);
+  min-height: var(--lm-control-mobile);
+  margin: 0;
+  justify-self: center;
+  accent-color: var(--lm-color-primary);
+}
+
+.checkbox:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.checked {
+  color: var(--lm-color-text-secondary);
+  text-decoration: line-through;
+}
+
+.actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--lm-space-1);
+}
+
+.actions button {
+  min-height: var(--lm-control-mobile);
+  white-space: nowrap;
+}
+
+.actions button:focus-visible {
+  outline: 3px solid var(--lm-color-focus);
+  outline-offset: 2px;
+}
+
+.empty {
+  margin-top: var(--lm-space-4);
+  color: var(--lm-color-text-secondary);
+}
+
+.error {
+  margin: var(--lm-space-3) 0;
+  color: var(--lm-color-error);
+}
+
+@media (max-width: 700px) {
+  .addForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .addForm button {
+    justify-self: start;
+  }
+
+  .row {
+    grid-template-columns: var(--lm-control-mobile) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .checkbox {
+    grid-row: 1 / span 2;
+  }
+
+  .text {
+    align-self: center;
+    padding: var(--lm-space-2) 0;
+  }
+
+  .actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .actions button {
+    flex: 1 1 auto;
+  }
+}

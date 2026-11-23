@@ -1,10 +1,17 @@
-export function createMemoryMealsIdeasClient(seed = []) {
-  const data = { meals_ideas: structuredClone(seed) };
+export function createMemoryMealsIdeasClient(seed = [], config = {}) {
+  const storage = config.storage ?? null;
+  const storageKey = config.storageKey || "meals-ideas-synthetic-data";
+  const stored = storage?.getItem(storageKey);
+  const initial = stored === null || stored === undefined ? seed : JSON.parse(stored);
+  if (!Array.isArray(initial)) throw new Error("Synthetic Ideas storage must contain an array.");
+  const data = { meals_ideas: structuredClone(initial) };
   const control = { failure: null, loseCreate: false, calls: [], data };
   let clock = Date.now();
   const timestamp = () => new Date(++clock).toISOString();
   const ordered = (rows) => [...rows].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
   const error = (code, message) => ({ data: null, error: { code, message } });
+  const persist = () => storage?.setItem(storageKey, JSON.stringify(data.meals_ideas));
+  if (stored === null || stored === undefined) persist();
 
   function from(name) {
     if (name !== "meals_ideas") throw new Error("Unexpected test table.");
@@ -44,6 +51,7 @@ export function createMemoryMealsIdeasClient(seed = []) {
               return 0;
             });
           }
+          if (mode === "update" || mode === "delete") persist();
           if (mode === "select") selected = selected.slice(0, limit);
           if ((single && selected.length !== 1) || (maybe && selected.length > 1)) {
             return error("PGRST116", "Expected one Idea.");
@@ -79,6 +87,7 @@ export function createMemoryMealsIdeasClient(seed = []) {
       const idea = { id: args.p_idea_id, text: args.p_text, checked: false, position,
         created_at: now, updated_at: now };
       data.meals_ideas.push(idea);
+      persist();
       if (control.loseCreate) {
         control.loseCreate = false;
         return error("NETWORK", "Response lost after create.");
@@ -99,6 +108,7 @@ export function createMemoryMealsIdeasClient(seed = []) {
         rows[neighbor].updated_at = now;
         moved = true;
       }
+      persist();
       return {
         data: {
           moved,

@@ -3,6 +3,7 @@ import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom"
 
 import { newRecipeFilters } from "../../services/recipeService.js";
 
+import IdeasPage from "./IdeasPage.jsx";
 import styles from "./MealsPage.module.css";
 import { RecipeDetail, RecipeEditor, RecipeLibrary } from "./RecipeCore.jsx";
 import ShoppingPage from "./ShoppingPage.jsx";
@@ -33,6 +34,9 @@ export default function MealsPage() {
         <NavLink to="/meals/shopping" className={({ isActive }) => isActive ? styles.active : undefined}>
           Shopping
         </NavLink>
+        <NavLink to="/meals/ideas" className={({ isActive }) => isActive ? styles.active : undefined}>
+          Ideas
+        </NavLink>
       </nav>
       <Routes>
         <Route path="/meals" element={<Navigate to={{ pathname: "/meals/recipes", search }} replace />} />
@@ -41,9 +45,10 @@ export default function MealsPage() {
         <Route path="/meals/recipes/:id/edit" element={<RecipeEditor edit />} />
         <Route path="/meals/recipes/:id" element={<RecipeDetail />} />
         <Route path="/meals/shopping/*" element={<ShoppingPage />} />
+        <Route path="/meals/ideas" element={<IdeasPage />} />
         <Route path="*" element={
           <FoundationScreen title="Meals page not found">
-            This Meals path is not available. Choose Recipes or Shopping above. Recipe Import remains deferred.
+            This Meals path is not available. Choose Recipes, Shopping, or Ideas above. Recipe Import remains deferred.
           </FoundationScreen>
         } />
       </Routes>

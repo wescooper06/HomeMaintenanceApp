@@ -341,7 +341,8 @@ function Classification({ kind, label, values, value, onSelect, onChange, onBusy
 
 function EditorForm({ initial, categories: initialCategories, cuisines: initialCuisines, edit }) {
   const navigate = useNavigate();
-  const [draft, setDraft] = useState(() => ({ ...initial,
+  const normalizedInitial = { ...initial, notes: initial.notes ?? "" };
+  const [draft, setDraft] = useState(() => ({ ...normalizedInitial,
     ingredient_sections: initial.ingredient_sections.map((s) => ({ ...s })) }));
   const [categories, setCategories] = useState(initialCategories);
   const [cuisines, setCuisines] = useState(initialCuisines);
@@ -350,7 +351,7 @@ function EditorForm({ initial, categories: initialCategories, cuisines: initialC
   const [error, setError] = useState("");
   const lock = useRef(false);
   const saved = useRef(false);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(normalizedInitial);
   const blocker = useBlocker(() => !saved.current && (dirty || lock.current || classificationBusy));
   useEffect(() => {
     if (!dirty && !busy && !classificationBusy) return undefined;
@@ -427,6 +428,10 @@ function EditorForm({ initial, categories: initialCategories, cuisines: initialC
         <label className={styles.formField}>Instructions
           <textarea className="lm-form-control" rows={10} value={draft.instructions}
             onChange={(e) => field("instructions", e.target.value)} />
+        </label>
+        <label className={styles.formField}>Notes
+          <textarea className="lm-form-control" rows={6} value={draft.notes}
+            onChange={(e) => field("notes", e.target.value)} />
         </label>
         <div className={styles.actions}>
           <button type="submit" className="lm-button lm-button--primary">{busy ? "Saving..." : "Save Recipe"}</button>
@@ -537,6 +542,10 @@ export function RecipeDetail() {
           {steps.length ? <ol className={styles.instructions}>
             {steps.map((step, index) => <li key={index} className={styles.preserved}>{step}</li>)}
           </ol> : <p>No instructions provided.</p>}
+          {typeof recipe.notes === "string" && recipe.notes.trim() && <>
+            <h2 className={styles.sectionTitle}>Notes</h2>
+            <div className={styles.preserved}>{recipe.notes}</div>
+          </>}
           {confirm && <DeleteConfirmation count={1} pending={busy} error={error} onCancel={() => setConfirm(false)} onDelete={() => mutate(true)} />}
         </>}
   </section>;

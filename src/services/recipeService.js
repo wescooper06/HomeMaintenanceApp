@@ -9,6 +9,10 @@ function requireId(id) {
   return id;
 }
 
+function normalizeRecipe(recipe) {
+  return recipe ? { ...recipe, notes: recipe.notes ?? "" } : recipe;
+}
+
 function recipeValues(value, includeMissingNotes = false) {
   if (!value || typeof value.title !== "string" || !/\S/u.test(value.title)) {
     throw new Error("Recipe Title is required.");
@@ -36,6 +40,12 @@ function recipeValues(value, includeMissingNotes = false) {
   return values;
 }
 
+function comparableRecipeValues(value) {
+  const values = recipeValues(value, true);
+  values.notes = values.notes ?? "";
+  return values;
+}
+
 async function result(request, operation) {
   const { data, error } = await request;
   if (error) {
@@ -50,12 +60,12 @@ async function result(request, operation) {
 
 export function newRecipe(id = globalThis.crypto.randomUUID()) {
   return { id, title: "", source: "", category_id: null, cuisine_id: null, favorite: false,
-    ingredient_sections: [{ name: "Ingredients", text: "" }], instructions: "", notes: null };
+    ingredient_sections: [{ name: "Ingredients", text: "" }], instructions: "", notes: "" };
 }
 
 export function createRecipeService(clientProvider = getSupabaseClient) {
   const table = (name) => clientProvider().from(name);
-  async function complete(name, columns) {
+  async function complete(name, columns, normalize = (row) => row) {
     const all = [];
     let cursor = null;
     let expectedCount = null;
@@ -78,12 +88,13 @@ export function createRecipeService(clientProvider = getSupabaseClient) {
         requireId(row.id);
         if (cursor && row.id <= cursor) throw new Error("Recipe pagination did not advance in stable ID order.");
         cursor = row.id;
-        all.push(row);
+        all.push(normalize(row));
       }
     }
   }
   async function get(id) {
-    return result(table("meals_recipes").select(recipeColumns).eq("id", requireId(id)).maybeSingle(), "Load Recipe");
+    return normalizeRecipe(await result(table("meals_recipes").select(recipeColumns)
+      .eq("id", requireId(id)).maybeSingle(), "Load Recipe"));
   }
   function lookup(kind) {
     if (!["categories", "cuisines"].includes(kind)) throw new Error("Unknown Recipe classification.");
@@ -103,7 +114,7 @@ export function createRecipeService(clientProvider = getSupabaseClient) {
     };
   }
   const operations = {
-    list: () => complete("meals_recipes", recipeColumns),
+    list: () => complete("meals_recipes", recipeColumns, normalizeRecipe),
     get,
     create: async (draft) => {
       const id = requireId(draft.id);
@@ -111,17 +122,18 @@ export function createRecipeService(clientProvider = getSupabaseClient) {
       // Reconcile an uncertain previous INSERT using the editor's stable retry identity.
       const existing = await get(id);
       if (existing) {
-        if (JSON.stringify(recipeValues(existing, true)) === JSON.stringify(values)) return existing;
+        if (JSON.stringify(comparableRecipeValues(existing)) === JSON.stringify(comparableRecipeValues(draft))) return existing;
         throw new Error("Recipe ID already exists with different content. Reload before saving.");
       }
-      return result(table("meals_recipes").insert({ id, ...values }).select(recipeColumns).single(), "Save new Recipe");
+      return normalizeRecipe(await result(table("meals_recipes").insert({ id, ...values })
+        .select(recipeColumns).single(), "Save new Recipe"));
     },
-    update: async (id, draft) => result(table("meals_recipes").update(recipeValues(draft))
-      .eq("id", requireId(id)).select(recipeColumns).single(), "Save Recipe"),
+    update: async (id, draft) => normalizeRecipe(await result(table("meals_recipes").update(recipeValues(draft))
+      .eq("id", requireId(id)).select(recipeColumns).single(), "Save Recipe")),
     favorite: async (id, favorite) => {
       if (typeof favorite !== "boolean") throw new Error("Favorite must be true or false.");
-      return result(table("meals_recipes").update({ favorite }).eq("id", requireId(id))
-        .select(recipeColumns).single(), "Change Favorite");
+      return normalizeRecipe(await result(table("meals_recipes").update({ favorite }).eq("id", requireId(id))
+        .select(recipeColumns).single(), "Change Favorite"));
     },
     remove: async (ids) => {
       if (!Array.isArray(ids) || !ids.length) throw new Error("Select at least one Recipe to delete.");

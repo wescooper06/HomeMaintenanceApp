@@ -12,7 +12,7 @@ const helpers = vm.runInThisContext(`(() => { ${serviceSource}; return {
   newRecipe,newRecipeFilters,recipeMatches,recipeSourceUrl,sortRecipeClassifications,sortRecipes
 }; })()`);
 const initial = () => ({ id: randomUUID(), title: "", source: "", category_id: null, cuisine_id: null,
-  instructions: "", favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }] });
+  instructions: "", notes: "", favorite: false, ingredient_sections: [{ name: "Ingredients", text: "" }] });
 let compiled;
 test.before(async () => {
   const { transformWithOxc } = await import("../trips/node_modules/vite/dist/node/index.js");
@@ -293,6 +293,63 @@ test("Edit Recipe keeps raw Instructions including blank lines, whitespace and n
   assert.equal(props.initial.instructions, raw);
 });
 
+test("Recipe Notes normalize legacy NULL, preserve multiline edits, retain failed drafts and follow Instructions on Detail", async () => {
+  const notes = "\nPrepare the sauce.\n\nKeep chilled.\r\nServe cold.\n";
+  const legacy = { ...initial(), title: "Legacy Recipe", notes: null };
+  let submitted;
+  const editor = harness({
+    update: async (_id, draft) => { submitted = structuredClone(draft); throw new Error("offline"); },
+  });
+  const props = { initial: legacy, categories: [], cuisines: [], edit: true };
+  let tree = editor.render(editor.EditorForm, props);
+  assert.equal(labeledInput(tree, "Notes").type, "textarea");
+  assert.equal(labeledInput(tree, "Notes").props.value, "");
+  const fieldLabels = nodes(tree).filter((node) => node.type === "label")
+    .map((node) => node.children.filter((value) => typeof value !== "object").join(""));
+  assert(fieldLabels.indexOf("Notes") > fieldLabels.indexOf("Instructions"));
+  change(labeledInput(tree, "Notes"), notes);
+  tree = editor.render(editor.EditorForm, props);
+  await nodes(tree).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
+  tree = editor.render(editor.EditorForm, props);
+  assert.equal(labeledInput(tree, "Notes").props.value, notes);
+  assert.equal(submitted.notes, notes);
+  assert(nodes(tree).some((node) => node.props.error?.includes("Recipe was not saved")));
+  assert.equal(legacy.notes, null);
+
+  const cancel = harness();
+  const savedNotes = { ...initial(), title: "Saved Notes", notes: "Existing text" };
+  const cancelProps = { initial: savedNotes, categories: [], cuisines: [], edit: true };
+  tree = cancel.render(cancel.EditorForm, cancelProps);
+  assert.equal(labeledInput(tree, "Notes").props.value, "Existing text");
+  change(labeledInput(tree, "Notes"), "Unsaved change");
+  button(cancel.render(cancel.EditorForm, cancelProps), "Cancel").props.onClick();
+  assert.equal(cancel.navigations[0], `/meals/recipes/${savedNotes.id}`);
+  assert.equal(savedNotes.notes, "Existing text");
+
+  const detail = harness({
+    get: async () => ({ ...initial(), title: "Notes Recipe", instructions: "Mix.\n\nBake.", notes }),
+    categories: { list: async () => [] }, cuisines: { list: async () => [] },
+  });
+  detail.render(detail.RecipeDetail);
+  await flush();
+  tree = detail.render(detail.RecipeDetail);
+  const headings = nodes(tree).filter((node) => node.type === "h2").map(text);
+  assert(headings.indexOf("Instructions") >= 0);
+  assert.equal(headings.indexOf("Notes"), headings.indexOf("Instructions") + 1);
+  const notesContent = nodes(tree).find((node) => node.type === "div" && text(node) === notes);
+  assert(notesContent);
+
+  for (const emptyNotes of [null, "", " \n\t "]) {
+    const empty = harness({
+      get: async () => ({ ...initial(), title: "No Notes", notes: emptyNotes }),
+      categories: { list: async () => [] }, cuisines: { list: async () => [] },
+    });
+    empty.render(empty.RecipeDetail);
+    await flush();
+    assert(!nodes(empty.render(empty.RecipeDetail)).some((node) => node.type === "h2" && text(node) === "Notes"));
+  }
+});
+
 function classificationEditor(kind, methods) {
   const label = kind === "categories" ? "Category" : "Cuisine";
   const editor = harness();
@@ -304,7 +361,7 @@ function classificationEditor(kind, methods) {
   const renderEditor = () => editor.render(editor.EditorForm, props);
   for (const [field, value] of [["Recipe Title", "Unsaved title"], ["Source", "Unsaved source"],
     ["Section name", "Unsaved section"], ["Ingredient text", "\nFlour\n\nEggs"],
-    ["Instructions", "Mix\n\nBake"]]) {
+    ["Instructions", "Mix\n\nBake"], ["Notes", "Prep ahead"]]) {
     change(labeledInput(renderEditor(), field), value);
   }
   nodes(renderEditor()).find((n) => n.type === "input" && n.props.type === "checkbox")
@@ -499,12 +556,12 @@ test("default Ingredients, add/remove section, empty ingredients and edit model"
   assert.equal(labeledInput(tree, "Recipe Title").props.value, "Existing");
   button(tree, "Add Ingredient Section").props.onClick();
   tree = h.render(h.EditorForm, props);
-  assert.equal(nodes(tree).filter((n) => n.type === "textarea").length, 3);
+  assert.equal(nodes(tree).filter((n) => n.type === "textarea").length, 4);
   button(tree, "Remove section 2").props.onClick();
   tree = h.render(h.EditorForm, props);
   button(tree, "Remove section 1").props.onClick();
   tree = h.render(h.EditorForm, props);
-  assert.equal(nodes(tree).filter((n) => n.type === "textarea").length, 1);
+  assert.equal(nodes(tree).filter((n) => n.type === "textarea").length, 2);
 });
 
 test("favorite off/on state is accessible and independent of Recipe row navigation", async () => {
